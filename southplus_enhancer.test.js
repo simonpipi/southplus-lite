@@ -217,6 +217,41 @@ async function testQuickReplySubmissionFlow() {
   assert.deepEqual(httpFailurePendingCalls, [true, false]);
   assert.equal(httpFailurePending, false);
 
+  const refreshFailurePendingCalls = [];
+  let refreshFailurePending = false;
+  let refreshFailureError = null;
+  let refreshFailureApplyCount = 0;
+  let refreshFailureFetchCount = 0;
+  const refreshFailure = await enhancer.performQuickReplySubmit({
+    request,
+    pageUrl,
+    fetch: async function failedRefreshFetch() {
+      refreshFailureFetchCount += 1;
+      return { ok: refreshFailureFetchCount === 1 };
+    },
+    isPending: function isPending() {
+      return refreshFailurePending;
+    },
+    setPending: function setPending(value) {
+      refreshFailurePendingCalls.push(value);
+      refreshFailurePending = value;
+    },
+    applyHtml: function applyHtml() {
+      refreshFailureApplyCount += 1;
+      return true;
+    },
+    onError: function onError(error) {
+      refreshFailureError = error;
+    },
+  });
+
+  assert.equal(refreshFailure, false);
+  assert.equal(refreshFailureFetchCount, 2);
+  assert.equal(refreshFailureError.message, '重新加载帖子失败');
+  assert.equal(refreshFailureApplyCount, 0);
+  assert.deepEqual(refreshFailurePendingCalls, [true, false]);
+  assert.equal(refreshFailurePending, false);
+
   const applyFailurePendingCalls = [];
   let applyFailurePending = false;
   let applyFailureError = null;
