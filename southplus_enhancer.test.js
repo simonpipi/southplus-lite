@@ -156,6 +156,100 @@ async function testQuickReplySubmissionFlow() {
   assert.deepEqual(duplicatePendingCalls, []);
   assert.equal(duplicatePending, true);
 
+  const pendingCheckError = new Error('pending check failed');
+  let pendingCheckReportedError = null;
+  let pendingCheckFetchCount = 0;
+  const pendingCheckFailure = await enhancer.performQuickReplySubmit({
+    request,
+    pageUrl,
+    fetch: async function unexpectedFetch() {
+      pendingCheckFetchCount += 1;
+      return { ok: true };
+    },
+    isPending: function failedPendingCheck() {
+      throw pendingCheckError;
+    },
+    setPending: function setPending() {},
+    applyHtml: function applyHtml() {
+      return true;
+    },
+    onError: function onError(error) {
+      pendingCheckReportedError = error;
+    },
+  });
+
+  assert.equal(pendingCheckFailure, false);
+  assert.strictEqual(pendingCheckReportedError, pendingCheckError);
+  assert.equal(pendingCheckFetchCount, 0);
+
+  const pendingStartError = new Error('pending start failed');
+  const pendingStartCalls = [];
+  let pendingStartState = false;
+  let pendingStartReportedError = null;
+  let pendingStartFetchCount = 0;
+  const pendingStartFailure = await enhancer.performQuickReplySubmit({
+    request,
+    pageUrl,
+    fetch: async function unexpectedFetch() {
+      pendingStartFetchCount += 1;
+      return { ok: true };
+    },
+    isPending: function isPending() {
+      return pendingStartState;
+    },
+    setPending: function setPending(value) {
+      pendingStartCalls.push(value);
+      pendingStartState = value;
+      if (value) throw pendingStartError;
+    },
+    applyHtml: function applyHtml() {
+      return true;
+    },
+    onError: function onError(error) {
+      pendingStartReportedError = error;
+    },
+  });
+
+  assert.equal(pendingStartFailure, false);
+  assert.strictEqual(pendingStartReportedError, pendingStartError);
+  assert.equal(pendingStartFetchCount, 0);
+  assert.deepEqual(pendingStartCalls, [true, false]);
+  assert.equal(pendingStartState, false);
+
+  const throwingOnErrorFailure = new Error('fetch failed before onError');
+  const throwingOnErrorPendingCalls = [];
+  let throwingOnErrorPending = false;
+  let throwingOnErrorCallCount = 0;
+  let throwingOnErrorReceivedError = null;
+  const throwingOnErrorResult = await enhancer.performQuickReplySubmit({
+    request,
+    pageUrl,
+    fetch: async function failedFetch() {
+      throw throwingOnErrorFailure;
+    },
+    isPending: function isPending() {
+      return throwingOnErrorPending;
+    },
+    setPending: function setPending(value) {
+      throwingOnErrorPendingCalls.push(value);
+      throwingOnErrorPending = value;
+    },
+    applyHtml: function applyHtml() {
+      return true;
+    },
+    onError: function throwingOnError(error) {
+      throwingOnErrorCallCount += 1;
+      throwingOnErrorReceivedError = error;
+      throw new Error('onError failed');
+    },
+  });
+
+  assert.equal(throwingOnErrorResult, false);
+  assert.equal(throwingOnErrorCallCount, 1);
+  assert.strictEqual(throwingOnErrorReceivedError, throwingOnErrorFailure);
+  assert.deepEqual(throwingOnErrorPendingCalls, [true, false]);
+  assert.equal(throwingOnErrorPending, false);
+
   const networkFailurePendingCalls = [];
   let networkFailurePending = false;
   let networkFailureError = null;

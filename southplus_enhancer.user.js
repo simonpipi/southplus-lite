@@ -1932,48 +1932,59 @@
     ) {
       return Promise.resolve(false);
     }
-    if (typeof options.isPending === 'function' && options.isPending()) {
-      return Promise.resolve(false);
-    }
 
     var setPending = typeof options.setPending === 'function' ? options.setPending : function noop() {};
     var onError = typeof options.onError === 'function' ? options.onError : null;
-    setPending(true);
+    var shouldResetPending = false;
+
+    function reportQuickReplyError(error) {
+      if (!onError) return;
+      try {
+        onError(error);
+      } catch (onErrorFailure) {}
+    }
 
     return Promise.resolve()
-      .then(function submitReply() {
-        return options.fetch(options.request.url, options.request.options);
-      })
-      .then(function checkSubmitResponse(response) {
-        if (!response || response.ok !== true) throw new Error('快捷回复提交失败');
-        return options.fetch(options.pageUrl, {
-          credentials: 'include',
-          cache: 'no-store',
-        });
-      })
-      .then(function checkReloadResponse(response) {
-        if (!response || response.ok !== true) throw new Error('重新加载帖子失败');
-        return response.text();
-      })
-      .then(function applyReloadedHtml(html) {
-        if (options.applyHtml(html) === false) throw new Error('无法更新帖子内容');
-        return true;
+      .then(function startQuickReplySubmit() {
+        if (typeof options.isPending === 'function' && options.isPending()) return false;
+
+        shouldResetPending = true;
+        setPending(true);
+
+        return Promise.resolve()
+          .then(function submitReply() {
+            return options.fetch(options.request.url, options.request.options);
+          })
+          .then(function checkSubmitResponse(response) {
+            if (!response || response.ok !== true) throw new Error('快捷回复提交失败');
+            return options.fetch(options.pageUrl, {
+              credentials: 'include',
+              cache: 'no-store',
+            });
+          })
+          .then(function checkReloadResponse(response) {
+            if (!response || response.ok !== true) throw new Error('重新加载帖子失败');
+            return response.text();
+          })
+          .then(function applyReloadedHtml(html) {
+            if (options.applyHtml(html) === false) throw new Error('无法更新帖子内容');
+            return true;
+          });
       })
       .catch(function handleQuickReplyError(error) {
-        if (onError) onError(error);
+        reportQuickReplyError(error);
         return false;
       })
-      .then(
-        function finishQuickReply(result) {
+      .then(function finishQuickReply(result) {
+        if (!shouldResetPending) return result;
+        try {
           setPending(false);
-          return result;
-        },
-        function finishFailedQuickReply(error) {
-          setPending(false);
-          if (onError) onError(error);
+        } catch (error) {
+          reportQuickReplyError(error);
           return false;
         }
-      );
+        return result;
+      });
   }
 
   function submitQuickReply(editor) {
