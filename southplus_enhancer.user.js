@@ -1893,6 +1893,89 @@
     return true;
   }
 
+  function createQuickReplyRequest(form, submitter, pageUrl, FormDataCtor) {
+    if (!form || typeof FormDataCtor !== 'function') return null;
+    if (String(form.method || '').toUpperCase() !== 'POST') return null;
+
+    var body;
+    var url;
+    try {
+      body = new FormDataCtor(form);
+      url = new URL(form.action || '', pageUrl).href;
+    } catch (error) {
+      return null;
+    }
+    if (!body || typeof body.has !== 'function' || typeof body.append !== 'function') return null;
+
+    if (submitter && submitter.name && !body.has(submitter.name)) {
+      body.append(submitter.name, submitter.value == null ? '' : submitter.value);
+    }
+
+    return {
+      url: url,
+      options: {
+        method: 'POST',
+        body: body,
+        credentials: 'include',
+        redirect: 'follow',
+        cache: 'no-store',
+      },
+    };
+  }
+
+  function performQuickReplySubmit(options) {
+    if (
+      !options ||
+      !options.request ||
+      typeof options.fetch !== 'function' ||
+      typeof options.applyHtml !== 'function'
+    ) {
+      return Promise.resolve(false);
+    }
+    if (typeof options.isPending === 'function' && options.isPending()) {
+      return Promise.resolve(false);
+    }
+
+    var setPending = typeof options.setPending === 'function' ? options.setPending : function noop() {};
+    var onError = typeof options.onError === 'function' ? options.onError : null;
+    setPending(true);
+
+    return Promise.resolve()
+      .then(function submitReply() {
+        return options.fetch(options.request.url, options.request.options);
+      })
+      .then(function checkSubmitResponse(response) {
+        if (!response || response.ok !== true) throw new Error('快捷回复提交失败');
+        return options.fetch(options.pageUrl, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+      })
+      .then(function checkReloadResponse(response) {
+        if (!response || response.ok !== true) throw new Error('重新加载帖子失败');
+        return response.text();
+      })
+      .then(function applyReloadedHtml(html) {
+        if (options.applyHtml(html) === false) throw new Error('无法更新帖子内容');
+        return true;
+      })
+      .catch(function handleQuickReplyError(error) {
+        if (onError) onError(error);
+        return false;
+      })
+      .then(
+        function finishQuickReply(result) {
+          setPending(false);
+          return result;
+        },
+        function finishFailedQuickReply(error) {
+          setPending(false);
+          if (onError) onError(error);
+          return false;
+        }
+      );
+  }
+
   function submitQuickReply(editor) {
     if (!editor) return false;
     var form = editor.closest && editor.closest('form');
@@ -2513,6 +2596,8 @@
     hasPreviewGalleryImages: hasPreviewGalleryImages,
     shouldShowToolbarAction: shouldShowToolbarAction,
     getSettingsPanelKeys: getSettingsPanelKeys,
+    createQuickReplyRequest: createQuickReplyRequest,
+    performQuickReplySubmit: performQuickReplySubmit,
     buildPageUrl: buildPageUrl,
     detectPageType: detectPageType,
     getInjectedStyleText: getInjectedStyleText,
