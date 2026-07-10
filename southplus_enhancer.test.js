@@ -80,19 +80,21 @@ assert.equal(quickReplyRequest.options.body.get('verify'), 'abc123');
 assert.equal(quickReplyRequest.options.body.get('Submit'), '提交');
 
 async function testQuickReplySubmissionFlow() {
+  const pageUrl = 'https://south-plus.org/read.php?tid=123';
   const request = {
     url: 'https://south-plus.org/post.php?action=reply',
     options: { method: 'POST' },
   };
-  const calls = [];
-  let pending = false;
+  const successCalls = [];
+  const successPendingCalls = [];
+  let successPending = false;
   let appliedHtml = '';
 
   const success = await enhancer.performQuickReplySubmit({
     request,
-    pageUrl: 'https://south-plus.org/read.php?tid=123',
-    fetch: async function fetchStub(url) {
-      calls.push(url);
+    pageUrl,
+    fetch: async function fetchStub(url, options) {
+      successCalls.push({ url, options });
       return {
         ok: true,
         text: async function textStub() {
@@ -101,10 +103,11 @@ async function testQuickReplySubmissionFlow() {
       };
     },
     isPending: function isPending() {
-      return pending;
+      return successPending;
     },
     setPending: function setPending(value) {
-      pending = value;
+      successPendingCalls.push(value);
+      successPending = value;
     },
     applyHtml: function applyHtml(html) {
       appliedHtml = html;
@@ -113,58 +116,143 @@ async function testQuickReplySubmissionFlow() {
   });
 
   assert.equal(success, true);
-  assert.deepEqual(calls, [
-    'https://south-plus.org/post.php?action=reply',
-    'https://south-plus.org/read.php?tid=123',
-  ]);
+  assert.equal(successCalls[0].url, request.url);
+  assert.strictEqual(successCalls[0].options, request.options);
+  assert.deepEqual(successCalls[1], {
+    url: pageUrl,
+    options: {
+      credentials: 'include',
+      cache: 'no-store',
+    },
+  });
+  assert.equal(successCalls[1].options.body, undefined);
   assert.equal(appliedHtml, '<main id="main">new reply</main>');
-  assert.equal(pending, false);
+  assert.deepEqual(successPendingCalls, [true, false]);
+  assert.equal(successPending, false);
 
-  pending = true;
+  const duplicateFetchCalls = [];
+  const duplicatePendingCalls = [];
+  let duplicatePending = true;
   const duplicate = await enhancer.performQuickReplySubmit({
     request,
-    pageUrl: 'https://south-plus.org/read.php?tid=123',
-    fetch: async function unexpectedFetch() {
+    pageUrl,
+    fetch: async function unexpectedFetch(url, options) {
+      duplicateFetchCalls.push({ url, options });
       throw new Error('重复提交不应发送请求');
     },
     isPending: function isPending() {
-      return pending;
+      return duplicatePending;
     },
     setPending: function setPending(value) {
-      pending = value;
+      duplicatePendingCalls.push(value);
+      duplicatePending = value;
     },
     applyHtml: function applyHtml() {
       return true;
     },
   });
   assert.equal(duplicate, false);
-  assert.equal(pending, true);
+  assert.deepEqual(duplicateFetchCalls, []);
+  assert.deepEqual(duplicatePendingCalls, []);
+  assert.equal(duplicatePending, true);
 
-  pending = false;
-  let capturedError = null;
+  const networkFailurePendingCalls = [];
+  let networkFailurePending = false;
+  let networkFailureError = null;
   const failed = await enhancer.performQuickReplySubmit({
     request,
-    pageUrl: 'https://south-plus.org/read.php?tid=123',
+    pageUrl,
     fetch: async function failedFetch() {
       throw new Error('network failed');
     },
     isPending: function isPending() {
-      return pending;
+      return networkFailurePending;
     },
     setPending: function setPending(value) {
-      pending = value;
+      networkFailurePendingCalls.push(value);
+      networkFailurePending = value;
     },
     applyHtml: function applyHtml() {
       return true;
     },
     onError: function onError(error) {
-      capturedError = error;
+      networkFailureError = error;
     },
   });
 
   assert.equal(failed, false);
-  assert.equal(capturedError.message, 'network failed');
-  assert.equal(pending, false);
+  assert.equal(networkFailureError.message, 'network failed');
+  assert.deepEqual(networkFailurePendingCalls, [true, false]);
+  assert.equal(networkFailurePending, false);
+
+  const httpFailurePendingCalls = [];
+  let httpFailurePending = false;
+  let httpFailureError = null;
+  let httpFailureApplyCount = 0;
+  const httpFailure = await enhancer.performQuickReplySubmit({
+    request,
+    pageUrl,
+    fetch: async function failedHttpFetch() {
+      return { ok: false };
+    },
+    isPending: function isPending() {
+      return httpFailurePending;
+    },
+    setPending: function setPending(value) {
+      httpFailurePendingCalls.push(value);
+      httpFailurePending = value;
+    },
+    applyHtml: function applyHtml() {
+      httpFailureApplyCount += 1;
+      return true;
+    },
+    onError: function onError(error) {
+      httpFailureError = error;
+    },
+  });
+
+  assert.equal(httpFailure, false);
+  assert.equal(httpFailureError.message, '快捷回复提交失败');
+  assert.equal(httpFailureApplyCount, 0);
+  assert.deepEqual(httpFailurePendingCalls, [true, false]);
+  assert.equal(httpFailurePending, false);
+
+  const applyFailurePendingCalls = [];
+  let applyFailurePending = false;
+  let applyFailureError = null;
+  let applyFailureCount = 0;
+  const applyFailure = await enhancer.performQuickReplySubmit({
+    request,
+    pageUrl,
+    fetch: async function successfulFetch() {
+      return {
+        ok: true,
+        text: async function textStub() {
+          return '<main id="main">new reply</main>';
+        },
+      };
+    },
+    isPending: function isPending() {
+      return applyFailurePending;
+    },
+    setPending: function setPending(value) {
+      applyFailurePendingCalls.push(value);
+      applyFailurePending = value;
+    },
+    applyHtml: function applyHtml() {
+      applyFailureCount += 1;
+      return false;
+    },
+    onError: function onError(error) {
+      applyFailureError = error;
+    },
+  });
+
+  assert.equal(applyFailure, false);
+  assert.equal(applyFailureError.message, '无法更新帖子内容');
+  assert.equal(applyFailureCount, 1);
+  assert.deepEqual(applyFailurePendingCalls, [true, false]);
+  assert.equal(applyFailurePending, false);
 }
 
 testQuickReplySubmissionFlow()
