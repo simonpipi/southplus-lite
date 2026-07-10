@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.0.1
+// @version      0.0.3
 // @description  Local-only browsing improvements for South Plus: compact layout, quick navigation, read state, and local block rules.
 // @author       local
 // @match        https://south-plus.org/*
@@ -48,6 +48,8 @@
     onlyOriginalAuthor: false,
     foldQuotes: true,
     hideUserProfile: false,
+    autoBuyPost: false,
+    autoBuyMaxSp: 5,
     titleKeywords: [],
     authorKeywords: [],
     quickReplies: [
@@ -210,14 +212,68 @@
     var src = String(data.src || '');
     var width = Number(data.naturalWidth || data.width || 0);
     var height = Number(data.naturalHeight || data.height || 0);
-    var postIndex = Number(data.postIndex || 0);
+    var className = String(data.className || '');
+    var alt = String(data.alt || '');
 
-    if (postIndex !== 0) return false;
     if (!src) return false;
+    if (/\/(?:face|avatar|avatars|uc_server)\/|\/images\/face\//i.test(src)) return false;
     if (/\/images\/post\/smile\//i.test(src)) return false;
-    if (/\/images\/.*(?:face|smile|emotion)/i.test(src)) return false;
+    if (/\/images\/.*(?:face|smile|emotion|icon|common)/i.test(src)) return false;
+    if (/(?:smile|emotion|face|avatar|head|icon)/i.test(className + ' ' + alt)) return false;
     if (width === 0 && height === 0) return true;
+    if (width <= 80 && height <= 80) return false;
     return width >= 120 || height >= 120;
+  }
+
+  function parsePostPrice(value) {
+    var text = String(value || '').replace(/\s+/g, ' ');
+    var patterns = [
+      /(?:此帖|本帖|帖子)?\s*(?:售价|价格)\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)\s*SP(?:币)?/i,
+      /(?:购买(?:此帖)?(?:需要)?|购买需要|需要|需支付|花费)\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)\s*SP(?:币)?/i,
+    ];
+    for (var index = 0; index < patterns.length; index += 1) {
+      var match = text.match(patterns[index]);
+      if (match) return Number(match[1]);
+    }
+    return null;
+  }
+
+  function parseUserSpBalance(value) {
+    var text = String(value || '').replace(/\s+/g, ' ');
+    var patterns = [
+      /SP(?:币)?\s*(?:余额|结余|可用)?\s*[:：]\s*([0-9]+(?:\.[0-9]+)?)/i,
+      /(?:当前(?:拥有|余额)?|账户余额|帐户余额|可用余额|余额)\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)\s*SP(?:币)?/i,
+    ];
+    for (var index = 0; index < patterns.length; index += 1) {
+      var match = text.match(patterns[index]);
+      if (match) return Number(match[1]);
+    }
+    return null;
+  }
+
+  function shouldAutoBuyPost(settings, price, balance) {
+    var config = settings || {};
+    var maxPrice = Number(config.autoBuyMaxSp);
+    var postPrice = Number(price);
+    var currentBalance = Number(balance);
+    return !!config.autoBuyPost &&
+      maxPrice > 0 &&
+      postPrice >= 0 &&
+      postPrice < maxPrice &&
+      currentBalance >= postPrice;
+  }
+
+  function extractBuyTopicUrl(value, pageUrl) {
+    var text = String(value || '').replace(/&amp;/g, '&');
+    var quoted = text.match(/['"]([^'"]*job\.php\?[^'"]*action=buytopic[^'"]*)['"]/i);
+    var direct = text.match(/(?:https?:\/\/[^'"\s]*job\.php\?[^'"\s]*action=buytopic[^'"\s]*|\/?job\.php\?[^'"\s]*action=buytopic[^'"\s]*)/i);
+    var target = quoted ? quoted[1] : (direct ? direct[0] : '');
+    if (!target) return '';
+    try {
+      return new URL(target, pageUrl || 'https://south-plus.org/').href;
+    } catch (error) {
+      return '';
+    }
   }
 
   function parseTodayCount(text) {
@@ -326,6 +382,7 @@
       'compactRead',
       'foldQuotes',
       'hideUserProfile',
+      'autoBuyPost',
       'unreadOnly',
       'onlyOriginalAuthor',
     ];
@@ -340,6 +397,7 @@
       if (key === 'compactRead' && detectPageType(url) === 'read') keys.push(key);
       if (key === 'foldQuotes' && detectPageType(url) === 'read') keys.push(key);
       if (key === 'hideUserProfile' && detectPageType(url) === 'read') keys.push(key);
+      if (key === 'autoBuyPost' && detectPageType(url) === 'read') keys.push(key);
       if (key === 'unreadOnly' && shouldShowToolbarAction('unreadOnly', url, root)) keys.push(key);
       if (key === 'onlyOriginalAuthor' && shouldShowToolbarAction('onlyOriginalAuthor', url, root)) keys.push(key);
     });
@@ -636,6 +694,8 @@
       '.spx-settings[hidden]{display:none!important;}',
       '.spx-settings h3{margin:0 0 10px;font-size:15px;}',
       '.spx-settings label{display:flex;gap:8px;align-items:center;margin:7px 0;}',
+      '.spx-settings .spx-number-setting{justify-content:space-between;gap:10px;}',
+      '.spx-settings .spx-number-setting input{box-sizing:border-box;width:84px;height:30px;border:1px solid var(--spx-line);border-radius:6px;padding:0 8px;text-align:right;}',
       '.spx-settings textarea{box-sizing:border-box;width:100%;min-height:74px;border:1px solid var(--spx-line);border-radius:6px;padding:7px;font:12px/1.4 monospace;}',
       '.spx-settings .spx-help{margin:4px 0 8px;color:var(--spx-sub);font-size:12px;}',
       '.spx-settings .spx-row{display:flex;gap:8px;margin-top:10px;}',
@@ -671,6 +731,8 @@
       '.spx-filter-hidden{display:none!important;}',
       '.spx-post-tools{display:flex;gap:6px;justify-content:flex-end;margin:4px 0;}',
       '.spx-post-tools button{border:1px solid var(--spx-line);background:#fff;border-radius:5px;padding:2px 8px;cursor:pointer;color:var(--spx-sub);}',
+      '.spx-auto-buy-status{box-sizing:border-box;margin:8px 0;padding:8px 10px;border:1px solid #99f6e4;border-radius:6px;background:#f0fdfa;color:#0f766e;font-size:13px;line-height:1.45;}',
+      '.spx-auto-buy-status.spx-error{border-color:#fecaca;background:#fef2f2;color:#b91c1c;}',
       '.spx-post-hidden{display:none!important;}',
       '.spx-site-shell .spx-post-shell-hidden,.spx-site-shell:not(.spx-reader) .spx-post-shell-hidden,.spx-reader .spx-post-shell-hidden,.spx-immersive-read .spx-post-shell-hidden{display:none!important;border:0!important;margin:0!important;padding:0!important;height:0!important;min-height:0!important;overflow:hidden!important;}',
       '.spx-preview-popover{position:fixed;z-index:100001;width:min(520px,calc(100vw - 28px));max-height:min(74vh,620px);overflow:auto;padding:12px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 18px 48px rgba(15,23,42,.28);color:#172033;font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;}',
@@ -1449,6 +1511,166 @@
     split.appendChild(content);
   }
 
+  function findAutoBuyTarget(root, pageUrl) {
+    var scope = root || document;
+    var controls = qsa(
+      'input[onclick*="buytopic"],button[onclick*="buytopic"],a[href*="buytopic"]',
+      scope
+    );
+
+    for (var index = 0; index < controls.length; index += 1) {
+      var control = controls[index];
+      var rawTarget = control.getAttribute('href') || control.getAttribute('onclick') || '';
+      var url = extractBuyTopicUrl(rawTarget, pageUrl || location.href);
+      if (!url) continue;
+
+      var host = control.closest
+        ? control.closest('h6.quote,.quote,.tpc_content,table.js-post')
+        : control.parentNode;
+      var price = parsePostPrice(host ? host.textContent : '');
+      if (price === null) {
+        var body = scope.body || scope.documentElement;
+        price = parsePostPrice(body ? body.textContent : '');
+      }
+      if (price === null) continue;
+
+      return {
+        control: control,
+        host: host || control.parentNode,
+        price: price,
+        url: url,
+      };
+    }
+
+    return null;
+  }
+
+  function setAutoBuyStatus(target, message, isError) {
+    var status = qs('#spx-auto-buy-status');
+    if (!status) {
+      status = createEl('div', 'spx-auto-buy-status');
+      status.id = 'spx-auto-buy-status';
+      var host = target && target.host;
+      if (host && host.parentNode) {
+        host.parentNode.insertBefore(status, host.nextSibling);
+      } else {
+        document.body.appendChild(status);
+      }
+    }
+    status.textContent = message;
+    status.classList.toggle('spx-error', !!isError);
+  }
+
+  function fetchCurrentUserSpBalance() {
+    var url = new URL('/userpay.php', location.href).href;
+    return window.fetch(url, {
+      credentials: 'include',
+      cache: 'no-store',
+    })
+      .then(function readBalanceResponse(response) {
+        if (!response.ok) throw new Error('读取 SP 余额失败');
+        return response.text();
+      })
+      .then(function parseBalancePage(html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var balance = parseUserSpBalance(doc.body ? doc.body.textContent : '');
+        if (balance === null) throw new Error('未识别到 SP 余额');
+        return balance;
+      });
+  }
+
+  function replaceReadPageContent(html, settings, state) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    var currentContent = qs('#content') || qs('#main');
+    var refreshedContent = qs('#content', doc) || qs('#main', doc);
+    if (!currentContent || !refreshedContent) return false;
+
+    currentContent.innerHTML = refreshedContent.innerHTML;
+    enhanceAll(settings, state);
+    return true;
+  }
+
+  function enhanceAutoBuyPost(settings, state) {
+    if (detectPageType(location.href) !== 'read') return;
+
+    var pageRoot = document.documentElement;
+    if (!settings.autoBuyPost) {
+      delete pageRoot.dataset.spxAutoBuyStatus;
+      var oldStatus = qs('#spx-auto-buy-status');
+      if (oldStatus) oldStatus.remove();
+      return;
+    }
+    if (pageRoot.dataset.spxAutoBuyStatus) return;
+
+    var target = findAutoBuyTarget(document, location.href);
+    var maxPrice = Number(settings.autoBuyMaxSp);
+    if (!target || !(maxPrice > 0) || !(target.price < maxPrice)) return;
+
+    pageRoot.dataset.spxAutoBuyStatus = 'checking';
+    setAutoBuyStatus(target, '自动购买：正在检查账户 SP 余额…', false);
+
+    fetchCurrentUserSpBalance()
+      .then(function purchaseWhenAffordable(balance) {
+        if (!shouldAutoBuyPost(settings, target.price, balance)) {
+          pageRoot.dataset.spxAutoBuyStatus = 'skipped';
+          setAutoBuyStatus(
+            target,
+            '自动购买未执行：当前余额 ' + balance + ' SP，帖子价格 ' + target.price + ' SP。',
+            true
+          );
+          return null;
+        }
+
+        pageRoot.dataset.spxAutoBuyStatus = 'buying';
+        target.control.disabled = true;
+        target.control.setAttribute('aria-disabled', 'true');
+        setAutoBuyStatus(
+          target,
+          '自动购买：正在支付 ' + target.price + ' SP 并加载帖子内容…',
+          false
+        );
+
+        return window.fetch(target.url, {
+          credentials: 'include',
+          redirect: 'follow',
+          cache: 'no-store',
+        }).then(function readPurchaseResponse(response) {
+          if (!response.ok) throw new Error('购买请求失败');
+          return response.text();
+        });
+      })
+      .then(function reloadCurrentThread(purchaseResult) {
+        if (purchaseResult === null) return null;
+        return window.fetch(location.href, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+      })
+      .then(function readRefreshedThread(response) {
+        if (!response) return null;
+        if (!response.ok) throw new Error('重新加载帖子失败');
+        return response.text();
+      })
+      .then(function applyRefreshedThread(html) {
+        if (!html) return;
+        var refreshedDoc = new DOMParser().parseFromString(html, 'text/html');
+        if (findAutoBuyTarget(refreshedDoc, location.href)) {
+          throw new Error('购买后仍存在购买按钮');
+        }
+
+        pageRoot.dataset.spxAutoBuyStatus = 'done';
+        if (!replaceReadPageContent(html, settings, state)) {
+          throw new Error('无法更新帖子内容');
+        }
+      })
+      .catch(function handleAutoBuyError() {
+        pageRoot.dataset.spxAutoBuyStatus = 'failed';
+        target.control.disabled = false;
+        target.control.removeAttribute('aria-disabled');
+        setAutoBuyStatus(target, '自动购买失败，已保留原购买按钮，请手动购买。', true);
+      });
+  }
+
   function enhanceReadPage(settings, state) {
     if (detectPageType(location.href) !== 'read') return;
     var tid = parseThreadId(location.href);
@@ -1511,6 +1733,7 @@
     cleanupReadSeparators();
     enhancePreviewGallery(settings, posts);
     if (settings.foldQuotes) foldLongReadBlocks();
+    enhanceAutoBuyPost(settings, state);
   }
 
   function enhancePreviewGallery(settings, posts) {
@@ -1521,17 +1744,25 @@
     var content = qs('.tpc_content', firstPost);
     if (!content) return;
 
-    var previewImages = qsa('img', content)
-      .map(function mapImage(img) {
-        return {
+    var previewImages = [];
+    posts.forEach(function collectPostImages(post, postIndex) {
+      var postContent = qs('.tpc_content', post);
+      if (!postContent) return;
+      qsa('img', postContent).forEach(function collectImage(img) {
+        var item = {
           node: img,
           src: img.currentSrc || img.src,
           naturalWidth: img.naturalWidth,
           naturalHeight: img.naturalHeight,
-          postIndex: 0,
+          width: img.width,
+          height: img.height,
+          className: img.className,
+          alt: img.alt,
+          postIndex: postIndex,
         };
-      })
-      .filter(isPreviewImageCandidate);
+        if (isPreviewImageCandidate(item)) previewImages.push(item);
+      });
+    });
 
     var seen = {};
     previewImages = previewImages.filter(function uniqueImage(item) {
@@ -1545,13 +1776,10 @@
     var panel = createEl('section', 'spx-preview-panel');
     panel.id = 'spx-preview-panel';
     var header = createEl('div', 'spx-preview-header');
-    header.innerHTML = '<strong>预览图</strong><span>' + previewImages.length + ' 张，点击打开原图</span>';
+    header.innerHTML = '<strong>预览图</strong><span>当前页 ' + previewImages.length + ' 张，点击打开原图</span>';
     var grid = createEl('div', 'spx-preview-grid');
 
     previewImages.forEach(function appendPreview(item, index) {
-      item.node.classList.add('spx-preview-source');
-      item.node.dataset.spxPreviewSource = '1';
-
       var link = createEl('a', 'spx-preview-item');
       link.href = item.src;
       link.target = '_blank';
@@ -1772,6 +2000,7 @@
       compactRead: '阅读页紧凑',
       foldQuotes: '折叠长引用',
       hideUserProfile: '隐藏头像资料',
+      autoBuyPost: '自动购买低价帖子',
       unreadOnly: '列表只看未读',
       onlyOriginalAuthor: '阅读页只看楼主',
     };
@@ -1779,13 +2008,17 @@
     var settingControls = settingKeys.map(function renderSetting(key) {
       return '<label><input type="checkbox" data-key="' + key + '"> ' + settingLabels[key] + '</label>';
     });
+    var autoBuyControls = settingKeys.indexOf('autoBuyPost') !== -1 ? [
+      '<label class="spx-number-setting"><span>自动购买价格上限</span><span><input type="number" min="0" step="1" data-number="autoBuyMaxSp"> SP</span></label>',
+      '<div class="spx-help">仅当帖子价格严格小于该值、账户 SP 足够且页面存在购买按钮时自动购买；默认关闭。</div>',
+    ] : [];
 
     panel = createEl('div', 'spx-settings');
     panel.id = 'spx-settings';
     panel.hidden = true;
     panel.innerHTML = [
       '<h3>South Plus 增强设置</h3>',
-    ].concat(settingControls, [
+    ].concat(settingControls, autoBuyControls, [
       '<div>标题屏蔽关键词，每行一个</div>',
       '<textarea data-list="titleKeywords"></textarea>',
       '<div>作者屏蔽关键词，每行一个</div>',
@@ -1808,6 +2041,9 @@
       qsa('textarea[data-list]', panel).forEach(function syncList(textarea) {
         textarea.value = (settings[textarea.dataset.list] || []).join('\n');
       });
+      qsa('input[data-number]', panel).forEach(function syncNumber(input) {
+        input.value = String(Number(settings[input.dataset.number]) || 0);
+      });
     }
 
     function saveForm() {
@@ -1819,6 +2055,12 @@
           ? parseQuickReplyList(textarea.value)
           : parseLineList(textarea.value);
       });
+      qsa('input[data-number]', panel).forEach(function readNumber(input) {
+        settings[input.dataset.number] = Math.max(0, Number(input.value) || 0);
+      });
+      delete document.documentElement.dataset.spxAutoBuyStatus;
+      var autoBuyStatus = qs('#spx-auto-buy-status');
+      if (autoBuyStatus) autoBuyStatus.remove();
       saveSettings(settings);
       enhanceAll(settings, state);
     }
@@ -2253,6 +2495,10 @@
     hideStickyThreads: hideStickyThreads,
     hideForumAnnouncementPanels: hideForumAnnouncementPanels,
     isPreviewImageCandidate: isPreviewImageCandidate,
+    parsePostPrice: parsePostPrice,
+    parseUserSpBalance: parseUserSpBalance,
+    shouldAutoBuyPost: shouldAutoBuyPost,
+    extractBuyTopicUrl: extractBuyTopicUrl,
     isAdUrl: isAdUrl,
     parseTodayCount: parseTodayCount,
     shouldUseSiteShell: shouldUseSiteShell,
