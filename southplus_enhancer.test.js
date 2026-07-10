@@ -40,4 +40,138 @@ assert.equal(
   false
 );
 
-console.log('southplus_enhancer tests passed');
+class FakeFormData {
+  constructor(form) {
+    this.values = Object.assign({}, form.fields || {});
+  }
+
+  has(name) {
+    return Object.prototype.hasOwnProperty.call(this.values, name);
+  }
+
+  append(name, value) {
+    this.values[name] = value;
+  }
+
+  get(name) {
+    return this.values[name];
+  }
+}
+
+const quickReplyRequest = enhancer.createQuickReplyRequest(
+  {
+    action: '/post.php?action=reply',
+    method: 'post',
+    fields: {
+      atc_content: '感谢分享',
+      verify: 'abc123',
+    },
+  },
+  { name: 'Submit', value: '提交' },
+  'https://south-plus.org/read.php?tid=123',
+  FakeFormData
+);
+
+assert.equal(quickReplyRequest.url, 'https://south-plus.org/post.php?action=reply');
+assert.equal(quickReplyRequest.options.method, 'POST');
+assert.equal(quickReplyRequest.options.credentials, 'include');
+assert.equal(quickReplyRequest.options.body.get('atc_content'), '感谢分享');
+assert.equal(quickReplyRequest.options.body.get('verify'), 'abc123');
+assert.equal(quickReplyRequest.options.body.get('Submit'), '提交');
+
+async function testQuickReplySubmissionFlow() {
+  const request = {
+    url: 'https://south-plus.org/post.php?action=reply',
+    options: { method: 'POST' },
+  };
+  const calls = [];
+  let pending = false;
+  let appliedHtml = '';
+
+  const success = await enhancer.performQuickReplySubmit({
+    request,
+    pageUrl: 'https://south-plus.org/read.php?tid=123',
+    fetch: async function fetchStub(url) {
+      calls.push(url);
+      return {
+        ok: true,
+        text: async function textStub() {
+          return '<main id="main">new reply</main>';
+        },
+      };
+    },
+    isPending: function isPending() {
+      return pending;
+    },
+    setPending: function setPending(value) {
+      pending = value;
+    },
+    applyHtml: function applyHtml(html) {
+      appliedHtml = html;
+      return true;
+    },
+  });
+
+  assert.equal(success, true);
+  assert.deepEqual(calls, [
+    'https://south-plus.org/post.php?action=reply',
+    'https://south-plus.org/read.php?tid=123',
+  ]);
+  assert.equal(appliedHtml, '<main id="main">new reply</main>');
+  assert.equal(pending, false);
+
+  pending = true;
+  const duplicate = await enhancer.performQuickReplySubmit({
+    request,
+    pageUrl: 'https://south-plus.org/read.php?tid=123',
+    fetch: async function unexpectedFetch() {
+      throw new Error('重复提交不应发送请求');
+    },
+    isPending: function isPending() {
+      return pending;
+    },
+    setPending: function setPending(value) {
+      pending = value;
+    },
+    applyHtml: function applyHtml() {
+      return true;
+    },
+  });
+  assert.equal(duplicate, false);
+  assert.equal(pending, true);
+
+  pending = false;
+  let capturedError = null;
+  const failed = await enhancer.performQuickReplySubmit({
+    request,
+    pageUrl: 'https://south-plus.org/read.php?tid=123',
+    fetch: async function failedFetch() {
+      throw new Error('network failed');
+    },
+    isPending: function isPending() {
+      return pending;
+    },
+    setPending: function setPending(value) {
+      pending = value;
+    },
+    applyHtml: function applyHtml() {
+      return true;
+    },
+    onError: function onError(error) {
+      capturedError = error;
+    },
+  });
+
+  assert.equal(failed, false);
+  assert.equal(capturedError.message, 'network failed');
+  assert.equal(pending, false);
+}
+
+testQuickReplySubmissionFlow()
+  .then(function reportSuccess() {
+    console.log('southplus_enhancer tests passed');
+  })
+  .catch(function reportFailure(error) {
+    console.error(error);
+    process.exitCode = 1;
+  });
