@@ -1,5 +1,9 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
+
+const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
+assert.match(source, /@version\s+0\.1\.0/);
 
 assert.equal(enhancer.parsePostPrice('本帖售价：5 SP币'), 5);
 assert.equal(enhancer.parsePostPrice('购买需要 12.5 SP'), 12.5);
@@ -11,12 +15,66 @@ assert.equal(enhancer.parseUserSpBalance('SP余额：8.5'), 8.5);
 assert.equal(enhancer.parseUserSpBalance('SP币: 34'), 34);
 assert.equal(enhancer.parseUserSpBalance('本帖售价：5 SP币'), null);
 
+assert.equal(enhancer.clampPreviewZoom(0.1), 0.5);
+assert.equal(enhancer.clampPreviewZoom(1.75), 1.75);
+assert.equal(enhancer.clampPreviewZoom(8), 4);
+
+assert.equal(enhancer.getPreviewLightboxKeyAction({ key: 'Escape' }), 'close');
+assert.equal(enhancer.getPreviewLightboxKeyAction({ key: 'ArrowLeft' }), 'previous');
+assert.equal(enhancer.getPreviewLightboxKeyAction({ key: 'ArrowRight' }), 'next');
+assert.equal(enhancer.getPreviewLightboxKeyAction({ key: '+' }), 'zoomIn');
+assert.equal(enhancer.getPreviewLightboxKeyAction({ key: '=' }), 'zoomIn');
+assert.equal(enhancer.getPreviewLightboxKeyAction({ key: '-' }), 'zoomOut');
+assert.equal(enhancer.getPreviewLightboxKeyAction({ key: '0' }), 'zoomReset');
+assert.equal(enhancer.getPreviewLightboxKeyAction({ key: 'ArrowRight', ctrlKey: true }), '');
+assert.equal(enhancer.getPreviewLightboxKeyAction({ key: 'Enter' }), '');
+
 assert.equal(
   enhancer.extractBuyTopicUrl(
     "location.href='job.php?action=buytopic&tid=2904409&pid=tpc&verify=77492139'",
     'https://south-plus.org/read.php?tid=2904409'
   ),
   'https://south-plus.org/job.php?action=buytopic&tid=2904409&pid=tpc&verify=77492139'
+);
+
+assert.equal(
+  enhancer.getAutoBuyAttemptKey(
+    'https://south-plus.org/job.php?action=buytopic&tid=2904409&pid=tpc&verify=77492139',
+    'https://south-plus.org/read.php?tid=2904409'
+  ),
+  '2904409:tpc'
+);
+assert.equal(
+  enhancer.getAutoBuyAttemptKey(
+    'https://south-plus.org/job.php?action=buytopic&pid=12345&verify=77492139',
+    'https://south-plus.org/read.php?tid=2904409'
+  ),
+  '2904409:12345'
+);
+assert.equal(enhancer.getAutoBuyAttemptKey('bad-url', 'https://south-plus.org/'), '');
+
+assert.equal(
+  enhancer.isAutoBuyAttemptBlocked({ status: 'checking', updatedAt: 1000 }, 2000),
+  true
+);
+assert.equal(
+  enhancer.isAutoBuyAttemptBlocked({ status: 'checking', updatedAt: 1000 }, 1000 + 11 * 60 * 1000),
+  false
+);
+assert.equal(
+  enhancer.isAutoBuyAttemptBlocked({ status: 'buying', updatedAt: 1000 }, 1000 + 60 * 60 * 1000),
+  true
+);
+assert.equal(enhancer.isAutoBuyAttemptBlocked({ status: 'done', updatedAt: 1000 }, 999999), true);
+assert.equal(enhancer.isAutoBuyAttemptBlocked({ status: 'failed', updatedAt: 1000 }, 999999), true);
+assert.equal(enhancer.isAutoBuyAttemptBlocked({ status: 'skipped', updatedAt: 1000 }, 999999), false);
+assert.match(
+  enhancer.formatAutoBuyAttemptMessage({
+    status: 'failed',
+    message: '购买请求失败',
+    updatedAt: 1000,
+  }),
+  /自动购买未重复执行.*购买请求失败/
 );
 
 assert.equal(
@@ -38,6 +96,93 @@ assert.equal(
 assert.equal(
   enhancer.shouldAutoBuyPost({ autoBuyPost: false, autoBuyMaxSp: 10 }, 5, 20),
   false
+);
+
+assert.equal(enhancer.formatReadProgress(null), '');
+assert.equal(enhancer.formatReadProgress({ updatedAt: 1000, progress: 0.426, page: 1 }), '43%');
+assert.equal(enhancer.formatReadProgress({ updatedAt: 1000, progress: 2, page: 3 }), '第 3 页 · 100%');
+assert.deepEqual(
+  enhancer.mergeReadProgressRecord(
+    { updatedAt: 2000, progress: 1, page: 1, scrollY: 5000 },
+    { updatedAt: 3000, progress: 0.8, page: 1, scrollY: 2000 }
+  ),
+  { updatedAt: 2000, progress: 1, page: 1, scrollY: 5000 }
+);
+assert.deepEqual(
+  enhancer.mergeReadProgressRecord(
+    { updatedAt: 2000, progress: 0.995, page: 1, scrollY: 5000 },
+    { updatedAt: 3000, progress: 0.8, page: 1, scrollY: 2000 }
+  ),
+  { updatedAt: 2000, progress: 0.995, page: 1, scrollY: 5000 }
+);
+assert.deepEqual(
+  enhancer.mergeReadProgressRecord(
+    { updatedAt: 2000, progress: 0.9, page: 1, scrollY: 4000 },
+    { updatedAt: 3000, progress: 0.8, page: 1, scrollY: 2000 }
+  ),
+  { updatedAt: 3000, progress: 0.8, page: 1, scrollY: 2000 }
+);
+assert.deepEqual(
+  Object.keys(enhancer.pruneReadProgress({
+    1: { updatedAt: 100 },
+    2: { updatedAt: 300 },
+    3: { updatedAt: 200 },
+    broken: {},
+  }, 2)),
+  ['2', '3']
+);
+
+const watchEntries = enhancer.getWatchCenterEntries(
+  {
+    1: { title: '旧帖', url: 'https://south-plus.org/read.php?tid=1', savedAt: 100 },
+    2: { title: '新帖', url: 'https://south-plus.org/read.php?tid=2', savedAt: 300 },
+  },
+  {
+    1: {
+      title: '旧帖更新标题',
+      url: 'https://south-plus.org/read.php?tid-1-page-2.html',
+      page: 2,
+      progress: 0.5,
+      updatedAt: 400,
+    },
+  }
+);
+assert.deepEqual(
+  watchEntries.map(function mapEntry(entry) {
+    return [entry.id, entry.title, entry.progressText, entry.progressUrl];
+  }),
+  [
+    ['2', '新帖', '', 'https://south-plus.org/read.php?tid=2'],
+    ['1', '旧帖更新标题', '第 2 页 · 50%', 'https://south-plus.org/read.php?tid-1-page-2.html'],
+  ]
+);
+
+assert.deepEqual(
+  enhancer.getHistoryCenterEntries({
+    1: { title: '旧历史', url: 'https://south-plus.org/read.php?tid=1', progress: 0.25, updatedAt: 100 },
+    2: { title: '新历史', url: 'https://south-plus.org/read.php?tid=2', progress: 1, updatedAt: 300 },
+    broken: { title: '坏记录' },
+  }).map(function mapHistory(entry) {
+    return [entry.id, entry.title, entry.progressText];
+  }),
+  [
+    ['2', '新历史', '100%'],
+    ['1', '旧历史', '25%'],
+  ]
+);
+
+assert.deepEqual(
+  enhancer.getAutoBuyCenterEntries({
+    '1:tpc': { status: 'failed', message: '失败原因', price: 5, updatedAt: 100 },
+    '2:tpc': { status: 'done', message: '已完成', balance: 20, updatedAt: 300 },
+    broken: {},
+  }).map(function mapAttempt(entry) {
+    return [entry.key, entry.statusLabel, entry.message, entry.price, entry.balance];
+  }),
+  [
+    ['2:tpc', '已完成', '已完成', null, 20],
+    ['1:tpc', '失败', '失败原因', 5, null],
+  ]
 );
 
 class FakeFormData {
@@ -78,6 +223,30 @@ assert.equal(quickReplyRequest.options.credentials, 'include');
 assert.equal(quickReplyRequest.options.body.get('atc_content'), '感谢分享');
 assert.equal(quickReplyRequest.options.body.get('verify'), 'abc123');
 assert.equal(quickReplyRequest.options.body.get('Submit'), '提交');
+
+const shadowedActionRequest = enhancer.createQuickReplyRequest(
+  {
+    action: {
+      toString() {
+        return '[object HTMLInputElement]';
+      },
+    },
+    method: 'post',
+    getAttribute(name) {
+      return name === 'action' ? 'post.php?' : null;
+    },
+    fields: {
+      action: 'reply',
+      atc_content: '感谢分享',
+      verify: 'abc123',
+    },
+  },
+  { name: 'Submit', value: '提交' },
+  'https://south-plus.org/read.php?tid=123',
+  FakeFormData
+);
+
+assert.equal(shadowedActionRequest.url, 'https://south-plus.org/post.php?');
 
 async function testQuickReplySubmissionFlow() {
   const pageUrl = 'https://south-plus.org/read.php?tid=123';

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.0.4
-// @description  Local-only browsing improvements for South Plus: compact layout, quick navigation, read state, and local block rules.
+// @version      0.1.0
+// @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        https://south-plus.org/*
 // @match        https://www.south-plus.net/*
@@ -35,6 +35,12 @@
   var STORE_KEY = APP + ':settings:v1';
   var READ_KEY = APP + ':readThreads:v1';
   var WATCH_KEY = APP + ':watchThreads:v1';
+  var PROGRESS_KEY = APP + ':readProgress:v1';
+  var RESTORE_PROGRESS_KEY = APP + ':restoreProgressTid:v1';
+  var AUTO_BUY_KEY = APP + ':autoBuyAttempts:v1';
+  var AUTO_BUY_CHECK_TTL = 10 * 60 * 1000;
+  var AUTO_BUY_ATTEMPT_LIMIT = 100;
+  var READ_PROGRESS_LIMIT = 200;
   var DEFAULT_SETTINGS = {
     cleanMode: true,
     readerMode: true,
@@ -95,6 +101,133 @@
 
   function parseQuickReplyList(value) {
     return parseLineList(value).slice(0, 30);
+  }
+
+  function clampRatio(value) {
+    var ratio = Number(value);
+    if (!isFinite(ratio)) return 0;
+    return Math.min(1, Math.max(0, ratio));
+  }
+
+  function getReadProgressPercent(record) {
+    return Math.round(clampRatio(record && record.progress) * 100);
+  }
+
+  function isCompletedReadProgress(record) {
+    return !!(record && record.updatedAt && getReadProgressPercent(record) >= 100);
+  }
+
+  function mergeReadProgressRecord(previous, next) {
+    if (!next) return previous || null;
+    if (isCompletedReadProgress(previous) && !isCompletedReadProgress(next)) return previous;
+    return next;
+  }
+
+  function formatReadProgress(record) {
+    if (!record || !record.updatedAt) return '';
+    var percent = getReadProgressPercent(record);
+    var page = Number(record.page) || 1;
+    return (page > 1 ? '第 ' + page + ' 页 · ' : '') + percent + '%';
+  }
+
+  function pruneReadProgress(progress, limit) {
+    var source = progress || {};
+    var max = Math.max(1, Number(limit) || READ_PROGRESS_LIMIT);
+    var keys = Object.keys(source)
+      .filter(function hasProgress(key) {
+        return source[key] && source[key].updatedAt;
+      })
+      .sort(function sortByUpdatedAt(left, right) {
+        return (Number(source[right].updatedAt) || 0) - (Number(source[left].updatedAt) || 0);
+      })
+      .slice(0, max);
+    var result = {};
+    keys.forEach(function keepProgress(key) {
+      result[key] = source[key];
+    });
+    return result;
+  }
+
+  function getWatchCenterEntries(watch, progress) {
+    var progressMap = progress || {};
+    return Object.keys(watch || {})
+      .filter(function hasWatchItem(key) {
+        var item = watch[key];
+        return item && (item.title || item.url);
+      })
+      .map(function toWatchEntry(key) {
+        var item = watch[key] || {};
+        var record = progressMap[key] || {};
+        return {
+          id: key,
+          title: String(record.title || item.title || '未命名帖子'),
+          url: String(item.url || record.url || ''),
+          savedAt: Number(item.savedAt) || 0,
+          progressAt: Number(record.updatedAt) || 0,
+          progressUrl: String(record.url || item.url || ''),
+          progressText: formatReadProgress(record),
+        };
+      })
+      .sort(function sortBySavedAt(left, right) {
+        return (right.savedAt || 0) - (left.savedAt || 0);
+      });
+  }
+
+  function getHistoryCenterEntries(progress) {
+    return Object.keys(progress || {})
+      .filter(function hasHistoryItem(key) {
+        var item = progress[key];
+        return item && (item.title || item.url) && item.updatedAt;
+      })
+      .map(function toHistoryEntry(key) {
+        var item = progress[key] || {};
+        return {
+          id: key,
+          title: String(item.title || '未命名帖子'),
+          url: String(item.url || ''),
+          page: Number(item.page) || 1,
+          scrollY: Math.max(0, Number(item.scrollY) || 0),
+          progressAt: Number(item.updatedAt) || 0,
+          progressText: formatReadProgress(item),
+        };
+      })
+      .sort(function sortByProgressAt(left, right) {
+        return (right.progressAt || 0) - (left.progressAt || 0);
+      });
+  }
+
+  function getAutoBuyStatusLabel(status) {
+    var labels = {
+      checking: '检查中',
+      skipped: '已跳过',
+      buying: '购买中',
+      done: '已完成',
+      failed: '失败',
+    };
+    return labels[status] || '未知';
+  }
+
+  function getAutoBuyCenterEntries(attempts) {
+    return Object.keys(attempts || {})
+      .filter(function hasAttempt(key) {
+        return attempts[key] && attempts[key].status;
+      })
+      .map(function toAutoBuyEntry(key) {
+        var item = attempts[key] || {};
+        return {
+          key: key,
+          status: String(item.status || ''),
+          statusLabel: getAutoBuyStatusLabel(item.status),
+          message: String(item.message || ''),
+          url: String(item.url || ''),
+          price: item.price === undefined ? null : Number(item.price),
+          balance: item.balance === undefined ? null : Number(item.balance),
+          updatedAt: Number(item.updatedAt) || 0,
+        };
+      })
+      .sort(function sortByUpdatedAt(left, right) {
+        return (right.updatedAt || 0) - (left.updatedAt || 0);
+      });
   }
 
   function containsAny(value, needles) {
@@ -225,6 +358,24 @@
     return width >= 120 || height >= 120;
   }
 
+  function clampPreviewZoom(value) {
+    var zoom = Number(value);
+    if (!isFinite(zoom)) return 1;
+    return Math.min(4, Math.max(0.5, Math.round(zoom * 100) / 100));
+  }
+
+  function getPreviewLightboxKeyAction(event) {
+    if (!event || event.altKey || event.ctrlKey || event.metaKey) return '';
+    var key = event.key || event.code || '';
+    if (key === 'Escape' || key === 'Esc') return 'close';
+    if (key === 'ArrowLeft' || key === 'Left') return 'previous';
+    if (key === 'ArrowRight' || key === 'Right') return 'next';
+    if (key === '+' || key === '=' || key === 'Add') return 'zoomIn';
+    if (key === '-' || key === '_' || key === 'Subtract') return 'zoomOut';
+    if (key === '0' || key === 'Digit0' || key === 'Numpad0') return 'zoomReset';
+    return '';
+  }
+
   function parsePostPrice(value) {
     var text = String(value || '').replace(/\s+/g, ' ');
     var patterns = [
@@ -274,6 +425,45 @@
     } catch (error) {
       return '';
     }
+  }
+
+  function getAutoBuyAttemptKey(targetUrl, pageUrl) {
+    var tid = '';
+    var pid = '';
+    try {
+      var url = new URL(String(targetUrl || ''), pageUrl || 'https://south-plus.org/');
+      tid = url.searchParams.get('tid') || parseThreadId(pageUrl) || parseThreadId(targetUrl);
+      pid = url.searchParams.get('pid') || 'tpc';
+    } catch (error) {
+      tid = parseThreadId(targetUrl) || parseThreadId(pageUrl);
+      pid = 'tpc';
+    }
+    if (!tid) return '';
+    return tid + ':' + (pid || 'tpc');
+  }
+
+  function isAutoBuyAttemptBlocked(record, now) {
+    if (!record || !record.status) return false;
+    if (record.status === 'skipped') return false;
+    if (record.status === 'checking') {
+      var checkedAt = Number(record.updatedAt) || 0;
+      var currentTime = now === undefined ? Date.now() : Number(now);
+      return !checkedAt || (currentTime - checkedAt) <= AUTO_BUY_CHECK_TTL;
+    }
+    return record.status === 'buying' || record.status === 'done' || record.status === 'failed';
+  }
+
+  function formatAutoBuyAttemptMessage(record) {
+    var data = record || {};
+    var labels = {
+      checking: '上次检查尚未完成',
+      buying: '已发起过购买请求',
+      done: '已记录购买完成',
+      failed: '上次自动购买失败',
+    };
+    var label = labels[data.status] || '已有自动购买记录';
+    var detail = data.message ? '，记录：' + data.message : '';
+    return '自动购买未重复执行：' + label + detail + '。如需重试，请清空自动购买记录后再操作。';
   }
 
   function parseTodayCount(text) {
@@ -466,6 +656,58 @@
     var storage = getStorage();
     if (!storage) return;
     storage.setItem(key, JSON.stringify(map || {}));
+  }
+
+  function loadReadProgress() {
+    return pruneReadProgress(loadMap(PROGRESS_KEY));
+  }
+
+  function saveReadProgress(progress) {
+    saveMap(PROGRESS_KEY, pruneReadProgress(progress));
+  }
+
+  function pruneAutoBuyAttempts(attempts) {
+    var source = attempts || {};
+    var keys = Object.keys(source)
+      .filter(function hasRecord(key) {
+        return source[key] && source[key].status;
+      })
+      .sort(function sortByUpdatedAt(left, right) {
+        return (Number(source[right].updatedAt) || 0) - (Number(source[left].updatedAt) || 0);
+      })
+      .slice(0, AUTO_BUY_ATTEMPT_LIMIT);
+    var result = {};
+    keys.forEach(function keepAttempt(key) {
+      result[key] = source[key];
+    });
+    return result;
+  }
+
+  function loadAutoBuyAttempts() {
+    return pruneAutoBuyAttempts(loadMap(AUTO_BUY_KEY));
+  }
+
+  function saveAutoBuyAttempts(attempts) {
+    saveMap(AUTO_BUY_KEY, pruneAutoBuyAttempts(attempts));
+  }
+
+  function recordAutoBuyAttempt(key, status, message, details) {
+    if (!key) return null;
+    var record = {
+      status: status,
+      message: String(message || ''),
+      updatedAt: Date.now(),
+    };
+    var extra = details || {};
+    if (extra.url) record.url = String(extra.url);
+    if (extra.price !== undefined) record.price = Number(extra.price);
+    if (extra.balance !== undefined) record.balance = Number(extra.balance);
+
+    var attempts = loadAutoBuyAttempts();
+    attempts[key] = record;
+    saveAutoBuyAttempts(attempts);
+    refreshAutoBuyCenter();
+    return record;
   }
 
   function currentPageNumber(url) {
@@ -682,6 +924,24 @@
       '.spx-reader .spx-preview-item:hover .spx-preview-hover-image,.spx-immersive-read .spx-preview-item:hover .spx-preview-hover-image{display:block!important;}',
       '.spx-reader .spx-preview-item span,.spx-immersive-read .spx-preview-item span{display:block!important;padding:5px 7px!important;font-size:12px!important;line-height:1.35!important;color:#475569!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
       '.spx-reader .spx-preview-source,.spx-immersive-read .spx-preview-source{display:none!important;}',
+      '.spx-preview-lightbox{position:fixed!important;inset:0!important;z-index:100010!important;box-sizing:border-box!important;display:flex!important;padding:18px!important;background:rgba(2,6,23,.9)!important;backdrop-filter:blur(5px)!important;color:#e2e8f0!important;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
+      '.spx-preview-lightbox-shell{box-sizing:border-box!important;display:flex!important;flex:1!important;min-width:0!important;min-height:0!important;flex-direction:column!important;overflow:hidden!important;border:1px solid rgba(148,163,184,.34)!important;border-radius:12px!important;background:#020617!important;box-shadow:0 24px 80px rgba(0,0,0,.5)!important;}',
+      '.spx-preview-lightbox-toolbar{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;min-height:48px!important;padding:8px 10px 8px 14px!important;border-bottom:1px solid rgba(148,163,184,.22)!important;background:#0f172a!important;}',
+      '.spx-preview-lightbox-counter{font-weight:700!important;color:#f8fafc!important;white-space:nowrap!important;}',
+      '.spx-preview-lightbox-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;flex-wrap:wrap!important;gap:6px!important;}',
+      '.spx-preview-lightbox button{box-sizing:border-box!important;min-width:34px!important;height:32px!important;margin:0!important;padding:0 10px!important;border:1px solid #334155!important;border-radius:7px!important;background:#1e293b!important;color:#e2e8f0!important;cursor:pointer!important;font:600 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
+      '.spx-preview-lightbox button:hover,.spx-preview-lightbox button:focus-visible{border-color:#38bdf8!important;background:#0c4a6e!important;color:#fff!important;outline:none!important;}',
+      '.spx-preview-lightbox-zoom{display:inline-flex!important;min-width:58px!important;justify-content:center!important;color:#cbd5e1!important;font-variant-numeric:tabular-nums!important;}',
+      '.spx-preview-lightbox-stage{position:relative!important;flex:1!important;min-height:0!important;overflow:hidden!important;background:#020617!important;}',
+      '.spx-preview-lightbox-viewport{position:absolute!important;inset:0!important;overflow:auto!important;overscroll-behavior:contain!important;}',
+      '.spx-preview-lightbox-canvas{box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:center!important;min-width:100%!important;min-height:100%!important;padding:34px 78px!important;}',
+      '.spx-preview-lightbox-image{display:block!important;flex:none!important;max-width:none!important;max-height:none!important;object-fit:contain!important;background:#fff!important;box-shadow:0 16px 50px rgba(0,0,0,.45)!important;}',
+      '.spx-preview-lightbox-nav{position:absolute!important;top:50%!important;z-index:2!important;width:46px!important;height:64px!important;padding:0!important;transform:translateY(-50%)!important;border-color:rgba(148,163,184,.35)!important;background:rgba(15,23,42,.78)!important;font-size:30px!important;}',
+      '.spx-preview-lightbox-prev{left:14px!important;}',
+      '.spx-preview-lightbox-next{right:14px!important;}',
+      '.spx-preview-lightbox-caption{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;min-height:38px!important;padding:7px 14px!important;border-top:1px solid rgba(148,163,184,.22)!important;background:#0f172a!important;color:#94a3b8!important;}',
+      '.spx-preview-lightbox-url{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
+      '.spx-preview-lightbox-help{flex:none!important;white-space:nowrap!important;font-size:12px!important;color:#64748b!important;}',
       '.spx-clean #infobox,.spx-clean #notice,.spx-clean #footer,.spx-clean .footer{display:none!important;}',
       '.spx-clean:not(.spx-site-shell) #wrapA{max-width:1180px!important;margin:0 auto!important;}',
       '.spx-clean #main{margin-top:8px!important;}',
@@ -701,6 +961,22 @@
       '.spx-settings .spx-row{display:flex;gap:8px;margin-top:10px;}',
       '.spx-settings button{border:1px solid var(--spx-line);border-radius:6px;background:#fff;padding:6px 10px;cursor:pointer;}',
       '.spx-settings .spx-primary{background:var(--spx-accent);border-color:var(--spx-accent);color:#fff;}',
+      '.spx-watch-center{position:fixed;right:66px;bottom:18px;width:min(460px,calc(100vw - 24px));max-height:80vh;overflow:auto;z-index:100000;background:var(--spx-panel);border:1px solid var(--spx-line);box-shadow:0 12px 36px rgba(15,23,42,.24);border-radius:8px;padding:12px;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;}',
+      '.spx-watch-center[hidden]{display:none!important;}',
+      '.spx-watch-center-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;}',
+      '.spx-watch-center h3{margin:0;font-size:15px;}',
+      '.spx-watch-center .spx-watch-summary{color:var(--spx-sub);font-size:12px;}',
+      '.spx-watch-list{display:flex;flex-direction:column;gap:8px;}',
+      '.spx-watch-item{box-sizing:border-box;padding:9px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;}',
+      '.spx-watch-title{display:block;margin-bottom:4px;color:#075985!important;font-size:14px;font-weight:800;line-height:1.35;text-decoration:none;}',
+      '.spx-watch-meta{margin-bottom:8px;color:var(--spx-sub);font-size:12px;}',
+      '.spx-watch-actions{display:flex;flex-wrap:wrap;gap:6px;}',
+      '.spx-watch-actions button,.spx-watch-actions a,.spx-watch-center-header button{border:1px solid var(--spx-line);border-radius:6px;background:#fff;color:var(--spx-text);padding:4px 8px;cursor:pointer;text-decoration:none;font-size:12px;line-height:1.25;}',
+      '.spx-watch-actions button:hover,.spx-watch-actions a:hover,.spx-watch-center-header button:hover{border-color:var(--spx-accent);color:var(--spx-accent);}',
+      '.spx-watch-empty{padding:14px 2px;color:var(--spx-sub);font-size:13px;}',
+      '.spx-status-badge{display:inline-block;margin-right:6px;padding:1px 6px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:800;}',
+      '.spx-status-badge.spx-status-failed{background:#fee2e2;color:#b91c1c;}',
+      '.spx-status-badge.spx-status-done{background:#dcfce7;color:#15803d;}',
       '.spx-quick-reply{box-sizing:border-box;margin:10px 0 12px;padding:10px 12px;border:1px solid var(--spx-line);border-radius:8px;background:#f8fafc;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;}',
       '.spx-quick-reply-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;color:var(--spx-sub);}',
       '.spx-quick-reply-header strong{color:var(--spx-text);font-size:14px;}',
@@ -750,7 +1026,7 @@
       '.spx-folded-quote{max-height:110px;overflow:hidden;position:relative;border-bottom:1px dashed var(--spx-line);}',
       '.spx-folded-quote:after{content:"";position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(transparent,var(--spx-panel));}',
       '@media(max-width:900px){.spx-home-dashboard #content{width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-home-dashboard #spx-home-grid{grid-template-columns:1fr!important}.spx-home-dashboard .spx-home-module,.spx-home-dashboard .spx-home-module[data-spx-large="1"]{grid-column:1!important}.spx-home-dashboard #header,.spx-home-dashboard #mainNav,.spx-home-dashboard #infobox,.spx-home-dashboard #notice,.spx-home-dashboard .spx-home-quick{width:calc(100vw - 16px)!important}.spx-home-dashboard .spx-home-module tr.tr3{grid-template-columns:1fr!important;gap:4px!important}.spx-home-dashboard .spx-home-module tr.tr3>td:first-child{display:none!important}}',
-      '@media(max-width:760px){.spx-reader body{font-size:16px!important}.spx-reader #wrapA{width:auto!important;margin:0 6px!important}.spx-reader .tpc_content{font-size:17px!important;line-height:1.9!important;padding:12px!important}.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{display:flex!important;flex-direction:column!important;gap:12px!important;padding:14px!important}.spx-reader .spx-post-body-split .tpc_content,.spx-immersive-read .spx-post-body-split .tpc_content{padding:0!important}.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{width:auto!important;max-height:360px!important;margin:0!important;padding:10px!important}.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{height:132px!important}.spx-immersive-read #wrapA,.spx-immersive-read #main,.spx-immersive-read #content{width:100vw!important;margin:0!important}.spx-immersive-read table.js-post{width:calc(100vw - 14px)!important;margin:10px 7px!important}.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{font-size:19px!important;padding:16px 14px 6px!important}.spx-immersive-read .tpc_content{font-size:var(--spx-immersive-font-size,20px)!important;line-height:1.98!important;padding:14px!important}.spx-toolbar{right:8px;bottom:8px}.spx-toolbar button,.spx-toolbar a{width:38px;height:30px}.spx-settings{right:8px;bottom:52px}}',
+      '@media(max-width:760px){.spx-preview-lightbox{padding:0!important}.spx-preview-lightbox-shell{border:0!important;border-radius:0!important}.spx-preview-lightbox-toolbar{align-items:flex-start!important;min-height:0!important;padding:8px!important}.spx-preview-lightbox-actions{gap:4px!important}.spx-preview-lightbox button{height:30px!important;padding:0 8px!important}.spx-preview-lightbox-canvas{padding:22px 50px!important}.spx-preview-lightbox-nav{width:38px!important;height:54px!important;font-size:26px!important}.spx-preview-lightbox-prev{left:6px!important}.spx-preview-lightbox-next{right:6px!important}.spx-preview-lightbox-caption{padding:6px 9px!important}.spx-preview-lightbox-help{display:none!important}.spx-reader body{font-size:16px!important}.spx-reader #wrapA{width:auto!important;margin:0 6px!important}.spx-reader .tpc_content{font-size:17px!important;line-height:1.9!important;padding:12px!important}.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{display:flex!important;flex-direction:column!important;gap:12px!important;padding:14px!important}.spx-reader .spx-post-body-split .tpc_content,.spx-immersive-read .spx-post-body-split .tpc_content{padding:0!important}.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{width:auto!important;max-height:360px!important;margin:0!important;padding:10px!important}.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{height:132px!important}.spx-immersive-read #wrapA,.spx-immersive-read #main,.spx-immersive-read #content{width:100vw!important;margin:0!important}.spx-immersive-read table.js-post{width:calc(100vw - 14px)!important;margin:10px 7px!important}.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{font-size:19px!important;padding:16px 14px 6px!important}.spx-immersive-read .tpc_content{font-size:var(--spx-immersive-font-size,20px)!important;line-height:1.98!important;padding:14px!important}.spx-toolbar{right:8px;bottom:8px}.spx-toolbar button,.spx-toolbar a{width:38px;height:30px}.spx-settings,.spx-watch-center{right:8px;bottom:52px}}',
     ].join('\n');
   }
 
@@ -930,6 +1206,430 @@
     return tr;
   }
 
+  function createWatchBadge(id) {
+    var badge = createEl('span', 'spx-watch-badge', '★');
+    badge.dataset.spxWatchId = String(id || '');
+    return badge;
+  }
+
+  function formatShortTime(timestamp) {
+    var value = Number(timestamp) || 0;
+    if (!value) return '';
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return '';
+    function pad(number) {
+      return String(number).padStart(2, '0');
+    }
+    return pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' +
+      pad(date.getHours()) + ':' + pad(date.getMinutes());
+  }
+
+  function renderWatchCenter(panel, state) {
+    if (!panel) return;
+    state.watch = state.watch || {};
+    state.progress = state.progress || {};
+    var entries = getWatchCenterEntries(state.watch, state.progress);
+
+    panel.textContent = '';
+    var header = createEl('div', 'spx-watch-center-header');
+    var title = createEl('div');
+    title.appendChild(createEl('h3', '', '稍后看中心'));
+    title.appendChild(createEl('div', 'spx-watch-summary', entries.length + ' 条已保存主题'));
+    header.appendChild(title);
+
+    var headerActions = createEl('div', 'spx-watch-actions');
+    if (entries.length) {
+      var clearButton = createEl('button', '', '清空');
+      clearButton.dataset.action = 'clear-watch';
+      headerActions.appendChild(clearButton);
+    }
+    var closeButton = createEl('button', '', '关闭');
+    closeButton.dataset.action = 'close-watch';
+    headerActions.appendChild(closeButton);
+    header.appendChild(headerActions);
+    panel.appendChild(header);
+
+    if (!entries.length) {
+      panel.appendChild(createEl('div', 'spx-watch-empty', '还没有保存的主题。可在帖子列表点击“稍后”加入。'));
+      return;
+    }
+
+    var list = createEl('div', 'spx-watch-list');
+    entries.forEach(function appendEntry(entry) {
+      var item = createEl('div', 'spx-watch-item');
+      item.dataset.id = entry.id;
+
+      var link = createEl('a', 'spx-watch-title', entry.title);
+      link.href = entry.url || entry.progressUrl || '#';
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      item.appendChild(link);
+
+      var metaParts = [];
+      if (entry.savedAt) metaParts.push('保存 ' + formatShortTime(entry.savedAt));
+      if (entry.progressText) metaParts.push('进度 ' + entry.progressText);
+      item.appendChild(createEl('div', 'spx-watch-meta', metaParts.join(' · ') || '暂无进度'));
+
+      var actions = createEl('div', 'spx-watch-actions');
+      if (entry.progressAt && entry.progressUrl) {
+        var continueButton = createEl('button', '', '继续阅读');
+        continueButton.dataset.action = 'continue-watch';
+        continueButton.dataset.id = entry.id;
+        actions.appendChild(continueButton);
+      }
+
+      var openLink = createEl('a', '', '打开');
+      openLink.href = entry.url || entry.progressUrl || '#';
+      openLink.target = '_blank';
+      openLink.rel = 'noreferrer';
+      actions.appendChild(openLink);
+
+      var removeButton = createEl('button', '', '移除');
+      removeButton.dataset.action = 'remove-watch';
+      removeButton.dataset.id = entry.id;
+      actions.appendChild(removeButton);
+
+      item.appendChild(actions);
+      list.appendChild(item);
+    });
+    panel.appendChild(list);
+  }
+
+  function refreshWatchCenter(state) {
+    var panel = qs('#spx-watch-center');
+    if (!panel || panel.hidden || typeof panel.spxRender !== 'function') return;
+    panel.spxRender();
+  }
+
+  function createWatchCenterPanel(settings, state) {
+    var panel = qs('#spx-watch-center');
+    if (panel) return panel;
+
+    panel = createEl('div', 'spx-watch-center');
+    panel.id = 'spx-watch-center';
+    panel.hidden = true;
+    document.body.appendChild(panel);
+
+    panel.addEventListener('click', function handleWatchCenterClick(event) {
+      var target = event.target;
+      var action = target && target.dataset && target.dataset.action;
+      if (!action) return;
+
+      if (action === 'close-watch') {
+        panel.hidden = true;
+        qsa('[data-spx-watch-center-button="1"]').forEach(function deactivateButton(button) {
+          button.classList.remove('spx-active');
+        });
+        return;
+      }
+
+      if (action === 'clear-watch') {
+        if (typeof window.confirm === 'function' && !window.confirm('清空全部稍后看主题？')) return;
+        state.watch = {};
+        saveMap(WATCH_KEY, state.watch);
+        qsa('.spx-watch-badge').forEach(function removeBadge(badge) {
+          badge.remove();
+        });
+        renderWatchCenter(panel, state);
+        return;
+      }
+
+      var id = target.dataset.id;
+      if (!id) return;
+
+      if (action === 'remove-watch') {
+        delete state.watch[id];
+        saveMap(WATCH_KEY, state.watch);
+        qsa('.spx-watch-badge').forEach(function removeMatchingBadge(badge) {
+          if (badge.dataset.spxWatchId === id) badge.remove();
+        });
+        renderWatchCenter(panel, state);
+        return;
+      }
+
+      if (action === 'continue-watch') {
+        var entry = getWatchCenterEntries(state.watch, state.progress).filter(function matchEntry(item) {
+          return item.id === id;
+        })[0];
+        if (!entry) return;
+        requestReadProgressRestore(id);
+        if (detectPageType(location.href) === 'read' && parseThreadId(location.href) === id) {
+          restoreReadProgress(state, id);
+          return;
+        }
+        if (entry.progressUrl || entry.url) location.href = entry.progressUrl || entry.url;
+      }
+    });
+
+    panel.spxRender = function renderPanel() {
+      renderWatchCenter(panel, state);
+    };
+    panel.spxRender();
+    return panel;
+  }
+
+  function renderHistoryCenter(panel, state) {
+    if (!panel) return;
+    state.progress = state.progress || {};
+    var entries = getHistoryCenterEntries(state.progress);
+
+    panel.textContent = '';
+    var header = createEl('div', 'spx-watch-center-header');
+    var title = createEl('div');
+    title.appendChild(createEl('h3', '', '最近浏览'));
+    title.appendChild(createEl('div', 'spx-watch-summary', entries.length + ' 条阅读记录'));
+    header.appendChild(title);
+
+    var headerActions = createEl('div', 'spx-watch-actions');
+    if (entries.length) {
+      var clearButton = createEl('button', '', '清空');
+      clearButton.dataset.action = 'clear-history';
+      headerActions.appendChild(clearButton);
+    }
+    var closeButton = createEl('button', '', '关闭');
+    closeButton.dataset.action = 'close-history';
+    headerActions.appendChild(closeButton);
+    header.appendChild(headerActions);
+    panel.appendChild(header);
+
+    if (!entries.length) {
+      panel.appendChild(createEl('div', 'spx-watch-empty', '还没有阅读记录。打开帖子后会自动记录进度。'));
+      return;
+    }
+
+    var list = createEl('div', 'spx-watch-list');
+    entries.forEach(function appendHistory(entry) {
+      var item = createEl('div', 'spx-watch-item');
+      item.dataset.id = entry.id;
+
+      var link = createEl('a', 'spx-watch-title', entry.title);
+      link.href = entry.url || '#';
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      item.appendChild(link);
+
+      var metaParts = [];
+      if (entry.progressAt) metaParts.push('浏览 ' + formatShortTime(entry.progressAt));
+      if (entry.progressText) metaParts.push('进度 ' + entry.progressText);
+      item.appendChild(createEl('div', 'spx-watch-meta', metaParts.join(' · ') || '暂无进度'));
+
+      var actions = createEl('div', 'spx-watch-actions');
+      var continueButton = createEl('button', '', '继续阅读');
+      continueButton.dataset.action = 'continue-history';
+      continueButton.dataset.id = entry.id;
+      actions.appendChild(continueButton);
+
+      var openLink = createEl('a', '', '打开');
+      openLink.href = entry.url || '#';
+      openLink.target = '_blank';
+      openLink.rel = 'noreferrer';
+      actions.appendChild(openLink);
+
+      var removeButton = createEl('button', '', '移除');
+      removeButton.dataset.action = 'remove-history';
+      removeButton.dataset.id = entry.id;
+      actions.appendChild(removeButton);
+
+      item.appendChild(actions);
+      list.appendChild(item);
+    });
+    panel.appendChild(list);
+  }
+
+  function refreshHistoryCenter(state) {
+    var panel = qs('#spx-history-center');
+    if (!panel || panel.hidden || typeof panel.spxRender !== 'function') return;
+    panel.spxRender();
+  }
+
+  function createHistoryCenterPanel(settings, state) {
+    var panel = qs('#spx-history-center');
+    if (panel) return panel;
+
+    panel = createEl('div', 'spx-watch-center');
+    panel.id = 'spx-history-center';
+    panel.hidden = true;
+    document.body.appendChild(panel);
+
+    panel.addEventListener('click', function handleHistoryCenterClick(event) {
+      var target = event.target;
+      var action = target && target.dataset && target.dataset.action;
+      if (!action) return;
+
+      if (action === 'close-history') {
+        panel.hidden = true;
+        qsa('[data-spx-history-center-button="1"]').forEach(function deactivateButton(button) {
+          button.classList.remove('spx-active');
+        });
+        return;
+      }
+
+      if (action === 'clear-history') {
+        if (typeof window.confirm === 'function' && !window.confirm('清空全部阅读记录？')) return;
+        state.progress = {};
+        saveReadProgress(state.progress);
+        clearReadProgressRestoreRequest(parseThreadId(location.href));
+        refreshWatchCenter(state);
+        renderHistoryCenter(panel, state);
+        return;
+      }
+
+      var id = target.dataset.id;
+      if (!id) return;
+
+      if (action === 'remove-history') {
+        delete state.progress[id];
+        saveReadProgress(state.progress);
+        refreshWatchCenter(state);
+        renderHistoryCenter(panel, state);
+        return;
+      }
+
+      if (action === 'continue-history') {
+        var entry = getHistoryCenterEntries(state.progress).filter(function matchEntry(item) {
+          return item.id === id;
+        })[0];
+        if (!entry) return;
+        requestReadProgressRestore(id);
+        if (detectPageType(location.href) === 'read' && parseThreadId(location.href) === id) {
+          restoreReadProgress(state, id);
+          return;
+        }
+        if (entry.url) location.href = entry.url;
+      }
+    });
+
+    panel.spxRender = function renderPanel() {
+      renderHistoryCenter(panel, state);
+    };
+    panel.spxRender();
+    return panel;
+  }
+
+  function renderAutoBuyCenter(panel) {
+    if (!panel) return;
+    var entries = getAutoBuyCenterEntries(loadAutoBuyAttempts());
+
+    panel.textContent = '';
+    var header = createEl('div', 'spx-watch-center-header');
+    var title = createEl('div');
+    title.appendChild(createEl('h3', '', '自动购买记录'));
+    title.appendChild(createEl('div', 'spx-watch-summary', entries.length + ' 条执行记录'));
+    header.appendChild(title);
+
+    var headerActions = createEl('div', 'spx-watch-actions');
+    if (entries.length) {
+      var clearButton = createEl('button', '', '清空');
+      clearButton.dataset.action = 'clear-auto-buy-records';
+      headerActions.appendChild(clearButton);
+    }
+    var closeButton = createEl('button', '', '关闭');
+    closeButton.dataset.action = 'close-auto-buy-center';
+    headerActions.appendChild(closeButton);
+    header.appendChild(headerActions);
+    panel.appendChild(header);
+
+    if (!entries.length) {
+      panel.appendChild(createEl('div', 'spx-watch-empty', '还没有自动购买记录。开启自动购买并遇到付费帖后会记录执行状态。'));
+      return;
+    }
+
+    var list = createEl('div', 'spx-watch-list');
+    entries.forEach(function appendAttempt(entry) {
+      var item = createEl('div', 'spx-watch-item');
+      item.dataset.key = entry.key;
+
+      var titleLine = createEl(entry.url ? 'a' : 'div', 'spx-watch-title');
+      var badge = createEl('span', 'spx-status-badge spx-status-' + entry.status, entry.statusLabel);
+      titleLine.appendChild(badge);
+      titleLine.appendChild(document.createTextNode(entry.key));
+      if (entry.url) {
+        titleLine.href = entry.url;
+        titleLine.target = '_blank';
+        titleLine.rel = 'noreferrer';
+      }
+      item.appendChild(titleLine);
+
+      var metaParts = [];
+      if (entry.updatedAt) metaParts.push('记录 ' + formatShortTime(entry.updatedAt));
+      if (entry.price !== null && isFinite(entry.price)) metaParts.push('价格 ' + entry.price + ' SP');
+      if (entry.balance !== null && isFinite(entry.balance)) metaParts.push('余额 ' + entry.balance + ' SP');
+      if (entry.message) metaParts.push(entry.message);
+      item.appendChild(createEl('div', 'spx-watch-meta', metaParts.join(' · ') || '暂无详情'));
+
+      var actions = createEl('div', 'spx-watch-actions');
+      if (entry.url) {
+        var openLink = createEl('a', '', '打开');
+        openLink.href = entry.url;
+        openLink.target = '_blank';
+        openLink.rel = 'noreferrer';
+        actions.appendChild(openLink);
+      }
+      var removeButton = createEl('button', '', '删除记录');
+      removeButton.dataset.action = 'remove-auto-buy-record';
+      removeButton.dataset.key = entry.key;
+      actions.appendChild(removeButton);
+      item.appendChild(actions);
+      list.appendChild(item);
+    });
+    panel.appendChild(list);
+  }
+
+  function refreshAutoBuyCenter() {
+    var panel = qs('#spx-auto-buy-center');
+    if (!panel || panel.hidden || typeof panel.spxRender !== 'function') return;
+    panel.spxRender();
+  }
+
+  function createAutoBuyCenterPanel(settings, state) {
+    var panel = qs('#spx-auto-buy-center');
+    if (panel) return panel;
+
+    panel = createEl('div', 'spx-watch-center');
+    panel.id = 'spx-auto-buy-center';
+    panel.hidden = true;
+    document.body.appendChild(panel);
+
+    panel.addEventListener('click', function handleAutoBuyCenterClick(event) {
+      var target = event.target;
+      var action = target && target.dataset && target.dataset.action;
+      if (!action) return;
+
+      if (action === 'close-auto-buy-center') {
+        panel.hidden = true;
+        qsa('[data-spx-auto-buy-center-button="1"]').forEach(function deactivateButton(button) {
+          button.classList.remove('spx-active');
+        });
+        return;
+      }
+
+      if (action === 'clear-auto-buy-records') {
+        if (typeof window.confirm === 'function' && !window.confirm('清空全部自动购买记录？')) return;
+        saveAutoBuyAttempts({});
+        delete document.documentElement.dataset.spxAutoBuyStatus;
+        var status = qs('#spx-auto-buy-status');
+        if (status) status.remove();
+        renderAutoBuyCenter(panel);
+        return;
+      }
+
+      if (action === 'remove-auto-buy-record') {
+        var key = target.dataset.key;
+        if (!key) return;
+        var attempts = loadAutoBuyAttempts();
+        delete attempts[key];
+        saveAutoBuyAttempts(attempts);
+        renderAutoBuyCenter(panel);
+      }
+    });
+
+    panel.spxRender = function renderPanel() {
+      renderAutoBuyCenter(panel);
+    };
+    panel.spxRender();
+    return panel;
+  }
+
   function createForumQuickTools(settings, state, items) {
     if (qs('#spx-forum-tools')) return;
     var content = qs('#content') || qs('#main') || document.body;
@@ -941,9 +1641,13 @@
     input.type = 'search';
     input.placeholder = '快速过滤：关键词、!排除、作者:用户名';
     var markVisibleButton = createEl('button', '', '可见已读');
+    var watchVisibleButton = createEl('button', '', '可见稍后');
+    var preloadNextButton = createEl('button', '', '预载下页');
     var clearButton = createEl('button', '', '清空过滤');
     tools.appendChild(input);
     tools.appendChild(markVisibleButton);
+    tools.appendChild(watchVisibleButton);
+    tools.appendChild(preloadNextButton);
     tools.appendChild(clearButton);
 
     function applyFilter() {
@@ -966,6 +1670,59 @@
       items.forEach(function syncRead(item) {
         if (item.row && state.read[item.id]) item.row.classList.add('spx-read-thread');
       });
+    });
+    watchVisibleButton.addEventListener('click', function watchVisibleThreads() {
+      var count = 0;
+      state.watch = state.watch || {};
+      items.forEach(function saveVisibleWatch(item) {
+        if (!item || !item.id || !item.titleLink || !isVisibleThreadRow(item.row)) return;
+        if (state.watch[item.id]) return;
+        state.watch[item.id] = {
+          title: item.title,
+          url: item.titleLink.href,
+          savedAt: Date.now(),
+        };
+        count += 1;
+        var button = qs('.spx-thread-tools button', item.cell);
+        if (button && button.textContent === '稍后') button.textContent = '已存';
+        if (!qs('.spx-watch-badge', item.cell)) {
+          item.titleLink.insertAdjacentElement('afterend', createWatchBadge(item.id));
+        }
+      });
+      saveMap(WATCH_KEY, state.watch);
+      refreshWatchCenter(state);
+      watchVisibleButton.textContent = count ? '已存 ' + count + ' 条' : '无新增';
+      window.setTimeout(function resetWatchVisibleText() {
+        watchVisibleButton.textContent = '可见稍后';
+      }, 1600);
+    });
+    preloadNextButton.addEventListener('click', function preloadNextPage() {
+      if (typeof window.fetch !== 'function') return;
+      var nextUrl = buildPageUrl(location.href, currentPageNumber(location.href) + 1);
+      preloadNextButton.disabled = true;
+      preloadNextButton.textContent = '预载中';
+      window.fetch(nextUrl, {
+        credentials: 'include',
+        cache: 'force-cache',
+      })
+        .then(function readNextPage(response) {
+          if (!response.ok) throw new Error('下一页加载失败');
+          return response.text();
+        })
+        .then(function showNextPageCount(html) {
+          var doc = new DOMParser().parseFromString(html, 'text/html');
+          var count = qsa('td[id^="td_"]', doc).length;
+          preloadNextButton.textContent = count ? '已预载 ' + count + ' 条' : '已预载';
+        })
+        .catch(function showPreloadFailure() {
+          preloadNextButton.textContent = '预载失败';
+        })
+        .then(function resetPreloadButton() {
+          window.setTimeout(function resetPreloadText() {
+            preloadNextButton.disabled = false;
+            preloadNextButton.textContent = '预载下页';
+          }, 1800);
+        });
     });
 
     content.insertBefore(tools, content.firstChild);
@@ -1087,7 +1844,7 @@
       info.row.classList.toggle('spx-hidden-rule', matchesBlockRules(info, settings));
 
       if (state.watch[info.id] && !qs('.spx-watch-badge', info.cell)) {
-        info.titleLink.insertAdjacentElement('afterend', createEl('span', 'spx-watch-badge', '★'));
+        info.titleLink.insertAdjacentElement('afterend', createWatchBadge(info.id));
       }
 
       if (qs('.spx-thread-tools', info.cell)) return;
@@ -1119,9 +1876,10 @@
             savedAt: Date.now(),
           };
           watchButton.textContent = '已存';
-          info.titleLink.insertAdjacentElement('afterend', createEl('span', 'spx-watch-badge', '★'));
+          info.titleLink.insertAdjacentElement('afterend', createWatchBadge(info.id));
         }
         saveMap(WATCH_KEY, state.watch);
+        refreshWatchCenter(state);
       });
 
       titleBlockButton.addEventListener('click', function blockTitle(event) {
@@ -1189,6 +1947,140 @@
 
   function compactText(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function getSessionStorage() {
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) return window.sessionStorage;
+    } catch (error) {
+      return null;
+    }
+    return null;
+  }
+
+  function requestReadProgressRestore(tid) {
+    var storage = getSessionStorage();
+    if (!storage || !tid) return;
+    storage.setItem(RESTORE_PROGRESS_KEY, String(tid));
+  }
+
+  function shouldRestoreReadProgress(tid) {
+    var storage = getSessionStorage();
+    if (!storage || !tid) return false;
+    return storage.getItem(RESTORE_PROGRESS_KEY) === String(tid);
+  }
+
+  function clearReadProgressRestoreRequest(tid) {
+    var storage = getSessionStorage();
+    if (!storage || !tid) return;
+    if (storage.getItem(RESTORE_PROGRESS_KEY) === String(tid)) {
+      storage.removeItem(RESTORE_PROGRESS_KEY);
+    }
+  }
+
+  function getReadPageTitle(root) {
+    var scope = root || document;
+    var titleNode =
+      qs('[id^="subject_"]', scope) ||
+      qs('.h1', scope) ||
+      qs('h1', scope) ||
+      qs('title', scope);
+    return compactText(titleNode && titleNode.textContent) || compactText(document.title) || '未命名帖子';
+  }
+
+  function getScrollTop() {
+    return Number(
+      window.pageYOffset ||
+      document.documentElement.scrollTop ||
+      (document.body && document.body.scrollTop) ||
+      0
+    ) || 0;
+  }
+
+  function getReadScrollRatio() {
+    var doc = document.documentElement;
+    var body = document.body;
+    var scrollHeight = Math.max(
+      doc ? doc.scrollHeight : 0,
+      body ? body.scrollHeight : 0
+    );
+    var viewportHeight = window.innerHeight || (doc && doc.clientHeight) || 0;
+    var maxScroll = scrollHeight - viewportHeight;
+    if (!(maxScroll > 0)) return 0;
+    return clampRatio(getScrollTop() / maxScroll);
+  }
+
+  function buildReadProgressRecord(tid) {
+    if (!tid) return null;
+    return {
+      title: getReadPageTitle(document),
+      url: location.href.split('#')[0],
+      page: currentPageNumber(location.href),
+      scrollY: Math.max(0, Math.round(getScrollTop())),
+      progress: getReadScrollRatio(),
+      updatedAt: Date.now(),
+    };
+  }
+
+  function saveReadProgressRecord(state, tid) {
+    var record = buildReadProgressRecord(tid);
+    if (!record) return null;
+    state.progress = state.progress || {};
+    state.progress[tid] = mergeReadProgressRecord(state.progress[tid], record);
+    state.progress = pruneReadProgress(state.progress);
+    saveReadProgress(state.progress);
+    refreshWatchCenter(state);
+    refreshHistoryCenter(state);
+    return state.progress[tid];
+  }
+
+  function restoreReadProgress(state, tid) {
+    var record = state && state.progress ? state.progress[tid] : null;
+    if (!record) {
+      clearReadProgressRestoreRequest(tid);
+      return false;
+    }
+    clearReadProgressRestoreRequest(tid);
+    window.setTimeout(function restoreScroll() {
+      var top = Math.max(0, Number(record.scrollY) || 0);
+      window.scrollTo({ top: top, behavior: 'smooth' });
+      window.setTimeout(function fallbackRestoreScroll() {
+        if (Math.abs(getScrollTop() - top) <= 8) return;
+        if (document.scrollingElement) document.scrollingElement.scrollTop = top;
+        if (document.documentElement) document.documentElement.scrollTop = top;
+        if (document.body) document.body.scrollTop = top;
+      }, 260);
+    }, 80);
+    return true;
+  }
+
+  function restorePendingReadProgress(state, tid) {
+    if (!shouldRestoreReadProgress(tid)) return false;
+    return restoreReadProgress(state, tid);
+  }
+
+  function bindReadProgressTracking(state, tid) {
+    if (!tid || !document.documentElement) return;
+    if (document.documentElement.dataset.spxReadProgressTid === String(tid)) return;
+    document.documentElement.dataset.spxReadProgressTid = String(tid);
+
+    var saveTimer = null;
+    function saveNow() {
+      if (saveTimer) window.clearTimeout(saveTimer);
+      saveTimer = null;
+      saveReadProgressRecord(state, tid);
+    }
+    function scheduleSave() {
+      if (saveTimer) window.clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(saveNow, 500);
+    }
+
+    window.addEventListener('scroll', scheduleSave, { passive: true });
+    window.addEventListener('pagehide', saveNow);
+    document.addEventListener('visibilitychange', function saveBeforeHidden() {
+      if (document.visibilityState === 'hidden') saveNow();
+    });
+    window.setTimeout(saveNow, 700);
   }
 
   function getPostUserLink(scope) {
@@ -1608,13 +2500,34 @@
     var maxPrice = Number(settings.autoBuyMaxSp);
     if (!target || !(maxPrice > 0) || !(target.price < maxPrice)) return;
 
+    var attemptKey = getAutoBuyAttemptKey(target.url, location.href);
+    var attempts = loadAutoBuyAttempts();
+    var previousAttempt = attemptKey ? attempts[attemptKey] : null;
+    if (isAutoBuyAttemptBlocked(previousAttempt)) {
+      pageRoot.dataset.spxAutoBuyStatus = 'blocked';
+      setAutoBuyStatus(target, formatAutoBuyAttemptMessage(previousAttempt), true);
+      return;
+    }
+
     pageRoot.dataset.spxAutoBuyStatus = 'checking';
+    recordAutoBuyAttempt(
+      attemptKey,
+      'checking',
+      '正在检查账户 SP 余额',
+      { price: target.price, url: target.url }
+    );
     setAutoBuyStatus(target, '自动购买：正在检查账户 SP 余额…', false);
 
     fetchCurrentUserSpBalance()
       .then(function purchaseWhenAffordable(balance) {
         if (!shouldAutoBuyPost(settings, target.price, balance)) {
           pageRoot.dataset.spxAutoBuyStatus = 'skipped';
+          recordAutoBuyAttempt(
+            attemptKey,
+            'skipped',
+            '余额 ' + balance + ' SP，帖子价格 ' + target.price + ' SP',
+            { balance: balance, price: target.price, url: target.url }
+          );
           setAutoBuyStatus(
             target,
             '自动购买未执行：当前余额 ' + balance + ' SP，帖子价格 ' + target.price + ' SP。',
@@ -1624,6 +2537,12 @@
         }
 
         pageRoot.dataset.spxAutoBuyStatus = 'buying';
+        recordAutoBuyAttempt(
+          attemptKey,
+          'buying',
+          '已发起支付 ' + target.price + ' SP 的购买请求',
+          { balance: balance, price: target.price, url: target.url }
+        );
         target.control.disabled = true;
         target.control.setAttribute('aria-disabled', 'true');
         setAutoBuyStatus(
@@ -1660,16 +2579,33 @@
           throw new Error('购买后仍存在购买按钮');
         }
 
-        pageRoot.dataset.spxAutoBuyStatus = 'done';
         if (!replaceReadPageContent(html, settings, state)) {
           throw new Error('无法更新帖子内容');
         }
+        pageRoot.dataset.spxAutoBuyStatus = 'done';
+        recordAutoBuyAttempt(
+          attemptKey,
+          'done',
+          '已支付 ' + target.price + ' SP 并加载帖子内容',
+          { price: target.price, url: target.url }
+        );
       })
-      .catch(function handleAutoBuyError() {
+      .catch(function handleAutoBuyError(error) {
+        var reason = error && error.message ? error.message : '未知错误';
         pageRoot.dataset.spxAutoBuyStatus = 'failed';
         target.control.disabled = false;
         target.control.removeAttribute('aria-disabled');
-        setAutoBuyStatus(target, '自动购买失败，已保留原购买按钮，请手动购买。', true);
+        recordAutoBuyAttempt(
+          attemptKey,
+          'failed',
+          reason,
+          { price: target.price, url: target.url }
+        );
+        setAutoBuyStatus(
+          target,
+          '自动购买失败：' + reason + '。已保留原购买按钮，请手动购买。',
+          true
+        );
       });
   }
 
@@ -1679,6 +2615,8 @@
     if (tid) {
       state.read[tid] = Date.now();
       saveMap(READ_KEY, state.read);
+      restorePendingReadProgress(state, tid);
+      bindReadProgressTracking(state, tid);
     }
 
     var posts = qsa('table.js-post');
@@ -1738,6 +2676,266 @@
     enhanceAutoBuyPost(settings, state);
   }
 
+  function fallbackCopyText(value) {
+    return new Promise(function copyWithSelection(resolve, reject) {
+      if (!document.body || typeof document.execCommand !== 'function') {
+        reject(new Error('当前浏览器不支持复制'));
+        return;
+      }
+      var textarea = createEl('textarea');
+      textarea.value = value;
+      textarea.setAttribute('readonly', 'readonly');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      var copied = false;
+      try {
+        copied = document.execCommand('copy');
+      } catch (error) {
+        copied = false;
+      }
+      textarea.remove();
+      if (copied) resolve();
+      else reject(new Error('复制失败'));
+    });
+  }
+
+  function copyTextToClipboard(value) {
+    var text = String(value || '');
+    if (!text) return Promise.reject(new Error('没有可复制的地址'));
+    if (
+      typeof navigator !== 'undefined' &&
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === 'function'
+    ) {
+      return navigator.clipboard.writeText(text).catch(function fallbackClipboard() {
+        return fallbackCopyText(text);
+      });
+    }
+    return fallbackCopyText(text);
+  }
+
+  function closePreviewLightbox() {
+    var lightbox = qs('#spx-preview-lightbox');
+    if (!lightbox) return;
+    if (typeof lightbox.spxClose === 'function') {
+      lightbox.spxClose();
+      return;
+    }
+    lightbox.remove();
+  }
+
+  function openPreviewLightbox(items, initialIndex) {
+    var images = (items || []).filter(function hasPreviewSource(item) {
+      return item && item.src;
+    });
+    if (!images.length || typeof document === 'undefined' || !document.body) return;
+
+    closePreviewLightbox();
+
+    var currentIndex = Math.min(
+      images.length - 1,
+      Math.max(0, Number(initialIndex) || 0)
+    );
+    var zoom = 1;
+    var previousBodyOverflow = document.body.style.overflow || '';
+    var copyStatusTimer = null;
+    var closed = false;
+
+    var lightbox = createEl('div', 'spx-preview-lightbox');
+    lightbox.id = 'spx-preview-lightbox';
+    lightbox.setAttribute('role', 'dialog');
+    lightbox.setAttribute('aria-modal', 'true');
+    lightbox.setAttribute('aria-label', '预览图灯箱');
+
+    var shell = createEl('div', 'spx-preview-lightbox-shell');
+    var toolbar = createEl('div', 'spx-preview-lightbox-toolbar');
+    var counter = createEl('span', 'spx-preview-lightbox-counter');
+    var actions = createEl('div', 'spx-preview-lightbox-actions');
+    var stage = createEl('div', 'spx-preview-lightbox-stage');
+    var viewport = createEl('div', 'spx-preview-lightbox-viewport');
+    var canvas = createEl('div', 'spx-preview-lightbox-canvas');
+    var image = createEl('img', 'spx-preview-lightbox-image');
+    var caption = createEl('div', 'spx-preview-lightbox-caption');
+    var urlText = createEl('span', 'spx-preview-lightbox-url');
+    var help = createEl(
+      'span',
+      'spx-preview-lightbox-help',
+      '←/→ 切图 · +/- 缩放 · 0 重置 · Esc 关闭'
+    );
+
+    function createActionButton(text, title, className, onClick) {
+      var button = createEl('button', className || '', text);
+      button.type = 'button';
+      button.title = title;
+      button.addEventListener('click', onClick);
+      return button;
+    }
+
+    var zoomOutButton = createActionButton('−', '缩小（快捷键 -）', '', function zoomOut() {
+      setZoom(zoom - 0.25);
+    });
+    var zoomText = createEl('span', 'spx-preview-lightbox-zoom', '100%');
+    var zoomInButton = createActionButton('+', '放大（快捷键 +）', '', function zoomIn() {
+      setZoom(zoom + 0.25);
+    });
+    var resetButton = createActionButton('重置', '恢复适应窗口大小（快捷键 0）', '', function resetZoom() {
+      setZoom(1);
+    });
+    var copyButton = createActionButton('复制地址', '复制当前原图地址', '', function copyUrl() {
+      copyButton.disabled = true;
+      copyTextToClipboard(images[currentIndex].src).then(
+        function showCopySuccess() {
+          copyButton.textContent = '已复制';
+          copyButton.disabled = false;
+          clearTimeout(copyStatusTimer);
+          copyStatusTimer = setTimeout(function restoreCopyButton() {
+            if (copyButton.isConnected) copyButton.textContent = '复制地址';
+          }, 1400);
+        },
+        function showCopyFailure() {
+          copyButton.textContent = '复制失败';
+          copyButton.disabled = false;
+          clearTimeout(copyStatusTimer);
+          copyStatusTimer = setTimeout(function restoreCopyButton() {
+            if (copyButton.isConnected) copyButton.textContent = '复制地址';
+          }, 1400);
+        }
+      );
+    });
+    var closeButton = createActionButton('关闭', '关闭灯箱（快捷键 Esc）', '', close);
+    var previousButton = createActionButton(
+      '‹',
+      '上一张（快捷键 ←）',
+      'spx-preview-lightbox-nav spx-preview-lightbox-prev',
+      function showPrevious() {
+        showImage(currentIndex - 1);
+      }
+    );
+    var nextButton = createActionButton(
+      '›',
+      '下一张（快捷键 →）',
+      'spx-preview-lightbox-nav spx-preview-lightbox-next',
+      function showNext() {
+        showImage(currentIndex + 1);
+      }
+    );
+
+    function applyImageSize() {
+      var naturalWidth = Number(image.naturalWidth || images[currentIndex].naturalWidth || 0);
+      var naturalHeight = Number(image.naturalHeight || images[currentIndex].naturalHeight || 0);
+      if (!naturalWidth || !naturalHeight || !viewport.clientWidth || !viewport.clientHeight) return;
+
+      var sidePadding = window.innerWidth <= 760 ? 104 : 172;
+      var verticalPadding = window.innerWidth <= 760 ? 52 : 76;
+      var availableWidth = Math.max(120, viewport.clientWidth - sidePadding);
+      var availableHeight = Math.max(120, viewport.clientHeight - verticalPadding);
+      var fitScale = Math.min(
+        availableWidth / naturalWidth,
+        availableHeight / naturalHeight,
+        1
+      );
+      var displayWidth = Math.max(1, Math.round(naturalWidth * fitScale * zoom));
+      var displayHeight = Math.max(1, Math.round(naturalHeight * fitScale * zoom));
+      var canvasPadding = window.innerWidth <= 760 ? 100 : 156;
+
+      image.style.width = displayWidth + 'px';
+      image.style.height = displayHeight + 'px';
+      canvas.style.width = Math.max(viewport.clientWidth, displayWidth + canvasPadding) + 'px';
+      canvas.style.height = Math.max(viewport.clientHeight, displayHeight + 72) + 'px';
+
+      window.requestAnimationFrame(function centerZoomedImage() {
+        viewport.scrollLeft = Math.max(0, (canvas.scrollWidth - viewport.clientWidth) / 2);
+        viewport.scrollTop = Math.max(0, (canvas.scrollHeight - viewport.clientHeight) / 2);
+      });
+    }
+
+    function setZoom(nextZoom) {
+      zoom = clampPreviewZoom(nextZoom);
+      zoomText.textContent = Math.round(zoom * 100) + '%';
+      applyImageSize();
+    }
+
+    function showImage(nextIndex) {
+      currentIndex = (nextIndex + images.length) % images.length;
+      zoom = 1;
+      zoomText.textContent = '100%';
+      counter.textContent = '图片 ' + (currentIndex + 1) + ' / ' + images.length;
+      urlText.textContent = images[currentIndex].src;
+      urlText.title = images[currentIndex].src;
+      copyButton.textContent = '复制地址';
+      image.alt = '预览图 ' + (currentIndex + 1);
+      image.onload = applyImageSize;
+      image.onerror = function showImageError() {
+        urlText.textContent = '原图加载失败：' + images[currentIndex].src;
+      };
+      image.src = images[currentIndex].src;
+      if (image.complete && image.naturalWidth) applyImageSize();
+    }
+
+    function handleKeydown(event) {
+      var action = getPreviewLightboxKeyAction(event);
+      if (!action) return;
+      event.preventDefault();
+      if (action === 'close') close();
+      else if (action === 'previous') showImage(currentIndex - 1);
+      else if (action === 'next') showImage(currentIndex + 1);
+      else if (action === 'zoomIn') setZoom(zoom + 0.25);
+      else if (action === 'zoomOut') setZoom(zoom - 0.25);
+      else if (action === 'zoomReset') setZoom(1);
+    }
+
+    function handleResize() {
+      applyImageSize();
+    }
+
+    function close() {
+      if (closed) return;
+      closed = true;
+      clearTimeout(copyStatusTimer);
+      document.removeEventListener('keydown', handleKeydown, true);
+      window.removeEventListener('resize', handleResize);
+      document.body.style.overflow = previousBodyOverflow;
+      lightbox.remove();
+    }
+
+    lightbox.spxClose = close;
+    lightbox.addEventListener('click', function closeFromBackdrop(event) {
+      if (event.target === lightbox) close();
+    });
+
+    actions.appendChild(zoomOutButton);
+    actions.appendChild(zoomText);
+    actions.appendChild(zoomInButton);
+    actions.appendChild(resetButton);
+    actions.appendChild(copyButton);
+    actions.appendChild(closeButton);
+    toolbar.appendChild(counter);
+    toolbar.appendChild(actions);
+    canvas.appendChild(image);
+    viewport.appendChild(canvas);
+    stage.appendChild(viewport);
+    stage.appendChild(previousButton);
+    stage.appendChild(nextButton);
+    caption.appendChild(urlText);
+    caption.appendChild(help);
+    shell.appendChild(toolbar);
+    shell.appendChild(stage);
+    shell.appendChild(caption);
+    lightbox.appendChild(shell);
+    document.body.appendChild(lightbox);
+
+    previousButton.hidden = images.length < 2;
+    nextButton.hidden = images.length < 2;
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', handleKeydown, true);
+    window.addEventListener('resize', handleResize);
+    showImage(currentIndex);
+    closeButton.focus();
+  }
+
   function enhancePreviewGallery(settings, posts) {
     restorePreviewGallery();
     if (!settings.unifiedPreviewGallery || !posts || !posts.length) return;
@@ -1778,7 +2976,7 @@
     var panel = createEl('section', 'spx-preview-panel');
     panel.id = 'spx-preview-panel';
     var header = createEl('div', 'spx-preview-header');
-    header.innerHTML = '<strong>预览图</strong><span>当前页 ' + previewImages.length + ' 张，点击打开原图</span>';
+    header.innerHTML = '<strong>预览图</strong><span>当前页 ' + previewImages.length + ' 张，点击进入灯箱</span>';
     var grid = createEl('div', 'spx-preview-grid');
 
     previewImages.forEach(function appendPreview(item, index) {
@@ -1786,7 +2984,20 @@
       link.href = item.src;
       link.target = '_blank';
       link.rel = 'noreferrer';
-      link.title = '打开第 ' + (index + 1) + ' 张原图';
+      link.title = '在灯箱中查看第 ' + (index + 1) + ' 张图';
+      link.addEventListener('click', function openLightbox(event) {
+        if (
+          event.button > 0 ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey
+        ) {
+          return;
+        }
+        event.preventDefault();
+        openPreviewLightbox(previewImages, index);
+      });
 
       var thumb = createEl('img');
       thumb.src = item.src;
@@ -1812,6 +3023,7 @@
   }
 
   function restorePreviewGallery() {
+    closePreviewLightbox();
     var panel = qs('#spx-preview-panel');
     if (panel) panel.remove();
     var split = qs('.spx-post-body-split');
@@ -1903,7 +3115,10 @@
     var url;
     try {
       body = new FormDataCtor(form);
-      url = new URL(form.action || '', pageUrl).href;
+      var formAction = typeof form.getAttribute === 'function'
+        ? form.getAttribute('action')
+        : form.action;
+      url = new URL(formAction || '', pageUrl).href;
     } catch (error) {
       return null;
     }
@@ -2201,6 +3416,8 @@
       '<div class="spx-row">',
       '<button class="spx-primary" data-action="save">保存</button>',
       '<button data-action="clear-read">清空已读</button>',
+      '<button data-action="clear-progress">清空进度</button>',
+      settingKeys.indexOf('autoBuyPost') !== -1 ? '<button data-action="clear-auto-buy">清空自动购买记录</button>' : '',
       '<button data-action="close">关闭</button>',
       '</div>',
     ]).join('');
@@ -2249,6 +3466,22 @@
         state.read = {};
         saveMap(READ_KEY, state.read);
         enhanceAll(settings, state);
+      }
+      if (action === 'clear-progress') {
+        state.progress = {};
+        saveReadProgress(state.progress);
+        clearReadProgressRestoreRequest(parseThreadId(location.href));
+        refreshWatchCenter(state);
+        refreshHistoryCenter(state);
+        event.target.textContent = '已清空阅读进度';
+      }
+      if (action === 'clear-auto-buy') {
+        saveAutoBuyAttempts({});
+        delete document.documentElement.dataset.spxAutoBuyStatus;
+        var autoBuyStatus = qs('#spx-auto-buy-status');
+        if (autoBuyStatus) autoBuyStatus.remove();
+        refreshAutoBuyCenter();
+        event.target.textContent = '已清空购买记录';
       }
     });
 
@@ -2372,6 +3605,33 @@
       authorButton.classList.toggle('spx-active', settings.onlyOriginalAuthor);
       toolbar.appendChild(authorButton);
     }
+
+    var watchCenterButton = toolbarButton('存', '打开稍后看中心', function openWatchCenter() {
+      var panel = createWatchCenterPanel(settings, state);
+      if (panel.spxRender) panel.spxRender();
+      panel.hidden = !panel.hidden;
+      watchCenterButton.classList.toggle('spx-active', !panel.hidden);
+    });
+    watchCenterButton.dataset.spxWatchCenterButton = '1';
+    toolbar.appendChild(watchCenterButton);
+
+    var historyCenterButton = toolbarButton('历', '打开最近浏览', function openHistoryCenter() {
+      var panel = createHistoryCenterPanel(settings, state);
+      if (panel.spxRender) panel.spxRender();
+      panel.hidden = !panel.hidden;
+      historyCenterButton.classList.toggle('spx-active', !panel.hidden);
+    });
+    historyCenterButton.dataset.spxHistoryCenterButton = '1';
+    toolbar.appendChild(historyCenterButton);
+
+    var autoBuyCenterButton = toolbarButton('买', '打开自动购买记录', function openAutoBuyCenter() {
+      var panel = createAutoBuyCenterPanel(settings, state);
+      if (panel.spxRender) panel.spxRender();
+      panel.hidden = !panel.hidden;
+      autoBuyCenterButton.classList.toggle('spx-active', !panel.hidden);
+    });
+    autoBuyCenterButton.dataset.spxAutoBuyCenterButton = '1';
+    toolbar.appendChild(autoBuyCenterButton);
 
     toolbar.appendChild(toolbarButton('设', '打开设置', function openSettings() {
       var panel = createSettingsPanel(settings, state);
@@ -2640,6 +3900,7 @@
     var state = {
       read: loadMap(READ_KEY),
       watch: loadMap(WATCH_KEY),
+      progress: loadReadProgress(),
     };
     injectStyles();
     setBodyClasses(settings);
@@ -2657,6 +3918,12 @@
     parseThreadId: parseThreadId,
     parseLineList: parseLineList,
     parseQuickReplyList: parseQuickReplyList,
+    formatReadProgress: formatReadProgress,
+    mergeReadProgressRecord: mergeReadProgressRecord,
+    pruneReadProgress: pruneReadProgress,
+    getWatchCenterEntries: getWatchCenterEntries,
+    getHistoryCenterEntries: getHistoryCenterEntries,
+    getAutoBuyCenterEntries: getAutoBuyCenterEntries,
     matchesBlockRules: matchesBlockRules,
     parseForumFilterQuery: parseForumFilterQuery,
     matchesForumFilter: matchesForumFilter,
@@ -2667,10 +3934,15 @@
     hideStickyThreads: hideStickyThreads,
     hideForumAnnouncementPanels: hideForumAnnouncementPanels,
     isPreviewImageCandidate: isPreviewImageCandidate,
+    clampPreviewZoom: clampPreviewZoom,
+    getPreviewLightboxKeyAction: getPreviewLightboxKeyAction,
     parsePostPrice: parsePostPrice,
     parseUserSpBalance: parseUserSpBalance,
     shouldAutoBuyPost: shouldAutoBuyPost,
     extractBuyTopicUrl: extractBuyTopicUrl,
+    getAutoBuyAttemptKey: getAutoBuyAttemptKey,
+    isAutoBuyAttemptBlocked: isAutoBuyAttemptBlocked,
+    formatAutoBuyAttemptMessage: formatAutoBuyAttemptMessage,
     isAdUrl: isAdUrl,
     parseTodayCount: parseTodayCount,
     shouldUseSiteShell: shouldUseSiteShell,
