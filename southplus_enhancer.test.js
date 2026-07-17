@@ -102,6 +102,40 @@ assert.equal(enhancer.formatReadProgress(null), '');
 assert.equal(enhancer.formatReadProgress({ updatedAt: 1000, progress: 0.426, page: 1 }), '43%');
 assert.equal(enhancer.formatReadProgress({ updatedAt: 1000, progress: 2, page: 3 }), '第 3 页 · 100%');
 assert.deepEqual(
+  enhancer.getReadProgressRestoreTarget(
+    {
+      scrollY: 1200,
+      floorLabel: 'B12F',
+      floorHash: '#floor-12',
+      floorTop: 1100,
+      nextFloorLabel: 'B13F',
+      nextFloorHash: '#floor-13',
+      nextFloorTop: 1380,
+    },
+    'next'
+  ),
+  { mode: 'next', hash: '#floor-13', top: 1380, label: 'B13F' }
+);
+assert.deepEqual(
+  enhancer.getReadProgressRestoreTarget(
+    {
+      scrollY: 1200,
+      floorLabel: 'B12F',
+      floorHash: '#floor-12',
+      floorTop: 1100,
+      nextFloorLabel: 'B13F',
+      nextFloorHash: '#floor-13',
+      nextFloorTop: 1380,
+    },
+    'last'
+  ),
+  { mode: 'last', hash: '#floor-12', top: 1100, label: 'B12F' }
+);
+assert.deepEqual(
+  enhancer.getReadProgressRestoreTarget({ scrollY: 900 }, 'next'),
+  { mode: 'next', hash: '', top: 900, label: '' }
+);
+assert.deepEqual(
   enhancer.mergeReadProgressRecord(
     { updatedAt: 2000, progress: 1, page: 1, scrollY: 5000 },
     { updatedAt: 3000, progress: 0.8, page: 1, scrollY: 2000 }
@@ -143,46 +177,94 @@ const watchEntries = enhancer.getWatchCenterEntries(
       url: 'https://south-plus.org/read.php?tid-1-page-2.html',
       page: 2,
       progress: 0.5,
+      floorLabel: 'B18F',
+      nextFloorLabel: 'B19F',
       updatedAt: 400,
     },
   }
 );
 assert.deepEqual(
   watchEntries.map(function mapEntry(entry) {
-    return [entry.id, entry.title, entry.progressText, entry.progressUrl];
+    return [entry.id, entry.title, entry.progressText, entry.progressUrl, entry.floorLabel, entry.nextFloorLabel];
   }),
   [
-    ['2', '新帖', '', 'https://south-plus.org/read.php?tid=2'],
-    ['1', '旧帖更新标题', '第 2 页 · 50%', 'https://south-plus.org/read.php?tid-1-page-2.html'],
+    ['2', '新帖', '', 'https://south-plus.org/read.php?tid=2', '', ''],
+    ['1', '旧帖更新标题', '第 2 页 · 50%', 'https://south-plus.org/read.php?tid-1-page-2.html', 'B18F', 'B19F'],
   ]
 );
 
 assert.deepEqual(
-  enhancer.getHistoryCenterEntries({
-    1: { title: '旧历史', url: 'https://south-plus.org/read.php?tid=1', progress: 0.25, updatedAt: 100 },
-    2: { title: '新历史', url: 'https://south-plus.org/read.php?tid=2', progress: 1, updatedAt: 300 },
-    broken: { title: '坏记录' },
-  }).map(function mapHistory(entry) {
-    return [entry.id, entry.title, entry.progressText];
+  enhancer.filterWatchCenterEntries(watchEntries, { query: 'b19f', filter: 'all' }).map(function mapEntry(entry) {
+    return entry.id;
   }),
-  [
-    ['2', '新历史', '100%'],
-    ['1', '旧历史', '25%'],
-  ]
+  ['1']
+);
+assert.deepEqual(
+  enhancer.filterWatchCenterEntries(watchEntries, { filter: 'progress' }).map(function mapEntry(entry) {
+    return entry.id;
+  }),
+  ['1']
 );
 
+const historyEntries = enhancer.getHistoryCenterEntries({
+  1: {
+    title: '旧历史',
+    url: 'https://south-plus.org/read.php?tid=1',
+    progress: 0.25,
+    floorLabel: 'B5F',
+    nextFloorLabel: 'B6F',
+    updatedAt: 100,
+  },
+  2: { title: '新历史', url: 'https://south-plus.org/read.php?tid=2', progress: 1, floorLabel: 'B9F', nextFloorLabel: 'B9F', updatedAt: 300 },
+  broken: { title: '坏记录' },
+});
 assert.deepEqual(
-  enhancer.getAutoBuyCenterEntries({
-    '1:tpc': { status: 'failed', message: '失败原因', price: 5, updatedAt: 100 },
-    '2:tpc': { status: 'done', message: '已完成', balance: 20, updatedAt: 300 },
-    broken: {},
-  }).map(function mapAttempt(entry) {
+  historyEntries.map(function mapHistory(entry) {
+    return [entry.id, entry.title, entry.progressText, entry.floorLabel, entry.nextFloorLabel];
+  }),
+  [
+    ['2', '新历史', '100%', 'B9F', 'B9F'],
+    ['1', '旧历史', '25%', 'B5F', 'B6F'],
+  ]
+);
+assert.deepEqual(
+  enhancer.filterHistoryCenterEntries(historyEntries, { filter: 'todo' }).map(function mapHistory(entry) {
+    return entry.id;
+  }),
+  ['1']
+);
+assert.deepEqual(
+  enhancer.filterHistoryCenterEntries(historyEntries, { query: 'b9f', filter: 'all' }).map(function mapHistory(entry) {
+    return entry.id;
+  }),
+  ['2']
+);
+
+const autoBuyEntries = enhancer.getAutoBuyCenterEntries({
+  '1:tpc': { status: 'failed', message: '失败原因', price: 5, updatedAt: 100 },
+  '2:tpc': { status: 'done', message: '已完成', balance: 20, updatedAt: 300 },
+  broken: {},
+});
+assert.deepEqual(
+  autoBuyEntries.map(function mapAttempt(entry) {
     return [entry.key, entry.statusLabel, entry.message, entry.price, entry.balance];
   }),
   [
     ['2:tpc', '已完成', '已完成', null, 20],
     ['1:tpc', '失败', '失败原因', 5, null],
   ]
+);
+assert.deepEqual(
+  enhancer.filterAutoBuyCenterEntries(autoBuyEntries, { filter: 'done' }).map(function mapAttempt(entry) {
+    return entry.key;
+  }),
+  ['2:tpc']
+);
+assert.deepEqual(
+  enhancer.filterAutoBuyCenterEntries(autoBuyEntries, { query: '失败原因', filter: 'all' }).map(function mapAttempt(entry) {
+    return entry.key;
+  }),
+  ['1:tpc']
 );
 
 class FakeFormData {
