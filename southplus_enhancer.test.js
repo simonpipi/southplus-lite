@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.1\.0/);
+assert.match(source, /@version\s+0\.1\.1/);
 
 assert.equal(enhancer.parsePostPrice('本帖售价：5 SP币'), 5);
 assert.equal(enhancer.parsePostPrice('购买需要 12.5 SP'), 12.5);
@@ -101,6 +101,7 @@ assert.equal(
 assert.equal(enhancer.formatReadProgress(null), '');
 assert.equal(enhancer.formatReadProgress({ updatedAt: 1000, progress: 0.426, page: 1 }), '43%');
 assert.equal(enhancer.formatReadProgress({ updatedAt: 1000, progress: 2, page: 3 }), '第 3 页 · 100%');
+assert.deepEqual(enhancer.parseTagList(' 待看，资源\\n待看 #精品、长帖 '), ['待看', '资源', '精品', '长帖']);
 assert.deepEqual(
   enhancer.getReadProgressRestoreTarget(
     {
@@ -157,6 +158,13 @@ assert.deepEqual(
   { updatedAt: 3000, progress: 0.8, page: 1, scrollY: 2000 }
 );
 assert.deepEqual(
+  enhancer.mergeReadProgressRecord(
+    { updatedAt: 2000, progress: 0.4, page: 1, scrollY: 4000, tags: ['待看', '资源'] },
+    { updatedAt: 3000, progress: 0.6, page: 1, scrollY: 5000 }
+  ),
+  { updatedAt: 3000, progress: 0.6, page: 1, scrollY: 5000, tags: ['待看', '资源'] }
+);
+assert.deepEqual(
   Object.keys(enhancer.pruneReadProgress({
     1: { updatedAt: 100 },
     2: { updatedAt: 300 },
@@ -168,8 +176,8 @@ assert.deepEqual(
 
 const watchEntries = enhancer.getWatchCenterEntries(
   {
-    1: { title: '旧帖', url: 'https://south-plus.org/read.php?tid=1', savedAt: 100 },
-    2: { title: '新帖', url: 'https://south-plus.org/read.php?tid=2', savedAt: 300 },
+    1: { title: '旧帖', url: 'https://south-plus.org/read.php?tid=1', savedAt: 100, tags: ['待看'] },
+    2: { title: '新帖', url: 'https://south-plus.org/read.php?tid=2', savedAt: 300, tags: ['资源'] },
   },
   {
     1: {
@@ -179,17 +187,18 @@ const watchEntries = enhancer.getWatchCenterEntries(
       progress: 0.5,
       floorLabel: 'B18F',
       nextFloorLabel: 'B19F',
+      tags: ['长帖'],
       updatedAt: 400,
     },
   }
 );
 assert.deepEqual(
   watchEntries.map(function mapEntry(entry) {
-    return [entry.id, entry.title, entry.progressText, entry.progressUrl, entry.floorLabel, entry.nextFloorLabel];
+    return [entry.id, entry.title, entry.progressText, entry.progressUrl, entry.floorLabel, entry.nextFloorLabel, entry.tagText];
   }),
   [
-    ['2', '新帖', '', 'https://south-plus.org/read.php?tid=2', '', ''],
-    ['1', '旧帖更新标题', '第 2 页 · 50%', 'https://south-plus.org/read.php?tid-1-page-2.html', 'B18F', 'B19F'],
+    ['2', '新帖', '', 'https://south-plus.org/read.php?tid=2', '', '', '资源'],
+    ['1', '旧帖更新标题', '第 2 页 · 50%', 'https://south-plus.org/read.php?tid-1-page-2.html', 'B18F', 'B19F', '待看 / 长帖'],
   ]
 );
 
@@ -205,6 +214,12 @@ assert.deepEqual(
   }),
   ['1']
 );
+assert.deepEqual(
+  enhancer.filterWatchCenterEntries(watchEntries, { tag: '资源' }).map(function mapEntry(entry) {
+    return entry.id;
+  }),
+  ['2']
+);
 
 const historyEntries = enhancer.getHistoryCenterEntries({
   1: {
@@ -213,18 +228,19 @@ const historyEntries = enhancer.getHistoryCenterEntries({
     progress: 0.25,
     floorLabel: 'B5F',
     nextFloorLabel: 'B6F',
+    tags: ['待处理'],
     updatedAt: 100,
   },
-  2: { title: '新历史', url: 'https://south-plus.org/read.php?tid=2', progress: 1, floorLabel: 'B9F', nextFloorLabel: 'B9F', updatedAt: 300 },
+  2: { title: '新历史', url: 'https://south-plus.org/read.php?tid=2', progress: 1, floorLabel: 'B9F', nextFloorLabel: 'B9F', tags: ['已完成'], updatedAt: 300 },
   broken: { title: '坏记录' },
 });
 assert.deepEqual(
   historyEntries.map(function mapHistory(entry) {
-    return [entry.id, entry.title, entry.progressText, entry.floorLabel, entry.nextFloorLabel];
+    return [entry.id, entry.title, entry.progressText, entry.floorLabel, entry.nextFloorLabel, entry.tagText];
   }),
   [
-    ['2', '新历史', '100%', 'B9F', 'B9F'],
-    ['1', '旧历史', '25%', 'B5F', 'B6F'],
+    ['2', '新历史', '100%', 'B9F', 'B9F', '已完成'],
+    ['1', '旧历史', '25%', 'B5F', 'B6F', '待处理'],
   ]
 );
 assert.deepEqual(
@@ -238,6 +254,56 @@ assert.deepEqual(
     return entry.id;
   }),
   ['2']
+);
+assert.deepEqual(
+  enhancer.filterHistoryCenterEntries(historyEntries, { tag: '待处理' }).map(function mapHistory(entry) {
+    return entry.id;
+  }),
+  ['1']
+);
+
+const backup = enhancer.createBackupPayload({
+  settings: {
+    cleanMode: false,
+    titleKeywords: ['广告', '广告'],
+    authorKeywords: '张三\n张三',
+    quickReplies: ['感谢', '感谢'],
+    autoBuyMaxSp: '8',
+  },
+  read: { 1: 100, broken: undefined },
+  watch: { 2: { title: '备份帖', tags: ['资源'] } },
+  progress: { 3: { title: '进度帖', progress: 0.5, updatedAt: 200 }, bad: { title: '坏进度' } },
+  autoBuyAttempts: { '3:tpc': { status: 'done', updatedAt: 300 }, broken: { message: '坏记录' } },
+}, 1720000000000);
+assert.equal(backup.app, 'spEnhancer');
+assert.equal(backup.version, 1);
+assert.equal(backup.exportedAt, 1720000000000);
+assert.equal(backup.data.settings.cleanMode, false);
+assert.equal(backup.data.settings.autoBuyMaxSp, 8);
+assert.deepEqual(backup.data.settings.titleKeywords, ['广告']);
+assert.deepEqual(backup.data.settings.authorKeywords, ['张三']);
+assert.deepEqual(backup.data.settings.quickReplies, ['感谢']);
+assert.deepEqual(backup.data.read, { 1: 100 });
+assert.deepEqual(backup.data.watch['2'].tags, ['资源']);
+assert.deepEqual(Object.keys(backup.data.progress), ['3']);
+assert.deepEqual(Object.keys(backup.data.autoBuyAttempts), ['3:tpc']);
+
+const normalizedBackup = enhancer.normalizeBackupPayload(JSON.stringify({
+  exportedAt: 1720000000000,
+  settings: { cleanMode: 0, titleKeywords: '资源\n精品', quickReplies: '支持\n支持' },
+  read: { 4: 400 },
+  watch: { 5: { title: '旧格式帖' } },
+  progress: { 6: { title: '旧格式进度', updatedAt: 600 } },
+  autoBuy: { '6:tpc': { status: 'failed', updatedAt: 700 } },
+}));
+assert.equal(normalizedBackup.data.settings.cleanMode, false);
+assert.deepEqual(normalizedBackup.data.settings.titleKeywords, ['资源', '精品']);
+assert.deepEqual(normalizedBackup.data.settings.quickReplies, ['支持']);
+assert.deepEqual(Object.keys(normalizedBackup.data.autoBuyAttempts), ['6:tpc']);
+assert.equal(enhancer.normalizeBackupPayload('{bad json'), null);
+assert.equal(
+  enhancer.formatBackupFileName(new Date(2026, 0, 2, 3, 4).getTime()),
+  'southplus-plus-backup-20260102-0304.json'
 );
 
 const autoBuyEntries = enhancer.getAutoBuyCenterEntries({

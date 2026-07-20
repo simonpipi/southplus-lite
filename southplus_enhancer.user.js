@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.1.0
+// @version      0.1.1
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        https://south-plus.org/*
@@ -103,6 +103,47 @@
     return parseLineList(value).slice(0, 30);
   }
 
+  function normalizeListValue(value, parser) {
+    var source = value || [];
+    return parser(source.join ? source.join('\n') : source);
+  }
+
+  function parseTagList(value) {
+    var seen = {};
+    return String(value || '')
+      .replace(/\\n/g, '\n')
+      .split(/[\n,，、#]+/)
+      .map(function trimTag(tag) {
+        return tag.trim().replace(/\s+/g, ' ');
+      })
+      .filter(function keepTag(tag) {
+        var key = tag.toLowerCase();
+        if (!tag || seen[key]) return false;
+        seen[key] = true;
+        return true;
+      })
+      .slice(0, 12);
+  }
+
+  function mergeTagLists() {
+    var seen = {};
+    var result = [];
+    Array.prototype.slice.call(arguments).forEach(function readTags(tags) {
+      normalizeListValue(tags, parseTagList).forEach(function addTag(tag) {
+        var key = tag.toLowerCase();
+        if (seen[key]) return;
+        seen[key] = true;
+        result.push(tag);
+      });
+    });
+    return result;
+  }
+
+  function formatTags(tags) {
+    var values = normalizeListValue(tags, parseTagList);
+    return values.length ? values.join(' / ') : '';
+  }
+
   function clampRatio(value) {
     var ratio = Number(value);
     if (!isFinite(ratio)) return 0;
@@ -120,6 +161,9 @@
   function mergeReadProgressRecord(previous, next) {
     if (!next) return previous || null;
     if (isCompletedReadProgress(previous) && !isCompletedReadProgress(next)) return previous;
+    if (previous && previous.tags && !next.tags) {
+      next.tags = normalizeListValue(previous.tags, parseTagList);
+    }
     return next;
   }
 
@@ -189,6 +233,7 @@
         var item = watch[key] || {};
         var record = progressMap[key] || {};
         var floorLabels = getReadProgressFloorLabels(record);
+        var tags = mergeTagLists(item.tags, record.tags);
         return {
           id: key,
           title: String(record.title || item.title || '未命名帖子'),
@@ -203,6 +248,8 @@
           nextFloorLabel: floorLabels.next,
           floorHash: String(record.floorHash || ''),
           nextFloorHash: String(record.nextFloorHash || record.floorHash || ''),
+          tags: tags,
+          tagText: formatTags(tags),
         };
       })
       .sort(function sortBySavedAt(left, right) {
@@ -219,6 +266,7 @@
       .map(function toHistoryEntry(key) {
         var item = progress[key] || {};
         var floorLabels = getReadProgressFloorLabels(item);
+        var tags = parseTagList(item.tags && item.tags.join ? item.tags.join('\n') : item.tags);
         return {
           id: key,
           title: String(item.title || '未命名帖子'),
@@ -233,6 +281,8 @@
           nextFloorLabel: floorLabels.next,
           floorHash: String(item.floorHash || ''),
           nextFloorHash: String(item.nextFloorHash || item.floorHash || ''),
+          tags: tags,
+          tagText: formatTags(tags),
         };
       })
       .sort(function sortByProgressAt(left, right) {
@@ -291,8 +341,10 @@
   function filterWatchCenterEntries(entries, options) {
     var query = normalizeCenterSearchQuery(options && options.query);
     var filter = String((options && options.filter) || 'all');
+    var tag = String((options && options.tag) || 'all').toLowerCase();
     return (entries || []).filter(function matchWatchEntry(entry) {
-      if (!matchesCenterSearch(query, [entry.title, entry.progressText, entry.floorLabel, entry.nextFloorLabel])) return false;
+      if (!matchesCenterSearch(query, [entry.title, entry.progressText, entry.floorLabel, entry.nextFloorLabel, entry.tagText])) return false;
+      if (tag !== 'all' && parseTagList(entry.tags).map(function lower(item) { return item.toLowerCase(); }).indexOf(tag) === -1) return false;
       if (filter === 'todo') return !entry.isCompleted;
       if (filter === 'progress') return !!entry.progressAt;
       if (filter === 'done') return !!entry.isCompleted;
@@ -303,12 +355,28 @@
   function filterHistoryCenterEntries(entries, options) {
     var query = normalizeCenterSearchQuery(options && options.query);
     var filter = String((options && options.filter) || 'all');
+    var tag = String((options && options.tag) || 'all').toLowerCase();
     return (entries || []).filter(function matchHistoryEntry(entry) {
-      if (!matchesCenterSearch(query, [entry.title, entry.progressText, entry.floorLabel, entry.nextFloorLabel])) return false;
+      if (!matchesCenterSearch(query, [entry.title, entry.progressText, entry.floorLabel, entry.nextFloorLabel, entry.tagText])) return false;
+      if (tag !== 'all' && parseTagList(entry.tags).map(function lower(item) { return item.toLowerCase(); }).indexOf(tag) === -1) return false;
       if (filter === 'todo') return !entry.isCompleted;
       if (filter === 'done') return !!entry.isCompleted;
       return true;
     });
+  }
+
+  function getCenterTagOptions(entries) {
+    var tags = [];
+    (entries || []).forEach(function collectEntryTags(entry) {
+      tags = mergeTagLists(tags, entry && entry.tags);
+    });
+    return tags
+      .sort(function sortTags(left, right) {
+        return left.localeCompare(right, 'zh-Hans-CN');
+      })
+      .map(function toOption(tag) {
+        return { value: tag, label: tag };
+      });
   }
 
   function filterAutoBuyCenterEntries(entries, options) {
@@ -715,6 +783,80 @@
     }
   }
 
+  function isPlainObject(value) {
+    return !!value && Object.prototype.toString.call(value) === '[object Object]';
+  }
+
+  function cloneJson(value, fallback) {
+    if (value === undefined) return fallback;
+    return safeJsonParse(JSON.stringify(value), fallback);
+  }
+
+  function copyStorageMap(value) {
+    if (!isPlainObject(value)) return {};
+    var result = {};
+    Object.keys(value).forEach(function copyMapEntry(key) {
+      var item = value[key];
+      if (item === undefined || typeof item === 'function') return;
+      result[key] = cloneJson(item, item);
+    });
+    return result;
+  }
+
+  function normalizeSettings(value) {
+    var settings = Object.assign(copySettings(DEFAULT_SETTINGS), isPlainObject(value) ? value : {});
+    Object.keys(DEFAULT_SETTINGS).forEach(function normalizeSetting(key) {
+      var defaultValue = DEFAULT_SETTINGS[key];
+      if (typeof defaultValue === 'boolean') {
+        settings[key] = !!settings[key];
+      }
+    });
+    settings.autoBuyMaxSp = Math.max(0, Number(settings.autoBuyMaxSp) || 0);
+    settings.titleKeywords = normalizeListValue(settings.titleKeywords, parseLineList);
+    settings.authorKeywords = normalizeListValue(settings.authorKeywords, parseLineList);
+    settings.quickReplies = normalizeListValue(settings.quickReplies, parseQuickReplyList);
+    return settings;
+  }
+
+  function createBackupPayload(data, timestamp) {
+    var source = data || {};
+    return {
+      app: APP,
+      version: 1,
+      exportedAt: Number(timestamp) || Date.now(),
+      data: {
+        settings: normalizeSettings(source.settings),
+        read: copyStorageMap(source.read),
+        watch: copyStorageMap(source.watch),
+        progress: pruneReadProgress(copyStorageMap(source.progress)),
+        autoBuyAttempts: pruneAutoBuyAttempts(copyStorageMap(source.autoBuyAttempts)),
+      },
+    };
+  }
+
+  function normalizeBackupPayload(value) {
+    var payload = typeof value === 'string' ? safeJsonParse(value, null) : value;
+    if (!isPlainObject(payload)) return null;
+    var source = isPlainObject(payload.data) ? payload.data : payload;
+    return createBackupPayload({
+      settings: source.settings,
+      read: source.read,
+      watch: source.watch,
+      progress: source.progress,
+      autoBuyAttempts: source.autoBuyAttempts || source.autoBuy,
+    }, payload.exportedAt);
+  }
+
+  function collectBackupPayload(settings, state) {
+    return createBackupPayload({
+      settings: settings,
+      read: state && state.read,
+      watch: state && state.watch,
+      progress: state && state.progress,
+      autoBuyAttempts: loadAutoBuyAttempts(),
+    });
+  }
+
   function getStorage() {
     if (typeof window === 'undefined' || !window.localStorage) return null;
     return window.localStorage;
@@ -724,7 +866,7 @@
     var storage = getStorage();
     if (!storage) return copySettings(DEFAULT_SETTINGS);
     var stored = safeJsonParse(storage.getItem(STORE_KEY), {});
-    return Object.assign(copySettings(DEFAULT_SETTINGS), stored || {});
+    return normalizeSettings(stored);
   }
 
   function saveSettings(settings) {
@@ -780,6 +922,86 @@
 
   function saveAutoBuyAttempts(attempts) {
     saveMap(AUTO_BUY_KEY, pruneAutoBuyAttempts(attempts));
+  }
+
+  function applyBackupPayload(payload, settings, state) {
+    var backup = normalizeBackupPayload(payload);
+    if (!backup) return false;
+    var data = backup.data || {};
+    var nextSettings = normalizeSettings(data.settings);
+    Object.keys(settings || {}).forEach(function removeOldSetting(key) {
+      delete settings[key];
+    });
+    Object.assign(settings, nextSettings);
+    state.read = copyStorageMap(data.read);
+    state.watch = copyStorageMap(data.watch);
+    state.progress = pruneReadProgress(copyStorageMap(data.progress));
+    saveSettings(settings);
+    saveMap(READ_KEY, state.read);
+    saveMap(WATCH_KEY, state.watch);
+    saveReadProgress(state.progress);
+    saveAutoBuyAttempts(data.autoBuyAttempts);
+    clearReadProgressRestoreRequest(parseThreadId(location.href));
+    refreshWatchCenter();
+    refreshHistoryCenter();
+    refreshAutoBuyCenter();
+    enhanceAll(settings, state);
+    return true;
+  }
+
+  function formatBackupFileName(timestamp) {
+    var date = new Date(Number(timestamp) || Date.now());
+    function pad(number) {
+      return String(number).padStart(2, '0');
+    }
+    return 'southplus-plus-backup-' +
+      date.getFullYear() +
+      pad(date.getMonth() + 1) +
+      pad(date.getDate()) +
+      '-' +
+      pad(date.getHours()) +
+      pad(date.getMinutes()) +
+      '.json';
+  }
+
+  function downloadBackupPayload(payload) {
+    if (
+      typeof Blob === 'undefined' ||
+      typeof URL === 'undefined' ||
+      typeof URL.createObjectURL !== 'function' ||
+      !document ||
+      !document.body
+    ) return false;
+    var backup = normalizeBackupPayload(payload);
+    if (!backup) return false;
+    var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var link = createEl('a');
+    link.href = url;
+    link.download = formatBackupFileName(backup.exportedAt);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(function revokeBackupUrl() {
+      if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url);
+    }, 1000);
+    return true;
+  }
+
+  function importBackupFile(file, settings, state, callback) {
+    if (!file || typeof FileReader === 'undefined') {
+      callback(false, '无法读取备份文件');
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function handleBackupLoaded() {
+      var ok = applyBackupPayload(reader.result, settings, state);
+      callback(ok, ok ? '已导入本地备份' : '备份文件格式无效');
+    };
+    reader.onerror = function handleBackupError() {
+      callback(false, '备份文件读取失败');
+    };
+    reader.readAsText(file);
   }
 
   function recordAutoBuyAttempt(key, status, message, details) {
@@ -1363,6 +1585,17 @@
     return panel.spxState;
   }
 
+  function isCenterFiltered(panelState) {
+    return !!(
+      panelState &&
+      (
+        panelState.query ||
+        (panelState.filter && panelState.filter !== 'all') ||
+        (panelState.tag && panelState.tag !== 'all')
+      )
+    );
+  }
+
   function createCenterControls(panelState, options) {
     var config = options || {};
     var controls = createEl('div', 'spx-watch-controls');
@@ -1386,13 +1619,29 @@
       });
       controls.appendChild(filterSelect);
     }
+    if ((config.tags || []).length) {
+      var tagSelect = createEl('select');
+      tagSelect.dataset.spxCenterTag = '1';
+      var allTagOption = createEl('option');
+      allTagOption.value = 'all';
+      allTagOption.textContent = '全部标签';
+      tagSelect.appendChild(allTagOption);
+      (config.tags || []).forEach(function appendTagOption(item) {
+        var option = createEl('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        option.selected = String(panelState.tag || 'all') === String(item.value);
+        tagSelect.appendChild(option);
+      });
+      controls.appendChild(tagSelect);
+    }
     return controls.children.length ? controls : null;
   }
 
   function renderCenterPanel(panel, options) {
     if (!panel || !options) return;
     var scrollTop = panel.scrollTop || 0;
-    var panelState = ensureCenterPanelState(panel, options.stateDefaults || { query: '', filter: 'all' });
+    var panelState = ensureCenterPanelState(panel, options.stateDefaults || { query: '', filter: 'all', tag: 'all' });
     var entries = options.entries || [];
     var visibleEntries = typeof options.filterEntries === 'function'
       ? options.filterEntries(entries, panelState)
@@ -1486,7 +1735,7 @@
     panel.addEventListener('input', function handleCenterInput(event) {
       var target = event.target;
       if (!target || !target.dataset || target.dataset.spxCenterQuery !== '1') return;
-      var state = ensureCenterPanelState(panel, config.stateDefaults || { query: '', filter: 'all' });
+      var state = ensureCenterPanelState(panel, config.stateDefaults || { query: '', filter: 'all', tag: 'all' });
       if (state.query === target.value) return;
       state.query = target.value;
       var selectionStart = typeof target.selectionStart === 'number' ? target.selectionStart : null;
@@ -1507,10 +1756,17 @@
 
     panel.addEventListener('change', function handleCenterChange(event) {
       var target = event.target;
-      if (!target || !target.dataset || target.dataset.spxCenterFilter !== '1') return;
-      var state = ensureCenterPanelState(panel, config.stateDefaults || { query: '', filter: 'all' });
-      if (state.filter === target.value) return;
-      state.filter = target.value;
+      if (!target || !target.dataset) return;
+      var state = ensureCenterPanelState(panel, config.stateDefaults || { query: '', filter: 'all', tag: 'all' });
+      if (target.dataset.spxCenterFilter === '1') {
+        if (state.filter === target.value) return;
+        state.filter = target.value;
+      } else if (target.dataset.spxCenterTag === '1') {
+        if (state.tag === target.value) return;
+        state.tag = target.value;
+      } else {
+        return;
+      }
       panel.spxRender();
     });
 
@@ -1541,18 +1797,19 @@
   function renderWatchCenter(panel, state) {
     state.watch = state.watch || {};
     state.progress = state.progress || {};
+    var entries = getWatchCenterEntries(state.watch, state.progress);
     renderCenterPanel(panel, {
       title: '稍后看中心',
       summary: function summary(visibleEntries, entries, panelState) {
         return (
-          ((panelState.query || panelState.filter !== 'all') ? (visibleEntries.length + ' / ') : '') +
+          (isCenterFiltered(panelState) ? (visibleEntries.length + ' / ') : '') +
           entries.length +
           ' 条已保存主题'
         );
       },
       headerActions: function headerActions(visibleEntries, entries, panelState) {
         var actions = [];
-        if (visibleEntries.length && (panelState.query || panelState.filter !== 'all')) {
+        if (visibleEntries.length && isCenterFiltered(panelState)) {
           actions.push({ text: '移除筛选', dataset: { action: 'remove-visible-watch' } });
         }
         if (entries.length) actions.push({ text: '清空', dataset: { action: 'clear-watch' } });
@@ -1567,10 +1824,11 @@
           { value: 'progress', label: '有进度' },
           { value: 'done', label: '已读完' },
         ],
+        tags: getCenterTagOptions(entries),
       },
       emptyText: '还没有保存的主题。可在帖子列表点击“稍后”加入。',
       emptyFilteredText: '没有匹配的已保存主题。',
-      entries: getWatchCenterEntries(state.watch, state.progress),
+      entries: entries,
       filterEntries: filterWatchCenterEntries,
       getItemData: function getItemData(entry) {
         return { id: entry.id };
@@ -1587,6 +1845,7 @@
         if (entry.progressText) metaParts.push('进度 ' + entry.progressText);
         if (entry.nextFloorLabel) metaParts.push('续读 ' + entry.nextFloorLabel);
         if (entry.floorLabel && entry.floorLabel !== entry.nextFloorLabel) metaParts.push('上次 ' + entry.floorLabel);
+        if (entry.tagText) metaParts.push('标签 ' + entry.tagText);
         return metaParts.join(' · ') || '暂无进度';
       },
       createActions: function createActions(entry) {
@@ -1595,6 +1854,7 @@
           actions.push({ text: '继续阅读', dataset: { action: 'continue-watch', id: entry.id } });
           if (entry.floorLabel) actions.push({ text: '上次楼层', dataset: { action: 'continue-last-watch', id: entry.id } });
         }
+        actions.push({ text: '标签', dataset: { action: 'tag-watch', id: entry.id } });
         actions.push({ text: '打开', href: entry.url || entry.progressUrl || '#' });
         actions.push({ text: '移除', dataset: { action: 'remove-watch', id: entry.id } });
         return actions;
@@ -1620,7 +1880,7 @@
         if (action === 'remove-visible-watch') {
           var visibleEntries = filterWatchCenterEntries(
             getWatchCenterEntries(state.watch, state.progress),
-            ensureCenterPanelState(panel, { query: '', filter: 'all' })
+            ensureCenterPanelState(panel, { query: '', filter: 'all', tag: 'all' })
           );
           if (!visibleEntries.length) return;
           if (typeof window.confirm === 'function' && !window.confirm('移除当前筛选结果中的稍后看主题？')) return;
@@ -1646,6 +1906,18 @@
         }
         var id = target.dataset.id;
         if (!id) return;
+        if (action === 'tag-watch') {
+          var currentTags = parseTagList(state.watch[id] && state.watch[id].tags);
+          var nextTags = typeof window.prompt === 'function'
+            ? window.prompt('编辑标签，多个标签用逗号或换行分隔', currentTags.join('，'))
+            : null;
+          if (nextTags === null) return;
+          state.watch[id] = state.watch[id] || {};
+          state.watch[id].tags = parseTagList(nextTags);
+          saveMap(WATCH_KEY, state.watch);
+          renderWatchCenter(panel, state);
+          return;
+        }
         if (action === 'remove-watch') {
           delete state.watch[id];
           saveMap(WATCH_KEY, state.watch);
@@ -1676,18 +1948,19 @@
 
   function renderHistoryCenter(panel, state) {
     state.progress = state.progress || {};
+    var entries = getHistoryCenterEntries(state.progress);
     renderCenterPanel(panel, {
       title: '最近浏览',
       summary: function summary(visibleEntries, entries, panelState) {
         return (
-          ((panelState.query || panelState.filter !== 'all') ? (visibleEntries.length + ' / ') : '') +
+          (isCenterFiltered(panelState) ? (visibleEntries.length + ' / ') : '') +
           entries.length +
           ' 条阅读记录'
         );
       },
       headerActions: function headerActions(visibleEntries, entries, panelState) {
         var actions = [];
-        if (visibleEntries.length && (panelState.query || panelState.filter !== 'all')) {
+        if (visibleEntries.length && isCenterFiltered(panelState)) {
           actions.push({ text: '移除筛选', dataset: { action: 'remove-visible-history' } });
         }
         if (entries.length) actions.push({ text: '清空', dataset: { action: 'clear-history' } });
@@ -1701,10 +1974,11 @@
           { value: 'todo', label: '未读完' },
           { value: 'done', label: '已读完' },
         ],
+        tags: getCenterTagOptions(entries),
       },
       emptyText: '还没有阅读记录。打开帖子后会自动记录进度。',
       emptyFilteredText: '没有匹配的阅读记录。',
-      entries: getHistoryCenterEntries(state.progress),
+      entries: entries,
       filterEntries: filterHistoryCenterEntries,
       getItemData: function getItemData(entry) {
         return { id: entry.id };
@@ -1721,11 +1995,13 @@
         if (entry.progressText) metaParts.push('进度 ' + entry.progressText);
         if (entry.nextFloorLabel) metaParts.push('续读 ' + entry.nextFloorLabel);
         if (entry.floorLabel && entry.floorLabel !== entry.nextFloorLabel) metaParts.push('上次 ' + entry.floorLabel);
+        if (entry.tagText) metaParts.push('标签 ' + entry.tagText);
         return metaParts.join(' · ') || '暂无进度';
       },
       createActions: function createActions(entry) {
         var actions = [
           { text: '继续阅读', dataset: { action: 'continue-history', id: entry.id } },
+          { text: '标签', dataset: { action: 'tag-history', id: entry.id } },
           { text: '打开', href: entry.url || '#' },
           { text: '移除', dataset: { action: 'remove-history', id: entry.id } },
         ];
@@ -1753,7 +2029,7 @@
         if (action === 'remove-visible-history') {
           var visibleEntries = filterHistoryCenterEntries(
             getHistoryCenterEntries(state.progress),
-            ensureCenterPanelState(panel, { query: '', filter: 'all' })
+            ensureCenterPanelState(panel, { query: '', filter: 'all', tag: 'all' })
           );
           if (!visibleEntries.length) return;
           if (typeof window.confirm === 'function' && !window.confirm('移除当前筛选结果中的阅读记录？')) return;
@@ -1776,6 +2052,19 @@
         }
         var id = target.dataset.id;
         if (!id) return;
+        if (action === 'tag-history') {
+          var currentTags = parseTagList(state.progress[id] && state.progress[id].tags);
+          var nextTags = typeof window.prompt === 'function'
+            ? window.prompt('编辑标签，多个标签用逗号或换行分隔', currentTags.join('，'))
+            : null;
+          if (nextTags === null) return;
+          state.progress[id] = state.progress[id] || {};
+          state.progress[id].tags = parseTagList(nextTags);
+          saveReadProgress(state.progress);
+          refreshWatchCenter();
+          renderHistoryCenter(panel, state);
+          return;
+        }
         if (action === 'remove-history') {
           delete state.progress[id];
           saveReadProgress(state.progress);
@@ -3875,13 +4164,27 @@
       '<textarea data-list="quickReplies"></textarea>',
       '<div class="spx-row">',
       '<button class="spx-primary" data-action="save">保存</button>',
+      '<button data-action="export-backup">导出备份</button>',
+      '<button data-action="import-backup">导入备份</button>',
       '<button data-action="clear-read">清空已读</button>',
       '<button data-action="clear-progress">清空进度</button>',
       settingKeys.indexOf('autoBuyPost') !== -1 ? '<button data-action="clear-auto-buy">清空自动购买记录</button>' : '',
       '<button data-action="close">关闭</button>',
       '</div>',
+      '<input type="file" accept="application/json,.json" data-action="import-backup-file" hidden>',
     ]).join('');
     document.body.appendChild(panel);
+
+    function setTemporaryButtonText(button, text) {
+      if (!button) return;
+      var previous = button.dataset.spxOriginalText || button.textContent;
+      button.dataset.spxOriginalText = previous;
+      button.textContent = text;
+      window.setTimeout(function restoreButtonText() {
+        button.textContent = button.dataset.spxOriginalText || previous;
+        delete button.dataset.spxOriginalText;
+      }, 1800);
+    }
 
     function syncForm() {
       qsa('input[data-key]', panel).forEach(function syncCheckbox(input) {
@@ -3922,10 +4225,22 @@
         panel.hidden = true;
       }
       if (action === 'close') panel.hidden = true;
+      if (action === 'export-backup') {
+        var exported = downloadBackupPayload(collectBackupPayload(settings, state));
+        setTemporaryButtonText(event.target, exported ? '已导出备份' : '导出失败');
+      }
+      if (action === 'import-backup') {
+        if (typeof window.confirm === 'function' && !window.confirm('导入备份会覆盖当前本地设置、已读、稍后看、阅读进度和自动购买记录，确认继续？')) return;
+        var fileInput = qs('input[data-action="import-backup-file"]', panel);
+        if (!fileInput) return;
+        fileInput.value = '';
+        fileInput.click();
+      }
       if (action === 'clear-read') {
         state.read = {};
         saveMap(READ_KEY, state.read);
         enhanceAll(settings, state);
+        setTemporaryButtonText(event.target, '已清空已读');
       }
       if (action === 'clear-progress') {
         state.progress = {};
@@ -3933,7 +4248,7 @@
         clearReadProgressRestoreRequest(parseThreadId(location.href));
         refreshWatchCenter();
         refreshHistoryCenter();
-        event.target.textContent = '已清空阅读进度';
+        setTemporaryButtonText(event.target, '已清空阅读进度');
       }
       if (action === 'clear-auto-buy') {
         saveAutoBuyAttempts({});
@@ -3941,8 +4256,19 @@
         var autoBuyStatus = qs('#spx-auto-buy-status');
         if (autoBuyStatus) autoBuyStatus.remove();
         refreshAutoBuyCenter();
-        event.target.textContent = '已清空购买记录';
+        setTemporaryButtonText(event.target, '已清空购买记录');
       }
+    });
+
+    panel.addEventListener('change', function handleSettingsChange(event) {
+      var target = event.target;
+      if (!target || !target.dataset || target.dataset.action !== 'import-backup-file') return;
+      var file = target.files && target.files[0];
+      if (!file) return;
+      var importButton = qs('button[data-action="import-backup"]', panel);
+      importBackupFile(file, settings, state, function handleBackupImport(done, message) {
+        setTemporaryButtonText(importButton, message || (done ? '已导入备份' : '导入失败'));
+      });
     });
 
     panel.spxSync = syncForm;
@@ -4409,6 +4735,10 @@
     parseThreadId: parseThreadId,
     parseLineList: parseLineList,
     parseQuickReplyList: parseQuickReplyList,
+    parseTagList: parseTagList,
+    createBackupPayload: createBackupPayload,
+    normalizeBackupPayload: normalizeBackupPayload,
+    formatBackupFileName: formatBackupFileName,
     formatReadProgress: formatReadProgress,
     getReadProgressRestoreTarget: getReadProgressRestoreTarget,
     mergeReadProgressRecord: mergeReadProgressRecord,
