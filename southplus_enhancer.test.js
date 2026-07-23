@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.1\.1/);
+assert.match(source, /@version\s+0\.1\.2/);
 
 assert.equal(enhancer.parsePostPrice('本帖售价：5 SP币'), 5);
 assert.equal(enhancer.parsePostPrice('购买需要 12.5 SP'), 12.5);
@@ -28,6 +28,20 @@ assert.equal(enhancer.getPreviewLightboxKeyAction({ key: '-' }), 'zoomOut');
 assert.equal(enhancer.getPreviewLightboxKeyAction({ key: '0' }), 'zoomReset');
 assert.equal(enhancer.getPreviewLightboxKeyAction({ key: 'ArrowRight', ctrlKey: true }), '');
 assert.equal(enhancer.getPreviewLightboxKeyAction({ key: 'Enter' }), '');
+
+assert.equal(enhancer.isLargePreviewImage({ src: 'big.jpg', naturalWidth: 640, naturalHeight: 360 }), true);
+assert.equal(enhancer.isLargePreviewImage({ src: 'tall.jpg', naturalWidth: 360, naturalHeight: 720 }), true);
+assert.equal(enhancer.isLargePreviewImage({ src: 'small.jpg', width: 320, height: 240 }), false);
+assert.equal(enhancer.isLargePreviewImage({ src: 'unknown.jpg' }), true);
+assert.equal(
+  enhancer.formatPreviewImageLinks([
+    { src: 'https://south-plus.org/a.jpg' },
+    { src: 'https://south-plus.org/a.jpg' },
+    { node: { src: 'https://south-plus.org/b.jpg' } },
+    { src: '' },
+  ]),
+  'https://south-plus.org/a.jpg\nhttps://south-plus.org/b.jpg'
+);
 
 assert.equal(
   enhancer.extractBuyTopicUrl(

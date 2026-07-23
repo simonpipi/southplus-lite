@@ -4,6 +4,19 @@
 
 暂无。
 
+## 0.1.2 - 2026-07-20
+
+### Added
+
+- 新增预览图批量复制：阅读页预览图面板可一键复制当前显示的全部原图链接。
+- 新增预览图大图筛选：预览图面板支持 `只看大图`，灯箱切图和批量复制会跟随当前筛选结果。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.1.1 - 2026-07-20
 
 ### Added

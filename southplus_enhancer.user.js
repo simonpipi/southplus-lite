@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.1.1
+// @version      0.1.2
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        https://south-plus.org/*
@@ -467,6 +467,39 @@
         return true;
       })
       .slice(0, 6);
+  }
+
+  function getPreviewImageSource(image) {
+    var data = image || {};
+    var node = data.node || {};
+    return String(data.src || data.currentSrc || node.currentSrc || node.src || '').trim();
+  }
+
+  function getPreviewImageSize(image) {
+    var data = image || {};
+    var node = data.node || {};
+    return {
+      width: Number(data.naturalWidth || node.naturalWidth || data.width || node.width || 0),
+      height: Number(data.naturalHeight || node.naturalHeight || data.height || node.height || 0),
+    };
+  }
+
+  function isLargePreviewImage(image) {
+    var size = getPreviewImageSize(image);
+    if (!size.width && !size.height) return true;
+    return Math.max(size.width, size.height) >= 600 || (size.width >= 480 && size.height >= 360);
+  }
+
+  function formatPreviewImageLinks(images) {
+    var seen = {};
+    return (images || [])
+      .map(getPreviewImageSource)
+      .filter(function keepUniquePreviewLink(url) {
+        if (!url || seen[url]) return false;
+        seen[url] = true;
+        return true;
+      })
+      .join('\n');
   }
 
   function isVisibleThreadRow(row) {
@@ -1215,6 +1248,11 @@
       '.spx-immersive-read .spx-preview-panel{box-sizing:border-box!important;max-width:100%!important;margin:0 auto 14px!important;padding:12px 18px 16px!important;background:#fff!important;border:1px solid #d7e1eb!important;border-radius:8px!important;box-shadow:0 6px 18px rgba(15,23,42,.06)!important;}',
       '.spx-immersive-read .spx-preview-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;font-size:13px!important;color:#64748b!important;}',
       '.spx-immersive-read .spx-preview-header strong{font-size:14px!important;color:#0f172a!important;}',
+      '.spx-immersive-read .spx-preview-summary{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+      '.spx-immersive-read .spx-preview-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:6px;}',
+      '.spx-immersive-read .spx-preview-actions button{height:26px;margin:0;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc;color:#334155;font-size:12px;line-height:1;cursor:pointer;}',
+      '.spx-immersive-read .spx-preview-actions button:hover,.spx-immersive-read .spx-preview-actions button:focus-visible{border-color:#38bdf8;background:#e0f2fe;color:#075985;outline:none;}',
+      '.spx-immersive-read .spx-preview-actions button[aria-pressed="true"]{border-color:#0284c7;background:#0284c7;color:#fff;}',
       '.spx-immersive-read .spx-preview-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;}',
       '.spx-immersive-read .spx-preview-item{display:block;overflow:hidden;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;text-decoration:none;}',
       '.spx-immersive-read .spx-preview-item img{display:block;width:100%;height:180px;object-fit:cover;background:#fff;}',
@@ -1230,6 +1268,11 @@
       '.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{box-sizing:border-box!important;max-width:none!important;margin:0!important;padding:10px!important;background:#f8fafc!important;border:1px solid #d7e1eb!important;border-radius:8px!important;box-shadow:none!important;max-height:min(72vh,680px)!important;overflow:auto!important;}',
       '.spx-reader .spx-preview-header,.spx-immersive-read .spx-preview-header{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;margin:0 0 10px!important;font-size:13px!important;color:#64748b!important;}',
       '.spx-reader .spx-preview-header strong,.spx-immersive-read .spx-preview-header strong{font-size:14px!important;color:#0f172a!important;}',
+      '.spx-reader .spx-preview-summary,.spx-immersive-read .spx-preview-summary{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
+      '.spx-reader .spx-preview-actions,.spx-immersive-read .spx-preview-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;flex-wrap:wrap!important;gap:6px!important;}',
+      '.spx-reader .spx-preview-actions button,.spx-immersive-read .spx-preview-actions button{box-sizing:border-box!important;height:26px!important;margin:0!important;padding:0 8px!important;border:1px solid #cbd5e1!important;border-radius:6px!important;background:#f8fafc!important;color:#334155!important;font-size:12px!important;line-height:1!important;cursor:pointer!important;}',
+      '.spx-reader .spx-preview-actions button:hover,.spx-reader .spx-preview-actions button:focus-visible,.spx-immersive-read .spx-preview-actions button:hover,.spx-immersive-read .spx-preview-actions button:focus-visible{border-color:#38bdf8!important;background:#e0f2fe!important;color:#075985!important;outline:none!important;}',
+      '.spx-reader .spx-preview-actions button[aria-pressed="true"],.spx-immersive-read .spx-preview-actions button[aria-pressed="true"]{border-color:#0284c7!important;background:#0284c7!important;color:#fff!important;}',
       '.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important;}',
       '.spx-reader .spx-preview-item,.spx-immersive-read .spx-preview-item{display:block!important;overflow:hidden!important;border:1px solid #e2e8f0!important;border-radius:8px!important;background:#fff!important;text-decoration:none!important;}',
       '.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{display:block!important;width:100%!important;height:190px!important;object-fit:cover!important;background:#fff!important;}',
@@ -3725,48 +3768,116 @@
     var panel = createEl('section', 'spx-preview-panel');
     panel.id = 'spx-preview-panel';
     var header = createEl('div', 'spx-preview-header');
-    header.innerHTML = '<strong>预览图</strong><span>当前页 ' + previewImages.length + ' 张，点击进入灯箱</span>';
+    var title = createEl('strong', '', '预览图');
+    var summary = createEl('span', 'spx-preview-summary');
+    var actions = createEl('div', 'spx-preview-actions');
+    var copyAllButton = createEl('button', '', '复制全部链接');
+    var largeOnlyButton = createEl('button', '', '只看大图');
     var grid = createEl('div', 'spx-preview-grid');
+    var showLargeOnly = false;
+    var visiblePreviewImages = previewImages.slice();
+    var copyAllTimer = null;
 
-    previewImages.forEach(function appendPreview(item, index) {
-      var link = createEl('a', 'spx-preview-item');
-      link.href = item.src;
-      link.target = '_blank';
-      link.rel = 'noreferrer';
-      link.title = '在灯箱中查看第 ' + (index + 1) + ' 张图';
-      link.addEventListener('click', function openLightbox(event) {
-        if (
-          event.button > 0 ||
-          event.altKey ||
-          event.ctrlKey ||
-          event.metaKey ||
-          event.shiftKey
-        ) {
-          return;
-        }
-        event.preventDefault();
-        openPreviewLightbox(previewImages, index);
+    copyAllButton.type = 'button';
+    largeOnlyButton.type = 'button';
+    copyAllButton.title = '复制当前显示的全部原图地址';
+    largeOnlyButton.title = '只显示尺寸较大的预览图';
+    largeOnlyButton.setAttribute('aria-pressed', 'false');
+
+    function setPreviewButtonText(button, text, delay) {
+      clearTimeout(copyAllTimer);
+      button.textContent = text;
+      copyAllTimer = setTimeout(function restorePreviewButtonText() {
+        if (button.isConnected) button.textContent = '复制全部链接';
+      }, delay || 1400);
+    }
+
+    function syncPreviewHeader() {
+      var largeCount = previewImages.filter(isLargePreviewImage).length;
+      summary.textContent = showLargeOnly
+        ? '大图 ' + visiblePreviewImages.length + ' / 当前页 ' + previewImages.length + ' 张，点击进入灯箱'
+        : '当前页 ' + previewImages.length + ' 张，点击进入灯箱';
+      largeOnlyButton.hidden = largeCount === previewImages.length;
+      largeOnlyButton.setAttribute('aria-pressed', showLargeOnly ? 'true' : 'false');
+      copyAllButton.disabled = !visiblePreviewImages.length;
+    }
+
+    function renderPreviewGrid() {
+      visiblePreviewImages = showLargeOnly ? previewImages.filter(isLargePreviewImage) : previewImages.slice();
+      grid.textContent = '';
+      syncPreviewHeader();
+
+      if (!visiblePreviewImages.length) {
+        grid.appendChild(createEl('div', 'spx-preview-empty', '当前页没有符合条件的大图'));
+        return;
+      }
+
+      visiblePreviewImages.forEach(function appendPreview(item, index) {
+        var link = createEl('a', 'spx-preview-item');
+        link.href = item.src;
+        link.target = '_blank';
+        link.rel = 'noreferrer';
+        link.title = '在灯箱中查看第 ' + (index + 1) + ' 张图';
+        link.addEventListener('click', function openLightbox(event) {
+          if (
+            event.button > 0 ||
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey
+          ) {
+            return;
+          }
+          event.preventDefault();
+          openPreviewLightbox(visiblePreviewImages, index);
+        });
+
+        var thumb = createEl('img');
+        thumb.src = item.src;
+        thumb.loading = 'lazy';
+        thumb.alt = '预览图 ' + (index + 1);
+
+        var hoverImage = createEl('img', 'spx-preview-hover-image');
+        hoverImage.src = item.src;
+        hoverImage.loading = 'lazy';
+        hoverImage.alt = '预览图 ' + (index + 1) + ' 放大预览';
+
+        var label = createEl('span', '', '图 ' + (index + 1));
+        link.appendChild(thumb);
+        link.appendChild(hoverImage);
+        link.appendChild(label);
+        grid.appendChild(link);
       });
+    }
 
-      var thumb = createEl('img');
-      thumb.src = item.src;
-      thumb.loading = 'lazy';
-      thumb.alt = '预览图 ' + (index + 1);
-
-      var hoverImage = createEl('img', 'spx-preview-hover-image');
-      hoverImage.src = item.src;
-      hoverImage.loading = 'lazy';
-      hoverImage.alt = '预览图 ' + (index + 1) + ' 放大预览';
-
-      var label = createEl('span', '', '图 ' + (index + 1));
-      link.appendChild(thumb);
-      link.appendChild(hoverImage);
-      link.appendChild(label);
-      grid.appendChild(link);
+    copyAllButton.addEventListener('click', function copyAllPreviewLinks() {
+      var links = formatPreviewImageLinks(visiblePreviewImages);
+      copyAllButton.disabled = true;
+      copyTextToClipboard(links).then(
+        function showCopyAllSuccess() {
+          copyAllButton.disabled = false;
+          setPreviewButtonText(copyAllButton, '已复制 ' + visiblePreviewImages.length + ' 条');
+        },
+        function showCopyAllFailure() {
+          copyAllButton.disabled = false;
+          setPreviewButtonText(copyAllButton, '复制失败');
+        }
+      );
     });
 
+    largeOnlyButton.addEventListener('click', function toggleLargeOnly() {
+      showLargeOnly = !showLargeOnly;
+      renderPreviewGrid();
+    });
+
+    actions.appendChild(copyAllButton);
+    actions.appendChild(largeOnlyButton);
+    header.appendChild(title);
+    header.appendChild(summary);
+    header.appendChild(actions);
     panel.appendChild(header);
     panel.appendChild(grid);
+    renderPreviewGrid();
 
     mountPreviewPanel(firstPost, content, panel);
   }
@@ -4753,6 +4864,8 @@
     parseForumFilterQuery: parseForumFilterQuery,
     matchesForumFilter: matchesForumFilter,
     extractPreviewImageUrls: extractPreviewImageUrls,
+    isLargePreviewImage: isLargePreviewImage,
+    formatPreviewImageLinks: formatPreviewImageLinks,
     markThreadsRead: markThreadsRead,
     findThreadIdsByAuthor: findThreadIdsByAuthor,
     isStickyCell: isStickyCell,
