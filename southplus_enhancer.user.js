@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.1.2
+// @version      0.1.3
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        https://south-plus.org/*
@@ -41,6 +41,13 @@
   var AUTO_BUY_CHECK_TTL = 10 * 60 * 1000;
   var AUTO_BUY_ATTEMPT_LIMIT = 100;
   var READ_PROGRESS_LIMIT = 200;
+  var STALE_PROGRESS_MAX_AGE = 180 * 24 * 60 * 60 * 1000;
+  var RESOURCE_CATEGORIES = {
+    magnet: '磁力',
+    cloud: '网盘',
+    image: '图片',
+    external: '外链',
+  };
   var DEFAULT_SETTINGS = {
     cleanMode: true,
     readerMode: true,
@@ -550,6 +557,167 @@
     return width >= 120 || height >= 120;
   }
 
+  function trimResourceUrlToken(value) {
+    return String(value || '')
+      .replace(/&amp;/g, '&')
+      .trim()
+      .replace(/^[<"'“”‘’]+|[<>"'“”‘’]+$/g, '')
+      .replace(/[，。；、\s]+$/g, '')
+      .replace(/[)\]）】]+$/g, '');
+  }
+
+  function normalizeResourceUrl(value, pageUrl) {
+    var text = trimResourceUrlToken(value);
+    if (!text) return '';
+    if (/^(?:javascript|mailto|tel|data):/i.test(text) || text.charAt(0) === '#') return '';
+    if (/^magnet:\?/i.test(text)) return text;
+    if (/^(?:pan\.baidu\.com|yun\.baidu\.com|www\.aliyundrive\.com|www\.alipan\.com|www\.quark\.cn|drive\.uc\.cn|115\.com|mega\.nz|www\.terabox\.com|lanzou[a-z]?\.com|cloud\.189\.cn|www\.123pan\.com|mypikpak\.com)\//i.test(text)) {
+      text = 'https://' + text;
+    }
+    if (/^\/\//.test(text)) text = 'https:' + text;
+    try {
+      return new URL(text, pageUrl || 'https://south-plus.org/').href;
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function classifyResourceLink(url) {
+    var text = String(url || '');
+    var lower = text.toLowerCase();
+    if (/^magnet:\?/i.test(text)) return 'magnet';
+    if (/(?:pan\.baidu\.com|yun\.baidu\.com|aliyundrive\.com|alipan\.com|quark\.cn|drive\.uc\.cn|115\.com|mega\.nz|terabox\.com|lanzou[a-z]?\.com|weiyun\.com|cloud\.189\.cn|123pan\.com|pikpak\.com|mediafire\.com|4shared\.com|onedrive\.live\.com)/i.test(lower)) return 'cloud';
+    if (/\.(?:jpe?g|png|gif|webp|bmp|avif)(?:[?#]|$)/i.test(lower)) return 'image';
+    if (/^https?:\/\//i.test(text)) return 'external';
+    return '';
+  }
+
+  function createResourceLink(url, meta) {
+    var normalized = normalizeResourceUrl(url, meta && meta.pageUrl);
+    var type = (meta && meta.type) || classifyResourceLink(normalized);
+    if (!normalized || !type) return null;
+    return {
+      url: normalized,
+      type: type,
+      label: RESOURCE_CATEGORIES[type] || '链接',
+      text: String((meta && meta.text) || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+      floorLabel: String((meta && meta.floorLabel) || ''),
+      author: String((meta && meta.author) || ''),
+      postIndex: Number(meta && meta.postIndex) || 0,
+      sourceIndex: Number(meta && meta.sourceIndex) || 0,
+    };
+  }
+
+  function dedupeResourceLinks(links) {
+    var seen = {};
+    var result = [];
+    (links || []).forEach(function keepUniqueResourceLink(item) {
+      if (!item || !item.url) return;
+      var type = item.type || classifyResourceLink(item.url);
+      if (!type) return;
+      var key = type + '|' + item.url.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      result.push(Object.assign({}, item, {
+        type: type,
+        label: RESOURCE_CATEGORIES[type] || item.label || '链接',
+      }));
+    });
+    return result;
+  }
+
+  function extractResourceLinksFromText(text, pageUrl, meta) {
+    var source = String(text || '');
+    var links = [];
+    var patterns = [
+      /magnet:\?xt=urn:[^\s<>"'，。；、)）\]]+/ig,
+      /https?:\/\/[^\s<>"'，。；、)）\]]+/ig,
+      /(?:pan\.baidu\.com|yun\.baidu\.com|www\.aliyundrive\.com|www\.alipan\.com|www\.quark\.cn|drive\.uc\.cn|115\.com|mega\.nz|www\.terabox\.com|lanzou[a-z]?\.com|cloud\.189\.cn|www\.123pan\.com|mypikpak\.com)\/[^\s<>"'，。；、)）\]]+/ig,
+    ];
+    patterns.forEach(function scanPattern(pattern) {
+      var match;
+      while ((match = pattern.exec(source))) {
+        var item = createResourceLink(match[0], Object.assign({}, meta || {}, { pageUrl: pageUrl, sourceIndex: match.index }));
+        if (item) links.push(item);
+      }
+    });
+    return dedupeResourceLinks(links.sort(function sortBySourceIndex(left, right) {
+      return (Number(left.sourceIndex) || 0) - (Number(right.sourceIndex) || 0);
+    }));
+  }
+
+  function extractResourceLinksFromNode(node, pageUrl, meta) {
+    if (!node) return [];
+    var links = [];
+    qsa('a[href],area[href]', node).forEach(function collectAnchor(link) {
+      var item = createResourceLink(link.getAttribute('href') || link.href, Object.assign({}, meta || {}, {
+        pageUrl: pageUrl,
+        text: link.textContent,
+      }));
+      if (item) links.push(item);
+    });
+    qsa('img[src],source[src]', node).forEach(function collectMedia(media) {
+      var mediaMeta = Object.assign({}, meta || {}, {
+        pageUrl: pageUrl,
+        type: 'image',
+        text: media.getAttribute('alt') || media.getAttribute('title') || '',
+      });
+      if (media.tagName === 'IMG' && !isPreviewImageCandidate({
+        src: media.currentSrc || media.src,
+        naturalWidth: media.naturalWidth,
+        naturalHeight: media.naturalHeight,
+        width: media.width,
+        height: media.height,
+        className: media.className,
+        alt: media.alt,
+      })) return;
+      var item = createResourceLink(media.getAttribute('src') || media.currentSrc || media.src, mediaMeta);
+      if (item) links.push(item);
+    });
+    return dedupeResourceLinks(links.concat(extractResourceLinksFromText(node.textContent, pageUrl, meta)));
+  }
+
+  function extractReadPageResourceLinks(posts, pageUrl) {
+    var list = posts || [];
+    var links = [];
+    list.forEach(function collectPostResources(post, index) {
+      var content = qs('.tpc_content', post) || post;
+      var meta = {
+        pageUrl: pageUrl,
+        floorLabel: getPostFloorLabel(index),
+        author: getPostAuthor(post),
+        postIndex: index,
+      };
+      links = links.concat(extractResourceLinksFromNode(content, pageUrl, meta));
+    });
+    return dedupeResourceLinks(links);
+  }
+
+  function filterResourceLinks(links, options) {
+    var config = options || {};
+    var scope = config.scope || 'all';
+    var category = config.category || 'all';
+    return (links || []).filter(function keepResourceLink(item) {
+      if (!item || !item.url) return false;
+      if (category !== 'all' && item.type !== category) return false;
+      if (scope === 'floor') return Number(item.postIndex) === Number(config.postIndex);
+      if (scope === 'author') return !!config.author && item.author === config.author;
+      return true;
+    });
+  }
+
+  function formatResourceLinks(links) {
+    return dedupeResourceLinks(links)
+      .map(function formatResourceLine(item) {
+        var parts = ['[' + (RESOURCE_CATEGORIES[item.type] || item.label || '链接') + ']'];
+        if (item.floorLabel) parts.push(item.floorLabel);
+        if (item.author) parts.push(item.author);
+        parts.push(item.url);
+        return parts.join(' ');
+      })
+      .join('\n');
+  }
+
   function clampPreviewZoom(value) {
     var zoom = Number(value);
     if (!isFinite(zoom)) return 1;
@@ -890,6 +1058,207 @@
     });
   }
 
+  function countMapItems(value) {
+    return Object.keys(value || {}).length;
+  }
+
+  function getDataRecordTimestamp(record) {
+    if (typeof record === 'number') return Number(record) || 0;
+    return Number(record && (record.updatedAt || record.savedAt || record.createdAt)) || 0;
+  }
+
+  function getDataRecordFingerprint(record) {
+    if (!record || typeof record === 'number') return '';
+    var rawUrl = String(record.url || record.progressUrl || '');
+    if (rawUrl) {
+      try {
+        var parsed = new URL(rawUrl, 'https://south-plus.org/');
+        parsed.hash = '';
+        return 'url:' + parsed.href.toLowerCase();
+      } catch (error) {
+        return 'url:' + rawUrl.split('#')[0].toLowerCase();
+      }
+    }
+    var title = compactText(record.title || record.subject || '');
+    return title ? 'title:' + title.toLowerCase() : '';
+  }
+
+  function getDuplicateRecordKeys(map) {
+    var source = map || {};
+    var seen = {};
+    var duplicates = [];
+    Object.keys(source)
+      .sort(function sortByFreshness(left, right) {
+        return getDataRecordTimestamp(source[right]) - getDataRecordTimestamp(source[left]);
+      })
+      .forEach(function detectDuplicateRecord(key) {
+        var fingerprint = getDataRecordFingerprint(source[key]);
+        if (!fingerprint) return;
+        if (seen[fingerprint]) {
+          duplicates.push(key);
+          return;
+        }
+        seen[fingerprint] = key;
+      });
+    return duplicates;
+  }
+
+  function getInvalidProgressKeys(progress) {
+    var source = progress || {};
+    return Object.keys(source).filter(function isInvalidProgress(key) {
+      return !(source[key] && source[key].updatedAt);
+    });
+  }
+
+  function getInvalidAutoBuyKeys(attempts) {
+    var source = attempts || {};
+    return Object.keys(source).filter(function isInvalidAutoBuy(key) {
+      return !(source[key] && source[key].status);
+    });
+  }
+
+  function getStaleProgressKeys(progress, now, maxAge) {
+    var source = progress || {};
+    var currentTime = Number(now) || Date.now();
+    var threshold = Math.max(1, Number(maxAge) || STALE_PROGRESS_MAX_AGE);
+    return Object.keys(source).filter(function isStaleProgress(key) {
+      var updatedAt = Number(source[key] && source[key].updatedAt) || 0;
+      return !!updatedAt && currentTime - updatedAt > threshold;
+    });
+  }
+
+  function getOrphanProgressKeys(progress, read, watch) {
+    var readMap = read || {};
+    var watchMap = watch || {};
+    return Object.keys(progress || {}).filter(function isOrphanProgress(key) {
+      return !(readMap[key] || watchMap[key]);
+    });
+  }
+
+  function collectDataHealthReport(data, now) {
+    var source = data || {};
+    var settings = normalizeSettings(source.settings);
+    var read = copyStorageMap(source.read);
+    var watch = copyStorageMap(source.watch);
+    var progress = copyStorageMap(source.progress);
+    var autoBuyAttempts = copyStorageMap(source.autoBuyAttempts || source.autoBuy);
+    var autoBuyStatusCounts = {};
+
+    Object.keys(autoBuyAttempts).forEach(function countAutoBuyStatus(key) {
+      var status = String(autoBuyAttempts[key] && autoBuyAttempts[key].status || '');
+      if (!status) return;
+      autoBuyStatusCounts[status] = (autoBuyStatusCounts[status] || 0) + 1;
+    });
+
+    var duplicateWatchKeys = getDuplicateRecordKeys(watch);
+    var duplicateProgressKeys = getDuplicateRecordKeys(progress);
+    var staleProgressKeys = getStaleProgressKeys(progress, now);
+    var invalidProgressKeys = getInvalidProgressKeys(progress);
+    var invalidAutoBuyKeys = getInvalidAutoBuyKeys(autoBuyAttempts);
+
+    return {
+      counts: {
+        titleKeywords: settings.titleKeywords.length,
+        authorKeywords: settings.authorKeywords.length,
+        quickReplies: settings.quickReplies.length,
+        read: countMapItems(read),
+        watch: countMapItems(watch),
+        progress: countMapItems(progress),
+        autoBuyAttempts: countMapItems(autoBuyAttempts),
+      },
+      autoBuyStatusCounts: autoBuyStatusCounts,
+      duplicateWatchKeys: duplicateWatchKeys,
+      duplicateProgressKeys: duplicateProgressKeys,
+      staleProgressKeys: staleProgressKeys,
+      orphanProgressKeys: getOrphanProgressKeys(progress, read, watch),
+      invalidProgressKeys: invalidProgressKeys,
+      invalidAutoBuyKeys: invalidAutoBuyKeys,
+      cleanupCount:
+        duplicateWatchKeys.length +
+        duplicateProgressKeys.length +
+        staleProgressKeys.length +
+        invalidProgressKeys.length +
+        invalidAutoBuyKeys.length,
+    };
+  }
+
+  function cleanupDataHealthPayload(data, now) {
+    var source = data || {};
+    var settings = normalizeSettings(source.settings);
+    var read = copyStorageMap(source.read);
+    var watch = copyStorageMap(source.watch);
+    var progress = copyStorageMap(source.progress);
+    var autoBuyAttempts = copyStorageMap(source.autoBuyAttempts || source.autoBuy);
+    var before = collectDataHealthReport({
+      settings: settings,
+      read: read,
+      watch: watch,
+      progress: progress,
+      autoBuyAttempts: autoBuyAttempts,
+    }, now);
+
+    before.duplicateWatchKeys.forEach(function removeDuplicateWatch(key) {
+      delete watch[key];
+    });
+    before.duplicateProgressKeys.concat(before.staleProgressKeys, before.invalidProgressKeys).forEach(function removeBadProgress(key) {
+      delete progress[key];
+    });
+    before.invalidAutoBuyKeys.forEach(function removeBadAutoBuy(key) {
+      delete autoBuyAttempts[key];
+    });
+
+    var payload = createBackupPayload({
+      settings: settings,
+      read: read,
+      watch: watch,
+      progress: progress,
+      autoBuyAttempts: autoBuyAttempts,
+    }, now);
+
+    return {
+      payload: payload,
+      before: before,
+      after: collectDataHealthReport(payload.data, now),
+    };
+  }
+
+  function formatDataHealthSummary(report) {
+    var data = report || collectDataHealthReport({});
+    var counts = data.counts || {};
+    return [
+      '已读 ' + (counts.read || 0),
+      '稍后看 ' + (counts.watch || 0),
+      '阅读进度 ' + (counts.progress || 0),
+      '自动购买记录 ' + (counts.autoBuyAttempts || 0),
+      '屏蔽词 ' + ((counts.titleKeywords || 0) + (counts.authorKeywords || 0)),
+      '快捷回复 ' + (counts.quickReplies || 0),
+    ].join(' · ');
+  }
+
+  function formatDataHealthWarnings(report) {
+    var data = report || {};
+    var warnings = [];
+    if (data.duplicateWatchKeys && data.duplicateWatchKeys.length) warnings.push('重复稍后看 ' + data.duplicateWatchKeys.length);
+    if (data.duplicateProgressKeys && data.duplicateProgressKeys.length) warnings.push('重复进度 ' + data.duplicateProgressKeys.length);
+    if (data.staleProgressKeys && data.staleProgressKeys.length) warnings.push('过期进度 ' + data.staleProgressKeys.length);
+    if (data.orphanProgressKeys && data.orphanProgressKeys.length) warnings.push('孤立进度 ' + data.orphanProgressKeys.length);
+    if (data.invalidProgressKeys && data.invalidProgressKeys.length) warnings.push('异常进度 ' + data.invalidProgressKeys.length);
+    if (data.invalidAutoBuyKeys && data.invalidAutoBuyKeys.length) warnings.push('异常购买记录 ' + data.invalidAutoBuyKeys.length);
+    return warnings.length ? warnings.join(' · ') : '未发现需要清理的重复或过期数据';
+  }
+
+  function formatBackupImportPreview(payload) {
+    var backup = normalizeBackupPayload(payload);
+    if (!backup) return '';
+    var report = collectDataHealthReport(backup.data, backup.exportedAt);
+    return [
+      '即将导入 South Plus +++ 本地备份。',
+      formatDataHealthSummary(report),
+      formatDataHealthWarnings(report),
+      '导入会覆盖当前浏览器内同类本地数据，确认继续？',
+    ].join('\n');
+  }
+
   function getStorage() {
     if (typeof window === 'undefined' || !window.localStorage) return null;
     return window.localStorage;
@@ -1028,7 +1397,16 @@
     }
     var reader = new FileReader();
     reader.onload = function handleBackupLoaded() {
-      var ok = applyBackupPayload(reader.result, settings, state);
+      var backup = normalizeBackupPayload(reader.result);
+      if (!backup) {
+        callback(false, '备份文件格式无效');
+        return;
+      }
+      if (typeof window.confirm === 'function' && !window.confirm(formatBackupImportPreview(backup))) {
+        callback(false, '已取消导入');
+        return;
+      }
+      var ok = applyBackupPayload(backup, settings, state);
       callback(ok, ok ? '已导入本地备份' : '备份文件格式无效');
     };
     reader.onerror = function handleBackupError() {
@@ -1317,7 +1695,10 @@
       '.spx-settings .spx-row{display:flex;gap:8px;margin-top:10px;}',
       '.spx-settings button{border:1px solid var(--spx-line);border-radius:6px;background:#fff;padding:6px 10px;cursor:pointer;}',
       '.spx-settings .spx-primary{background:var(--spx-accent);border-color:var(--spx-accent);color:#fff;}',
+      '.spx-data-health{box-sizing:border-box;margin-top:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;}',
+      '.spx-data-health[hidden]{display:none!important;}',
       '.spx-watch-center{position:fixed;right:66px;bottom:18px;width:min(460px,calc(100vw - 24px));max-height:80vh;overflow:auto;z-index:100000;background:var(--spx-panel);border:1px solid var(--spx-line);box-shadow:0 12px 36px rgba(15,23,42,.24);border-radius:8px;padding:12px;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;}',
+      '.spx-resource-panel{width:min(560px,calc(100vw - 24px));}',
       '.spx-watch-center[hidden]{display:none!important;}',
       '.spx-watch-center-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;}',
       '.spx-watch-center h3{margin:0;font-size:15px;}',
@@ -1329,6 +1710,7 @@
       '.spx-watch-list{display:flex;flex-direction:column;gap:8px;}',
       '.spx-watch-item{box-sizing:border-box;padding:9px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;}',
       '.spx-watch-title{display:block;margin-bottom:4px;color:#075985!important;font-size:14px;font-weight:800;line-height:1.35;text-decoration:none;}',
+      '.spx-resource-url{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#075985!important;font-size:12px;line-height:1.35;text-decoration:none;}',
       '.spx-watch-meta{margin-bottom:8px;color:var(--spx-sub);font-size:12px;}',
       '.spx-watch-actions{display:flex;flex-wrap:wrap;gap:6px;}',
       '.spx-watch-actions button,.spx-watch-actions a,.spx-watch-center-header button{border:1px solid var(--spx-line);border-radius:6px;background:#fff;color:var(--spx-text);padding:4px 8px;cursor:pointer;text-decoration:none;font-size:12px;line-height:1.25;}',
@@ -3426,9 +3808,11 @@
         var floor = createEl('span', '', getPostFloorLabel(index));
         var blockAuthor = createEl('button', '', '屏蔽此人');
         var copyLink = createEl('button', '', '复制链接');
+        var extractResources = createEl('button', '', '资源');
         var jumpNextFloor = null;
         var jumpLastFloor = null;
         floor.style.marginRight = 'auto';
+        extractResources.title = '提取本页资源链接，可按本楼、作者或类型复制';
 
         if (index === 0 && tid) {
           jumpNextFloor = createEl('button', '', '未读楼层');
@@ -3450,7 +3834,11 @@
 
         copyLink.addEventListener('click', function copyPostLink() {
           var hash = getPostAnchorHash(post);
-          navigator.clipboard.writeText(location.href.split('#')[0] + hash).catch(function noop() {});
+          copyTextToClipboard(location.href.split('#')[0] + hash).catch(function noop() {});
+        });
+
+        extractResources.addEventListener('click', function openResources() {
+          openResourcePanel(posts, index, author);
         });
 
         tools.appendChild(floor);
@@ -3458,6 +3846,7 @@
         if (jumpLastFloor) tools.appendChild(jumpLastFloor);
         tools.appendChild(blockAuthor);
         tools.appendChild(copyLink);
+        tools.appendChild(extractResources);
         toolsHost.insertBefore(tools, toolsHost.firstChild);
       }
     });
@@ -3507,6 +3896,128 @@
       });
     }
     return fallbackCopyText(text);
+  }
+
+  function setTemporaryText(node, text, restoreText, delay) {
+    if (!node) return;
+    node.textContent = text;
+    window.setTimeout(function restoreTextLater() {
+      if (node.isConnected) node.textContent = restoreText;
+    }, delay || 1400);
+  }
+
+  function closeResourcePanel() {
+    var panel = qs('#spx-resource-panel');
+    if (panel) panel.remove();
+  }
+
+  function openResourcePanel(posts, currentPostIndex, currentAuthor) {
+    if (!document.body) return;
+    var allLinks = extractReadPageResourceLinks(posts, location.href);
+    closeResourcePanel();
+
+    var panel = createEl('div', 'spx-watch-center spx-resource-panel');
+    panel.id = 'spx-resource-panel';
+    var header = createEl('div', 'spx-watch-center-header');
+    var title = createEl('h3', '', '资源链接');
+    var summary = createEl('span', 'spx-watch-summary');
+    var closeButton = createEl('button', '', '关闭');
+    var controls = createEl('div', 'spx-watch-controls');
+    var scopeSelect = createEl('select');
+    var typeSelect = createEl('select');
+    var list = createEl('div', 'spx-watch-list');
+    var copyButton = createEl('button', '', '复制当前');
+    var visibleLinks = [];
+
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', closeResourcePanel);
+    header.appendChild(title);
+    header.appendChild(summary);
+    header.appendChild(closeButton);
+
+    [
+      { value: 'all', text: '全部楼层' },
+      { value: 'floor', text: '仅本楼' },
+      { value: 'author', text: currentAuthor ? '仅此作者' : '仅此作者' },
+    ].forEach(function appendScopeOption(option) {
+      var item = createEl('option', '', option.text);
+      item.value = option.value;
+      if (option.value === 'floor') item.selected = true;
+      if (option.value === 'author' && !currentAuthor) item.disabled = true;
+      scopeSelect.appendChild(item);
+    });
+
+    [
+      { value: 'all', text: '全部类型' },
+      { value: 'magnet', text: '磁力' },
+      { value: 'cloud', text: '网盘' },
+      { value: 'image', text: '图片' },
+      { value: 'external', text: '外链' },
+    ].forEach(function appendTypeOption(option) {
+      var item = createEl('option', '', option.text);
+      item.value = option.value;
+      typeSelect.appendChild(item);
+    });
+
+    controls.appendChild(scopeSelect);
+    controls.appendChild(typeSelect);
+    controls.appendChild(copyButton);
+
+    function renderLinks() {
+      visibleLinks = filterResourceLinks(allLinks, {
+        scope: scopeSelect.value,
+        category: typeSelect.value,
+        postIndex: currentPostIndex,
+        author: currentAuthor,
+      });
+      list.textContent = '';
+      summary.textContent = '当前 ' + visibleLinks.length + ' / 全部 ' + allLinks.length + ' 条';
+      copyButton.disabled = !visibleLinks.length;
+
+      if (!visibleLinks.length) {
+        list.appendChild(createEl('div', 'spx-watch-empty', '没有匹配的资源链接。'));
+        return;
+      }
+
+      visibleLinks.forEach(function appendResourceLink(item) {
+        var row = createEl('div', 'spx-watch-item');
+        var meta = createEl(
+          'div',
+          'spx-watch-meta',
+          '[' + (RESOURCE_CATEGORIES[item.type] || item.label || '链接') + '] ' +
+            [item.floorLabel, item.author].filter(Boolean).join(' · ')
+        );
+        var link = createEl('a', 'spx-resource-url', item.url);
+        link.href = item.url;
+        link.target = '_blank';
+        link.rel = 'noreferrer';
+        row.appendChild(meta);
+        row.appendChild(link);
+        list.appendChild(row);
+      });
+    }
+
+    scopeSelect.addEventListener('change', renderLinks);
+    typeSelect.addEventListener('change', renderLinks);
+    copyButton.addEventListener('click', function copyVisibleResourceLinks() {
+      copyButton.disabled = true;
+      copyTextToClipboard(formatResourceLinks(visibleLinks)).then(
+        function showCopySuccess() {
+          copyButton.disabled = false;
+          setTemporaryText(copyButton, '已复制 ' + visibleLinks.length + ' 条', '复制当前');
+        },
+        function showCopyFailure() {
+          copyButton.disabled = false;
+          setTemporaryText(copyButton, '复制失败', '复制当前');
+        }
+      );
+    });
+
+    panel.appendChild(header);
+    panel.appendChild(controls);
+    panel.appendChild(list);
+    document.body.appendChild(panel);
+    renderLinks();
   }
 
   function closePreviewLightbox() {
@@ -4277,11 +4788,13 @@
       '<button class="spx-primary" data-action="save">保存</button>',
       '<button data-action="export-backup">导出备份</button>',
       '<button data-action="import-backup">导入备份</button>',
+      '<button data-action="show-data-health">数据健康</button>',
       '<button data-action="clear-read">清空已读</button>',
       '<button data-action="clear-progress">清空进度</button>',
       settingKeys.indexOf('autoBuyPost') !== -1 ? '<button data-action="clear-auto-buy">清空自动购买记录</button>' : '',
       '<button data-action="close">关闭</button>',
       '</div>',
+      '<div class="spx-data-health" data-role="data-health" hidden></div>',
       '<input type="file" accept="application/json,.json" data-action="import-backup-file" hidden>',
     ]).join('');
     document.body.appendChild(panel);
@@ -4328,6 +4841,52 @@
       enhanceAll(settings, state);
     }
 
+    function getCurrentDataHealthPayload() {
+      return {
+        settings: settings,
+        read: state && state.read,
+        watch: state && state.watch,
+        progress: state && state.progress,
+        autoBuyAttempts: loadAutoBuyAttempts(),
+      };
+    }
+
+    function renderDataHealthPanel(message) {
+      var box = qs('[data-role="data-health"]', panel);
+      if (!box) return;
+      var report = collectDataHealthReport(getCurrentDataHealthPayload());
+      box.hidden = false;
+      box.textContent = '';
+      box.appendChild(createEl('strong', '', '本地数据健康'));
+      box.appendChild(createEl('div', 'spx-help', formatDataHealthSummary(report)));
+      box.appendChild(createEl('div', 'spx-help', formatDataHealthWarnings(report)));
+      if (message) box.appendChild(createEl('div', 'spx-help', message));
+
+      var actions = createEl('div', 'spx-row');
+      var refresh = createEl('button', '', '刷新统计');
+      var cleanup = createEl('button', '', '清理重复/过期');
+      refresh.type = 'button';
+      cleanup.type = 'button';
+      refresh.dataset.action = 'refresh-data-health';
+      cleanup.dataset.action = 'cleanup-data-health';
+      cleanup.disabled = !report.cleanupCount;
+      actions.appendChild(refresh);
+      actions.appendChild(cleanup);
+      box.appendChild(actions);
+    }
+
+    function applyDataHealthCleanup(button) {
+      var cleanup = cleanupDataHealthPayload(getCurrentDataHealthPayload());
+      if (!cleanup.before.cleanupCount) {
+        renderDataHealthPanel('暂无重复或过期数据需要清理。');
+        return;
+      }
+      if (typeof window.confirm === 'function' && !window.confirm('将清理重复稍后看、重复/过期阅读进度和异常记录，确认继续？')) return;
+      var done = applyBackupPayload(cleanup.payload, settings, state);
+      renderDataHealthPanel(done ? '已清理 ' + cleanup.before.cleanupCount + ' 项数据。' : '清理失败。');
+      setTemporaryButtonText(button, done ? '已清理' : '清理失败');
+    }
+
     panel.addEventListener('click', function handleSettingsClick(event) {
       var action = event.target && event.target.dataset && event.target.dataset.action;
       if (!action) return;
@@ -4341,11 +4900,16 @@
         setTemporaryButtonText(event.target, exported ? '已导出备份' : '导出失败');
       }
       if (action === 'import-backup') {
-        if (typeof window.confirm === 'function' && !window.confirm('导入备份会覆盖当前本地设置、已读、稍后看、阅读进度和自动购买记录，确认继续？')) return;
         var fileInput = qs('input[data-action="import-backup-file"]', panel);
         if (!fileInput) return;
         fileInput.value = '';
         fileInput.click();
+      }
+      if (action === 'show-data-health' || action === 'refresh-data-health') {
+        renderDataHealthPanel();
+      }
+      if (action === 'cleanup-data-health') {
+        applyDataHealthCleanup(event.target);
       }
       if (action === 'clear-read') {
         state.read = {};
@@ -4850,6 +5414,11 @@
     createBackupPayload: createBackupPayload,
     normalizeBackupPayload: normalizeBackupPayload,
     formatBackupFileName: formatBackupFileName,
+    collectDataHealthReport: collectDataHealthReport,
+    cleanupDataHealthPayload: cleanupDataHealthPayload,
+    formatDataHealthSummary: formatDataHealthSummary,
+    formatDataHealthWarnings: formatDataHealthWarnings,
+    formatBackupImportPreview: formatBackupImportPreview,
     formatReadProgress: formatReadProgress,
     getReadProgressRestoreTarget: getReadProgressRestoreTarget,
     mergeReadProgressRecord: mergeReadProgressRecord,
@@ -4866,6 +5435,11 @@
     extractPreviewImageUrls: extractPreviewImageUrls,
     isLargePreviewImage: isLargePreviewImage,
     formatPreviewImageLinks: formatPreviewImageLinks,
+    normalizeResourceUrl: normalizeResourceUrl,
+    classifyResourceLink: classifyResourceLink,
+    extractResourceLinksFromText: extractResourceLinksFromText,
+    filterResourceLinks: filterResourceLinks,
+    formatResourceLinks: formatResourceLinks,
     markThreadsRead: markThreadsRead,
     findThreadIdsByAuthor: findThreadIdsByAuthor,
     isStickyCell: isStickyCell,

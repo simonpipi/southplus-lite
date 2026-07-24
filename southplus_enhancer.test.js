@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.1\.2/);
+assert.match(source, /@version\s+0\.1\.3/);
 
 assert.equal(enhancer.parsePostPrice('本帖售价：5 SP币'), 5);
 assert.equal(enhancer.parsePostPrice('购买需要 12.5 SP'), 12.5);
@@ -41,6 +41,39 @@ assert.equal(
     { src: '' },
   ]),
   'https://south-plus.org/a.jpg\nhttps://south-plus.org/b.jpg'
+);
+
+assert.equal(enhancer.normalizeResourceUrl('pan.baidu.com/s/abc?pwd=1234'), 'https://pan.baidu.com/s/abc?pwd=1234');
+assert.equal(enhancer.classifyResourceLink('magnet:?xt=urn:btih:ABC123'), 'magnet');
+assert.equal(enhancer.classifyResourceLink('https://pan.baidu.com/s/abc?pwd=1234'), 'cloud');
+assert.equal(enhancer.classifyResourceLink('https://img.example.com/a.jpg'), 'image');
+assert.equal(enhancer.classifyResourceLink('https://south-plus.org/read.php?tid=1'), 'external');
+
+const resourceLinks = enhancer.extractResourceLinksFromText(
+  '磁力 magnet:?xt=urn:btih:ABC123 网盘 pan.baidu.com/s/abc?pwd=1234 图片 https://img.example.com/a.jpg 详情 https://south-plus.org/read.php?tid=1',
+  'https://south-plus.org/read.php?tid=99',
+  { floorLabel: 'B2F', author: 'alice', postIndex: 2 }
+);
+assert.deepEqual(
+  resourceLinks.map(function mapResource(item) {
+    return [item.type, item.url, item.floorLabel, item.author, item.postIndex];
+  }),
+  [
+    ['magnet', 'magnet:?xt=urn:btih:ABC123', 'B2F', 'alice', 2],
+    ['cloud', 'https://pan.baidu.com/s/abc?pwd=1234', 'B2F', 'alice', 2],
+    ['image', 'https://img.example.com/a.jpg', 'B2F', 'alice', 2],
+    ['external', 'https://south-plus.org/read.php?tid=1', 'B2F', 'alice', 2],
+  ]
+);
+assert.deepEqual(
+  enhancer.filterResourceLinks(resourceLinks, { scope: 'floor', postIndex: 2, category: 'cloud' }).map(function mapResource(item) {
+    return item.url;
+  }),
+  ['https://pan.baidu.com/s/abc?pwd=1234']
+);
+assert.equal(
+  enhancer.formatResourceLinks(enhancer.filterResourceLinks(resourceLinks, { category: 'magnet' })),
+  '[磁力] B2F alice magnet:?xt=urn:btih:ABC123'
 );
 
 assert.equal(
@@ -319,6 +352,48 @@ assert.equal(
   enhancer.formatBackupFileName(new Date(2026, 0, 2, 3, 4).getTime()),
   'southplus-plus-backup-20260102-0304.json'
 );
+
+const healthNow = new Date(2026, 6, 23).getTime();
+const healthData = {
+  settings: {
+    titleKeywords: '广告\n广告',
+    authorKeywords: '张三',
+    quickReplies: '感谢\n支持',
+  },
+  read: { 1: 100 },
+  watch: {
+    oldWatch: { title: '重复稍后', url: 'https://south-plus.org/read.php?tid=10#old', savedAt: 100 },
+    newWatch: { title: '重复稍后', url: 'https://south-plus.org/read.php?tid=10#new', savedAt: 300 },
+  },
+  progress: {
+    stale: { title: '过期进度', url: 'https://south-plus.org/read.php?tid=11', updatedAt: healthNow - 181 * 24 * 60 * 60 * 1000 },
+    fresh: { title: '重复进度', url: 'https://south-plus.org/read.php?tid=12#fresh', updatedAt: healthNow - 1000 },
+    duplicate: { title: '重复进度', url: 'https://south-plus.org/read.php?tid=12#dup', updatedAt: healthNow - 2000 },
+    broken: { title: '坏进度' },
+  },
+  autoBuyAttempts: {
+    good: { status: 'done', updatedAt: 300 },
+    bad: { message: '坏记录' },
+  },
+};
+const healthReport = enhancer.collectDataHealthReport(healthData, healthNow);
+assert.equal(healthReport.counts.titleKeywords, 1);
+assert.equal(healthReport.counts.watch, 2);
+assert.equal(healthReport.counts.progress, 4);
+assert.deepEqual(healthReport.duplicateWatchKeys, ['oldWatch']);
+assert.deepEqual(healthReport.duplicateProgressKeys, ['duplicate']);
+assert.deepEqual(healthReport.staleProgressKeys, ['stale']);
+assert.deepEqual(healthReport.invalidProgressKeys, ['broken']);
+assert.deepEqual(healthReport.invalidAutoBuyKeys, ['bad']);
+assert.match(enhancer.formatDataHealthSummary(healthReport), /稍后看 2/);
+assert.match(enhancer.formatDataHealthWarnings(healthReport), /重复稍后看 1/);
+
+const cleanedHealth = enhancer.cleanupDataHealthPayload(healthData, healthNow);
+assert.deepEqual(Object.keys(cleanedHealth.payload.data.watch), ['newWatch']);
+assert.deepEqual(Object.keys(cleanedHealth.payload.data.progress), ['fresh']);
+assert.deepEqual(Object.keys(cleanedHealth.payload.data.autoBuyAttempts), ['good']);
+assert.equal(cleanedHealth.after.cleanupCount, 0);
+assert.match(enhancer.formatBackupImportPreview(cleanedHealth.payload), /即将导入 South Plus \+\+\+ 本地备份/);
 
 const autoBuyEntries = enhancer.getAutoBuyCenterEntries({
   '1:tpc': { status: 'failed', message: '失败原因', price: 5, updatedAt: 100 },
