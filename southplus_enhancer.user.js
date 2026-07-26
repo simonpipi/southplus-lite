@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.1.3
+// @version      0.1.4
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        https://south-plus.org/*
@@ -44,10 +44,37 @@
   var STALE_PROGRESS_MAX_AGE = 180 * 24 * 60 * 60 * 1000;
   var RESOURCE_CATEGORIES = {
     magnet: '磁力',
+    torrent: '种子',
     cloud: '网盘',
     image: '图片',
     external: '外链',
   };
+  var CLOUD_RESOURCE_HOST_PATTERN = [
+    'pan\\.baidu\\.com',
+    'yun\\.baidu\\.com',
+    'aliyundrive\\.com',
+    'alipan\\.com',
+    'quark\\.cn',
+    'drive\\.uc\\.cn',
+    '115\\.com',
+    'mega\\.nz',
+    'terabox\\.com',
+    'lanzou[a-z]?\\.com',
+    'ilanzou\\.com',
+    'weiyun\\.com',
+    'cloud\\.189\\.cn',
+    '123pan\\.com',
+    'mypikpak\\.com',
+    'pikpak\\.com',
+    'mediafire\\.com',
+    '4shared\\.com',
+    'onedrive\\.live\\.com',
+    'pan\\.xunlei\\.com',
+    'cowtransfer\\.com',
+    'feijipan\\.com',
+  ].join('|');
+  var CLOUD_RESOURCE_HOST_RE = new RegExp('(?:^|\\.)(?:' + CLOUD_RESOURCE_HOST_PATTERN + ')$', 'i');
+  var CLOUD_RESOURCE_PATH_RE = new RegExp('^(?:(?:www|share|pan)\\.)?(?:' + CLOUD_RESOURCE_HOST_PATTERN + ')\\/', 'i');
   var DEFAULT_SETTINGS = {
     cleanMode: true,
     readerMode: true,
@@ -566,12 +593,63 @@
       .replace(/[)\]）】]+$/g, '');
   }
 
-  function normalizeResourceUrl(value, pageUrl) {
+  function decodeResourceUrlToken(value) {
     var text = trimResourceUrlToken(value);
+    for (var index = 0; index < 2; index += 1) {
+      try {
+        var decoded = decodeURIComponent(text);
+        if (decoded === text) break;
+        text = decoded;
+      } catch (error) {
+        break;
+      }
+    }
+    return text;
+  }
+
+  function isResourceLikeToken(value) {
+    var text = trimResourceUrlToken(value);
+    return /^magnet:\?/i.test(text) ||
+      /^https?:\/\//i.test(text) ||
+      /^\/\//.test(text) ||
+      CLOUD_RESOURCE_PATH_RE.test(text);
+  }
+
+  function unwrapResourceRedirectUrl(value, pageUrl) {
+    var text = trimResourceUrlToken(value);
+    if (!text) return '';
+
+    var decoded = decodeResourceUrlToken(text);
+    var parsed;
+    try {
+      parsed = new URL(decoded, pageUrl || 'https://south-plus.org/');
+    } catch (error) {
+      return decoded;
+    }
+
+    var paramNames = ['url', 'u', 'target', 'to', 'link', 'href'];
+    for (var index = 0; index < paramNames.length; index += 1) {
+      var raw = parsed.searchParams.get(paramNames[index]);
+      var candidate = decodeResourceUrlToken(raw);
+      if (candidate && isResourceLikeToken(candidate)) return candidate;
+    }
+
+    var queryText = decodeResourceUrlToken(parsed.search.slice(1));
+    var resourceMatch = queryText.match(new RegExp(
+      "(magnet:\\?xt=urn:[^\\s<>\"'，。；、)）\\]]+|https?:\\/\\/[^\\s<>\"'，。；、)）\\]]+|(?:(?:www|share|pan)\\.)?(?:" +
+        CLOUD_RESOURCE_HOST_PATTERN +
+        ")\\/[^\\s<>\"'，。；、)）\\]]+)",
+      'i'
+    ));
+    return resourceMatch ? resourceMatch[1] : decoded;
+  }
+
+  function normalizeResourceUrl(value, pageUrl) {
+    var text = unwrapResourceRedirectUrl(value, pageUrl);
     if (!text) return '';
     if (/^(?:javascript|mailto|tel|data):/i.test(text) || text.charAt(0) === '#') return '';
     if (/^magnet:\?/i.test(text)) return text;
-    if (/^(?:pan\.baidu\.com|yun\.baidu\.com|www\.aliyundrive\.com|www\.alipan\.com|www\.quark\.cn|drive\.uc\.cn|115\.com|mega\.nz|www\.terabox\.com|lanzou[a-z]?\.com|cloud\.189\.cn|www\.123pan\.com|mypikpak\.com)\//i.test(text)) {
+    if (CLOUD_RESOURCE_PATH_RE.test(text)) {
       text = 'https://' + text;
     }
     if (/^\/\//.test(text)) text = 'https:' + text;
@@ -586,20 +664,72 @@
     var text = String(url || '');
     var lower = text.toLowerCase();
     if (/^magnet:\?/i.test(text)) return 'magnet';
-    if (/(?:pan\.baidu\.com|yun\.baidu\.com|aliyundrive\.com|alipan\.com|quark\.cn|drive\.uc\.cn|115\.com|mega\.nz|terabox\.com|lanzou[a-z]?\.com|weiyun\.com|cloud\.189\.cn|123pan\.com|pikpak\.com|mediafire\.com|4shared\.com|onedrive\.live\.com)/i.test(lower)) return 'cloud';
+    if (/\.torrent(?:[?#]|$)/i.test(lower)) return 'torrent';
+    try {
+      var host = new URL(text).hostname.toLowerCase();
+      if (CLOUD_RESOURCE_HOST_RE.test(host)) return 'cloud';
+    } catch (error) {
+      if (CLOUD_RESOURCE_PATH_RE.test(lower)) return 'cloud';
+    }
     if (/\.(?:jpe?g|png|gif|webp|bmp|avif)(?:[?#]|$)/i.test(lower)) return 'image';
     if (/^https?:\/\//i.test(text)) return 'external';
     return '';
+  }
+
+  function getCloudProviderLabel(url) {
+    var host = '';
+    try {
+      host = new URL(normalizeResourceUrl(url)).hostname.toLowerCase();
+    } catch (error) {
+      host = String(url || '').toLowerCase();
+    }
+
+    if (/baidu\.com$/.test(host)) return '百度网盘';
+    if (/(?:aliyundrive|alipan)\.com$/.test(host)) return '阿里云盘';
+    if (/quark\.cn$/.test(host)) return '夸克网盘';
+    if (/drive\.uc\.cn$/.test(host)) return 'UC网盘';
+    if (/115\.com$/.test(host)) return '115网盘';
+    if (/mega\.nz$/.test(host)) return 'MEGA';
+    if (/terabox\.com$/.test(host)) return 'Terabox';
+    if (/lanzou[a-z]?\.com$|ilanzou\.com$/.test(host)) return '蓝奏云';
+    if (/weiyun\.com$/.test(host)) return '腾讯微云';
+    if (/cloud\.189\.cn$/.test(host)) return '天翼云盘';
+    if (/123pan\.com$/.test(host)) return '123云盘';
+    if (/(?:mypikpak|pikpak)\.com$/.test(host)) return 'PikPak';
+    if (/mediafire\.com$/.test(host)) return 'MediaFire';
+    if (/4shared\.com$/.test(host)) return '4shared';
+    if (/onedrive\.live\.com$/.test(host)) return 'OneDrive';
+    if (/pan\.xunlei\.com$/.test(host)) return '迅雷云盘';
+    if (/cowtransfer\.com$/.test(host)) return '奶牛快传';
+    if (/feijipan\.com$/.test(host)) return '小飞机网盘';
+    return '其他网盘';
+  }
+
+  function getResourceDisplayLabel(item) {
+    var data = typeof item === 'string' ? { url: item } : (item || {});
+    var type = data.type || classifyResourceLink(data.url);
+    if (type === 'cloud') return getCloudProviderLabel(data.url);
+    return RESOURCE_CATEGORIES[type] || data.label || '链接';
+  }
+
+  function extractResourceAccessCode(value) {
+    var text = String(value || '').replace(/\s+/g, ' ');
+    var match = text.match(/(?:提取码|访问码|取件码|解压码|密码|pass|pwd)\s*[:：=]?\s*([A-Za-z0-9]{3,12})/i);
+    return match ? match[1] : '';
   }
 
   function createResourceLink(url, meta) {
     var normalized = normalizeResourceUrl(url, meta && meta.pageUrl);
     var type = (meta && meta.type) || classifyResourceLink(normalized);
     if (!normalized || !type) return null;
+    var accessCode = type === 'cloud'
+      ? extractResourceAccessCode(normalized + ' ' + ((meta && meta.text) || '') + ' ' + ((meta && meta.context) || ''))
+      : '';
     return {
       url: normalized,
       type: type,
-      label: RESOURCE_CATEGORIES[type] || '链接',
+      label: getResourceDisplayLabel({ url: normalized, type: type }),
+      accessCode: accessCode,
       text: String((meta && meta.text) || '').replace(/\s+/g, ' ').trim().slice(0, 80),
       floorLabel: String((meta && meta.floorLabel) || ''),
       author: String((meta && meta.author) || ''),
@@ -620,7 +750,7 @@
       seen[key] = true;
       result.push(Object.assign({}, item, {
         type: type,
-        label: RESOURCE_CATEGORIES[type] || item.label || '链接',
+        label: getResourceDisplayLabel(Object.assign({}, item, { type: type })),
       }));
     });
     return result;
@@ -632,12 +762,19 @@
     var patterns = [
       /magnet:\?xt=urn:[^\s<>"'，。；、)）\]]+/ig,
       /https?:\/\/[^\s<>"'，。；、)）\]]+/ig,
-      /(?:pan\.baidu\.com|yun\.baidu\.com|www\.aliyundrive\.com|www\.alipan\.com|www\.quark\.cn|drive\.uc\.cn|115\.com|mega\.nz|www\.terabox\.com|lanzou[a-z]?\.com|cloud\.189\.cn|www\.123pan\.com|mypikpak\.com)\/[^\s<>"'，。；、)）\]]+/ig,
+      new RegExp(
+        "(?:(?:www|share|pan)\\.)?(?:" + CLOUD_RESOURCE_HOST_PATTERN + ")\\/[^\\s<>\"'，。；、)）\\]]+",
+        'ig'
+      ),
     ];
     patterns.forEach(function scanPattern(pattern) {
       var match;
       while ((match = pattern.exec(source))) {
-        var item = createResourceLink(match[0], Object.assign({}, meta || {}, { pageUrl: pageUrl, sourceIndex: match.index }));
+        var item = createResourceLink(match[0], Object.assign({}, meta || {}, {
+          pageUrl: pageUrl,
+          sourceIndex: match.index,
+          context: source.slice(match.index, match.index + match[0].length + 96),
+        }));
         if (item) links.push(item);
       }
     });
@@ -709,13 +846,36 @@
   function formatResourceLinks(links) {
     return dedupeResourceLinks(links)
       .map(function formatResourceLine(item) {
-        var parts = ['[' + (RESOURCE_CATEGORIES[item.type] || item.label || '链接') + ']'];
+        var parts = ['[' + (item.label || getResourceDisplayLabel(item)) + ']'];
         if (item.floorLabel) parts.push(item.floorLabel);
         if (item.author) parts.push(item.author);
         parts.push(item.url);
+        if (item.accessCode) parts.push('提取码 ' + item.accessCode);
         return parts.join(' ');
       })
       .join('\n');
+  }
+
+  function getJumpResourceLinks(links) {
+    return dedupeResourceLinks(links).filter(function keepJumpResource(item) {
+      return item && /^(?:magnet|torrent|cloud|external)$/.test(item.type || '');
+    });
+  }
+
+  function formatResourceJumpSummary(links) {
+    var counts = {};
+    var order = [];
+    getJumpResourceLinks(links).forEach(function countResourceLabel(item) {
+      var label = item.label || getResourceDisplayLabel(item);
+      if (!counts[label]) {
+        counts[label] = 0;
+        order.push(label);
+      }
+      counts[label] += 1;
+    });
+    return order.map(function formatSummary(label) {
+      return label + ' ' + counts[label];
+    }).join(' / ');
   }
 
   function clampPreviewZoom(value) {
@@ -1468,20 +1628,24 @@
       '.spx-site-shell a:hover{text-decoration:underline!important;}',
       '.spx-site-shell #wrapA,.spx-site-shell #main{box-sizing:border-box!important;width:100%!important;max-width:none!important;background:#eef2f5!important;}',
       '.spx-site-shell #header,.spx-site-shell #mainNav,.spx-site-shell #infobox,.spx-site-shell #notice,.spx-site-shell #content,.spx-site-shell #main{box-sizing:border-box!important;width:min(1680px,calc(100vw - 44px))!important;margin-left:auto!important;margin-right:auto!important;}',
-      '.spx-site-shell #mainNav{display:block!important;height:28px!important;border-radius:8px!important;box-shadow:0 4px 16px rgba(15,23,42,.08)!important;overflow:visible!important;}',
-      '.spx-site-shell #mainNav>div[style*="padding-left"]{box-sizing:border-box!important;width:100%!important;max-width:100%!important;height:28px!important;padding-left:250px!important;overflow:visible!important;}',
-      '.spx-site-shell #mainNav>div[style*="padding-left"] table,.spx-site-shell #mainNav>div[style*="padding-left"] tbody,.spx-site-shell #mainNav>div[style*="padding-left"] tr,.spx-site-shell #mainNav>div[style*="padding-left"] td{display:block!important;box-sizing:border-box!important;width:auto!important;height:28px!important;margin:0!important;padding:0!important;border:0!important;}',
+      '.spx-site-shell #mainNav{display:block!important;height:30px!important;border-radius:8px!important;background:#2f343b!important;box-shadow:0 3px 10px rgba(15,23,42,.12)!important;overflow:visible!important;}',
+      '.spx-site-shell #mainNav a{color:#dbe6ef!important;text-decoration:none!important;text-shadow:none!important;font-size:14px!important;line-height:30px!important;}',
+      '.spx-site-shell #mainNav a:hover{color:#fff!important;text-decoration:none!important;}',
+      '.spx-site-shell #mainNav>div[style*="padding-left"]{box-sizing:border-box!important;width:100%!important;max-width:100%!important;height:30px!important;padding-left:250px!important;background:transparent!important;overflow:visible!important;}',
+      '.spx-site-shell #mainNav>div[style*="padding-left"] table,.spx-site-shell #mainNav>div[style*="padding-left"] tbody,.spx-site-shell #mainNav>div[style*="padding-left"] tr,.spx-site-shell #mainNav>div[style*="padding-left"] td{display:block!important;box-sizing:border-box!important;width:auto!important;height:30px!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;}',
       '.spx-site-shell #guide{display:flex!important;float:none!important;align-items:center!important;justify-content:flex-start!important;flex-wrap:nowrap!important;width:max-content!important;max-width:100%!important;margin:0!important;padding:0!important;overflow:visible!important;white-space:nowrap!important;}',
       '.spx-site-shell #guide>li{display:block!important;float:none!important;width:auto!important;min-width:max-content!important;margin:0!important;white-space:nowrap!important;}',
       '.spx-site-shell #guide>#h_push,.spx-site-shell #guide>#h_hack{display:none!important;}',
-      '.spx-site-shell #guide>li>a{display:flex!important;float:none!important;align-items:center!important;height:28px!important;line-height:28px!important;padding:0 10px!important;white-space:nowrap!important;font-size:13px!important;font-weight:800!important;}',
-      '.spx-site-shell #guide>li.current>a,.spx-site-shell #guide>li.spx-nav-active>a,.spx-site-shell #guide>li>a.spx-menu-open{background:linear-gradient(#d92831,#9f0007)!important;color:#fff!important;text-decoration:none!important;}',
+      '.spx-site-shell #guide>li>a{box-sizing:border-box!important;display:flex!important;float:none!important;align-items:center!important;height:30px!important;line-height:30px!important;padding:0 12px!important;white-space:nowrap!important;color:#dbe6ef!important;font-size:14px!important;font-weight:800!important;letter-spacing:.1px!important;text-shadow:none!important;}',
+      '.spx-site-shell #guide>li>a:hover{background:#3a414a!important;color:#fff!important;text-decoration:none!important;}',
+      '.spx-site-shell #guide>li.current>a,.spx-site-shell #guide>li.spx-nav-current>a,.spx-site-shell #guide>li>a.spx-nav-current{background:#f1f5f9!important;color:#111827!important;text-decoration:none!important;box-shadow:inset 0 -3px 0 #94a3b8!important;}',
+      '.spx-site-shell #guide>li.spx-nav-active>a,.spx-site-shell #guide>li>a.spx-menu-open{background:#3a414a!important;color:#fff!important;text-decoration:none!important;box-shadow:none!important;}',
       '.spx-site-shell #guide .spx-peacemaker-nav{position:relative!important;width:auto!important;min-width:max-content!important;overflow:visible!important;}',
-      '.spx-site-shell #peacemakerconfig{position:relative!important;overflow:visible!important;color:#075985!important;}',
+      '.spx-site-shell #peacemakerconfig{position:relative!important;overflow:visible!important;color:#dbe6ef!important;}',
       '.spx-site-shell #peacemakerconfig.spx-menu-open{color:#fff!important;}',
       '.spx-site-shell #peacemakerconfig>div[hidden]{display:none!important;}',
-      '.spx-site-shell #peacemakerconfig>div:not([hidden]){display:block!important;position:absolute!important;top:28px!important;right:0!important;left:auto!important;z-index:10000!important;width:142px!important;min-width:142px!important;margin:0!important;padding:4px!important;border:1px solid #0f172a!important;border-radius:6px!important;background:#fff!important;color:#0f172a!important;box-shadow:0 12px 28px rgba(15,23,42,.22)!important;line-height:1.4!important;}',
-      '.spx-site-shell #peacemakerconfig>div:not([hidden])>div{box-sizing:border-box!important;display:block!important;margin:0!important;padding:6px 8px!important;background:#f8fafc!important;color:#0f172a!important;text-align:left!important;line-height:1.4!important;border-radius:4px!important;}',
+      '.spx-site-shell #peacemakerconfig>div:not([hidden]){box-sizing:border-box!important;display:block!important;position:absolute!important;top:30px!important;right:0!important;left:auto!important;z-index:10000!important;width:148px!important;min-width:148px!important;margin:0!important;padding:5px!important;border:1px solid #334155!important;border-radius:8px!important;background:#f8fafc!important;color:#0f172a!important;box-shadow:0 12px 28px rgba(15,23,42,.22)!important;font:700 13px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
+      '.spx-site-shell #peacemakerconfig>div:not([hidden])>div{box-sizing:border-box!important;display:block!important;min-height:28px!important;margin:0!important;padding:5px 8px!important;background:#f8fafc!important;color:#0f172a!important;text-align:left!important;font:inherit!important;line-height:18px!important;border-radius:5px!important;}',
       '.spx-site-shell #peacemakerconfig>div:not([hidden])>div:hover{background:#e0f2fe!important;}',
       '.spx-search-page #wrapA,.spx-search-page #main{box-sizing:border-box!important;max-width:none!important;background:#eef2f5!important;}',
       '.spx-search-page #main{box-sizing:border-box!important;width:min(1680px,calc(100vw - 44px))!important;margin:16px auto 42px!important;padding:0!important;display:block!important;}',
@@ -1711,6 +1875,11 @@
       '.spx-watch-item{box-sizing:border-box;padding:9px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;}',
       '.spx-watch-title{display:block;margin-bottom:4px;color:#075985!important;font-size:14px;font-weight:800;line-height:1.35;text-decoration:none;}',
       '.spx-resource-url{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#075985!important;font-size:12px;line-height:1.35;text-decoration:none;}',
+      '.spx-auto-resource-jump{box-sizing:border-box;width:min(1680px,calc(100vw - 64px));margin:10px auto;padding:10px 12px;border:1px solid #99f6e4;border-radius:8px;background:#f0fdfa;color:#0f766e;font:13px/1.45 Arial,Helvetica,sans-serif;}',
+      '.spx-auto-resource-jump strong{display:block;margin-bottom:6px;color:#0f766e;font-size:14px;}',
+      '.spx-auto-resource-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}',
+      '.spx-auto-resource-actions a,.spx-auto-resource-actions button{box-sizing:border-box;max-width:220px;height:28px;padding:0 9px;border:1px solid #5eead4;border-radius:999px;background:#fff;color:#0f766e!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:none;font-size:12px;line-height:26px;cursor:pointer;}',
+      '.spx-auto-resource-actions button:hover,.spx-auto-resource-actions a:hover{border-color:#0f766e;background:#ccfbf1;text-decoration:none!important;}',
       '.spx-watch-meta{margin-bottom:8px;color:var(--spx-sub);font-size:12px;}',
       '.spx-watch-actions{display:flex;flex-wrap:wrap;gap:6px;}',
       '.spx-watch-actions button,.spx-watch-actions a,.spx-watch-center-header button{border:1px solid var(--spx-line);border-radius:6px;background:#fff;color:var(--spx-text);padding:4px 8px;cursor:pointer;text-decoration:none;font-size:12px;line-height:1.25;}',
@@ -3404,14 +3573,14 @@
       setImportantStyle(node, 'max-width', 'none');
       setImportantStyle(node, 'margin-left', 'auto');
       setImportantStyle(node, 'margin-right', 'auto');
-      setImportantStyle(node, 'height', '28px');
+      setImportantStyle(node, 'height', '30px');
       setImportantStyle(node, 'overflow', 'visible');
     });
     qsa('#mainNav>div[style*="padding-left"]', scope).forEach(function resetNavMenuHost(node) {
       setImportantStyle(node, 'box-sizing', 'border-box');
       setImportantStyle(node, 'width', '100%');
       setImportantStyle(node, 'max-width', '100%');
-      setImportantStyle(node, 'height', '28px');
+      setImportantStyle(node, 'height', '30px');
       setImportantStyle(node, 'padding-left', '250px');
       setImportantStyle(node, 'overflow', 'visible');
     });
@@ -3419,7 +3588,7 @@
       setImportantStyle(node, 'display', 'block');
       setImportantStyle(node, 'box-sizing', 'border-box');
       setImportantStyle(node, 'width', 'auto');
-      setImportantStyle(node, 'height', '28px');
+      setImportantStyle(node, 'height', '30px');
       setImportantStyle(node, 'margin', '0');
       setImportantStyle(node, 'padding', '0');
       setImportantStyle(node, 'border', '0');
@@ -3438,6 +3607,43 @@
   function enhanceSiteNavigation(root) {
     var scope = root || document;
     var configLink = qs('#peacemakerconfig', scope);
+    var guide = qs('#guide', scope);
+
+    function getNavUrlKey(href) {
+      if (!href || /^javascript:/i.test(String(href))) return '';
+      try {
+        var parsed = new URL(href, location.href);
+        return parsed.origin + parsed.pathname + parsed.search;
+      } catch (error) {
+        return '';
+      }
+    }
+
+    function syncCurrentNavItem() {
+      if (!guide) return;
+      var currentUrl = new URL(location.href);
+      var currentKey = currentUrl.origin + currentUrl.pathname + currentUrl.search;
+      var discussionPage = /\/(?:thread|read|post|index)\.php$/i.test(currentUrl.pathname) || currentUrl.pathname === '/';
+      var matched = null;
+
+      qsa('li', guide).forEach(function resetNavItem(navItem) {
+        navItem.classList.remove('spx-nav-current');
+      });
+      qsa('li>a', guide).forEach(function resetNavLink(link) {
+        link.classList.remove('spx-nav-current');
+        if (!matched && getNavUrlKey(link.getAttribute('href') || link.href) === currentKey) matched = link;
+      });
+
+      if (!matched && discussionPage) matched = qs('#h_index>a', guide);
+      if (!matched && currentUrl.pathname === '/search.php') matched = qs('#h_search>a', guide);
+      if (!matched) return;
+
+      matched.classList.add('spx-nav-current');
+      if (matched.parentElement) matched.parentElement.classList.add('spx-nav-current');
+    }
+
+    syncCurrentNavItem();
+
     if (!configLink) return;
 
     var item = configLink.closest ? configLink.closest('li') : null;
@@ -3711,12 +3917,15 @@
     if (!replaceReadPageContent(html, settings, state)) {
       throw new Error('无法更新帖子内容');
     }
+    var resourceLinks = getJumpResourceLinks(extractReadPageResourceLinks(qsa('table.js-post'), location.href));
+    var resourceSummary = formatResourceJumpSummary(resourceLinks);
+    showAutoBuyResourceJump(resourceLinks);
     context.pageRoot.dataset.spxAutoBuyStatus = 'done';
     recordAutoBuyAttempt(
       context.attemptKey,
       'done',
-      '已支付 ' + context.target.price + ' SP 并加载帖子内容',
-      { price: context.target.price, url: context.target.url }
+      '已支付 ' + context.target.price + ' SP 并加载帖子内容' + (resourceSummary ? '，识别资源：' + resourceSummary : ''),
+      { price: context.target.price, url: context.target.url, resourceSummary: resourceSummary }
     );
   }
 
@@ -3911,8 +4120,75 @@
     if (panel) panel.remove();
   }
 
-  function openResourcePanel(posts, currentPostIndex, currentAuthor) {
+  function closeAutoBuyResourceJump() {
+    var panel = qs('#spx-auto-resource-jump');
+    if (panel) panel.remove();
+  }
+
+  function mountAutoBuyResourceJump(panel) {
+    if (!panel) return;
+    var content = qs('#content') || qs('#main') || document.body;
+    var firstPost = qsa('table.js-post', content)[0];
+    if (firstPost && firstPost.parentNode) {
+      firstPost.parentNode.insertBefore(panel, firstPost);
+      return;
+    }
+    content.insertBefore(panel, content.firstChild);
+  }
+
+  function showAutoBuyResourceJump(links) {
+    var jumpLinks = getJumpResourceLinks(links);
+    closeAutoBuyResourceJump();
+    if (!jumpLinks.length || !document.body) return null;
+
+    var panel = createEl('div', 'spx-auto-resource-jump');
+    var title = createEl('strong', '', '购买完成，识别到资源：' + formatResourceJumpSummary(jumpLinks));
+    var actions = createEl('div', 'spx-auto-resource-actions');
+    var copyButton = createEl('button', '', '复制全部资源');
+    var detailButton = createEl('button', '', '资源面板');
+
+    panel.id = 'spx-auto-resource-jump';
+    copyButton.type = 'button';
+    detailButton.type = 'button';
+
+    jumpLinks.slice(0, 8).forEach(function appendJumpLink(item, index) {
+      var label = item.label || getResourceDisplayLabel(item);
+      var link = createEl('a', '', label + (item.accessCode ? ' 提取码' : '') + ' #' + (index + 1));
+      link.href = item.url;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.title = item.url + (item.accessCode ? ' 提取码：' + item.accessCode : '');
+      actions.appendChild(link);
+    });
+
+    copyButton.addEventListener('click', function copyAutoBuyResources() {
+      copyButton.disabled = true;
+      copyTextToClipboard(formatResourceLinks(jumpLinks)).then(
+        function showCopySuccess() {
+          copyButton.disabled = false;
+          setTemporaryText(copyButton, '已复制 ' + jumpLinks.length + ' 条', '复制全部资源');
+        },
+        function showCopyFailure() {
+          copyButton.disabled = false;
+          setTemporaryText(copyButton, '复制失败', '复制全部资源');
+        }
+      );
+    });
+    detailButton.addEventListener('click', function openAllAutoBuyResources() {
+      openResourcePanel(qsa('table.js-post'), 0, '', { defaultScope: 'all' });
+    });
+
+    actions.appendChild(copyButton);
+    actions.appendChild(detailButton);
+    panel.appendChild(title);
+    panel.appendChild(actions);
+    mountAutoBuyResourceJump(panel);
+    return panel;
+  }
+
+  function openResourcePanel(posts, currentPostIndex, currentAuthor, options) {
     if (!document.body) return;
+    var config = options || {};
     var allLinks = extractReadPageResourceLinks(posts, location.href);
     closeResourcePanel();
 
@@ -3942,7 +4218,7 @@
     ].forEach(function appendScopeOption(option) {
       var item = createEl('option', '', option.text);
       item.value = option.value;
-      if (option.value === 'floor') item.selected = true;
+      if (option.value === (config.defaultScope || 'floor')) item.selected = true;
       if (option.value === 'author' && !currentAuthor) item.disabled = true;
       scopeSelect.appendChild(item);
     });
@@ -3950,12 +4226,14 @@
     [
       { value: 'all', text: '全部类型' },
       { value: 'magnet', text: '磁力' },
+      { value: 'torrent', text: '种子' },
       { value: 'cloud', text: '网盘' },
       { value: 'image', text: '图片' },
       { value: 'external', text: '外链' },
     ].forEach(function appendTypeOption(option) {
       var item = createEl('option', '', option.text);
       item.value = option.value;
+      if (option.value === config.defaultCategory) item.selected = true;
       typeSelect.appendChild(item);
     });
 
@@ -3984,7 +4262,7 @@
         var meta = createEl(
           'div',
           'spx-watch-meta',
-          '[' + (RESOURCE_CATEGORIES[item.type] || item.label || '链接') + '] ' +
+          '[' + (item.label || getResourceDisplayLabel(item)) + '] ' +
             [item.floorLabel, item.author].filter(Boolean).join(' · ')
         );
         var link = createEl('a', 'spx-resource-url', item.url);
@@ -3992,6 +4270,9 @@
         link.target = '_blank';
         link.rel = 'noreferrer';
         row.appendChild(meta);
+        if (item.accessCode) {
+          row.appendChild(createEl('div', 'spx-watch-meta', '提取码：' + item.accessCode));
+        }
         row.appendChild(link);
         list.appendChild(row);
       });
@@ -5437,9 +5718,13 @@
     formatPreviewImageLinks: formatPreviewImageLinks,
     normalizeResourceUrl: normalizeResourceUrl,
     classifyResourceLink: classifyResourceLink,
+    getCloudProviderLabel: getCloudProviderLabel,
+    getResourceDisplayLabel: getResourceDisplayLabel,
     extractResourceLinksFromText: extractResourceLinksFromText,
     filterResourceLinks: filterResourceLinks,
     formatResourceLinks: formatResourceLinks,
+    getJumpResourceLinks: getJumpResourceLinks,
+    formatResourceJumpSummary: formatResourceJumpSummary,
     markThreadsRead: markThreadsRead,
     findThreadIdsByAuthor: findThreadIdsByAuthor,
     isStickyCell: isStickyCell,

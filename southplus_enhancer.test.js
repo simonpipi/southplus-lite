@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.1\.3/);
+assert.match(source, /@version\s+0\.1\.4/);
 
 assert.equal(enhancer.parsePostPrice('本帖售价：5 SP币'), 5);
 assert.equal(enhancer.parsePostPrice('购买需要 12.5 SP'), 12.5);
@@ -44,10 +44,21 @@ assert.equal(
 );
 
 assert.equal(enhancer.normalizeResourceUrl('pan.baidu.com/s/abc?pwd=1234'), 'https://pan.baidu.com/s/abc?pwd=1234');
+assert.equal(enhancer.normalizeResourceUrl('pan.quark.cn/s/abc'), 'https://pan.quark.cn/s/abc');
+assert.equal(
+  enhancer.normalizeResourceUrl(
+    '/link.php?url=https%3A%2F%2Fpan.baidu.com%2Fs%2Fabc%3Fpwd%3D1234',
+    'https://south-plus.org/read.php?tid=99'
+  ),
+  'https://pan.baidu.com/s/abc?pwd=1234'
+);
 assert.equal(enhancer.classifyResourceLink('magnet:?xt=urn:btih:ABC123'), 'magnet');
+assert.equal(enhancer.classifyResourceLink('https://example.com/file.torrent'), 'torrent');
 assert.equal(enhancer.classifyResourceLink('https://pan.baidu.com/s/abc?pwd=1234'), 'cloud');
 assert.equal(enhancer.classifyResourceLink('https://img.example.com/a.jpg'), 'image');
 assert.equal(enhancer.classifyResourceLink('https://south-plus.org/read.php?tid=1'), 'external');
+assert.equal(enhancer.getCloudProviderLabel('https://pan.baidu.com/s/abc'), '百度网盘');
+assert.equal(enhancer.getCloudProviderLabel('https://pan.quark.cn/s/abc'), '夸克网盘');
 
 const resourceLinks = enhancer.extractResourceLinksFromText(
   '磁力 magnet:?xt=urn:btih:ABC123 网盘 pan.baidu.com/s/abc?pwd=1234 图片 https://img.example.com/a.jpg 详情 https://south-plus.org/read.php?tid=1',
@@ -74,6 +85,41 @@ assert.deepEqual(
 assert.equal(
   enhancer.formatResourceLinks(enhancer.filterResourceLinks(resourceLinks, { category: 'magnet' })),
   '[磁力] B2F alice magnet:?xt=urn:btih:ABC123'
+);
+
+const jumpedResources = enhancer.extractResourceLinksFromText(
+  '购买后跳转 https://south-plus.org/link.php?url=https%3A%2F%2Fpan.baidu.com%2Fs%2Fabc%3Fpwd%3D1234 种子 https://files.example.com/a.torrent 夸克 pan.quark.cn/s/qwer 图片 https://img.example.com/a.jpg',
+  'https://south-plus.org/read.php?tid=99',
+  { floorLabel: 'B1F', author: 'bob', postIndex: 1 }
+);
+assert.deepEqual(
+  jumpedResources.map(function mapJumpResource(item) {
+    return [item.type, item.label, item.url, item.accessCode];
+  }),
+  [
+    ['cloud', '百度网盘', 'https://pan.baidu.com/s/abc?pwd=1234', '1234'],
+    ['torrent', '种子', 'https://files.example.com/a.torrent', ''],
+    ['cloud', '夸克网盘', 'https://pan.quark.cn/s/qwer', ''],
+    ['image', '图片', 'https://img.example.com/a.jpg', ''],
+  ]
+);
+assert.deepEqual(
+  enhancer.getJumpResourceLinks(jumpedResources).map(function mapJumpOnly(item) {
+    return [item.type, item.label];
+  }),
+  [
+    ['cloud', '百度网盘'],
+    ['torrent', '种子'],
+    ['cloud', '夸克网盘'],
+  ]
+);
+assert.equal(
+  enhancer.formatResourceJumpSummary(jumpedResources),
+  '百度网盘 1 / 种子 1 / 夸克网盘 1'
+);
+assert.equal(
+  enhancer.formatResourceLinks(enhancer.filterResourceLinks(jumpedResources, { category: 'cloud' })),
+  '[百度网盘] B1F bob https://pan.baidu.com/s/abc?pwd=1234 提取码 1234\n[夸克网盘] B1F bob https://pan.quark.cn/s/qwer'
 );
 
 assert.equal(
