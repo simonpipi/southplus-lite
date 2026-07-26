@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.1\.4/);
+assert.match(source, /@version\s+0\.1\.5/);
 
 assert.equal(enhancer.parsePostPrice('本帖售价：5 SP币'), 5);
 assert.equal(enhancer.parsePostPrice('购买需要 12.5 SP'), 12.5);
@@ -120,6 +120,48 @@ assert.equal(
 assert.equal(
   enhancer.formatResourceLinks(enhancer.filterResourceLinks(jumpedResources, { category: 'cloud' })),
   '[百度网盘] B1F bob https://pan.baidu.com/s/abc?pwd=1234 提取码 1234\n[夸克网盘] B1F bob https://pan.quark.cn/s/qwer'
+);
+
+const savedResourceLibrary = enhancer.saveResourceLinksToLibrary(
+  jumpedResources,
+  {
+    legacyKey: {
+      url: 'https://pan.baidu.com/s/abc?pwd=1234',
+      type: 'cloud',
+      accessCode: '1234',
+      status: 'todo',
+      sourceTitle: '旧来源',
+      savedAt: 100,
+      updatedAt: 100,
+    },
+  },
+  { sourceTitle: '资源帖', sourceUrl: 'https://south-plus.org/read.php?tid=99' },
+  5000
+);
+assert.equal(savedResourceLibrary.saved, 3);
+const resourceCenterEntries = enhancer.getResourceCenterEntries(savedResourceLibrary.resources);
+assert.deepEqual(
+  resourceCenterEntries.map(function mapResourceCenter(entry) {
+    return [entry.type, entry.provider, entry.status, entry.accessCode, entry.sourceTitle];
+  }),
+  [
+    ['cloud', '百度网盘', 'todo', '1234', '资源帖'],
+    ['torrent', '种子', 'saved', '', '资源帖'],
+    ['cloud', '夸克网盘', 'saved', '', '资源帖'],
+  ]
+);
+assert.deepEqual(
+  enhancer.filterResourceCenterEntries(resourceCenterEntries, { query: '1234', filter: 'todo', provider: '百度网盘' }).map(function mapResource(entry) {
+    return entry.url;
+  }),
+  ['https://pan.baidu.com/s/abc?pwd=1234']
+);
+assert.deepEqual(
+  Object.keys(enhancer.pruneResourceLibrary({
+    broken: {},
+    oldKey: { url: 'pan.baidu.com/s/legacy?pwd=9999', type: 'cloud', savedAt: 300, updatedAt: 300 },
+  })),
+  ['cloud|https://pan.baidu.com/s/legacy?pwd=9999']
 );
 
 assert.equal(
@@ -367,6 +409,16 @@ const backup = enhancer.createBackupPayload({
   watch: { 2: { title: '备份帖', tags: ['资源'] } },
   progress: { 3: { title: '进度帖', progress: 0.5, updatedAt: 200 }, bad: { title: '坏进度' } },
   autoBuyAttempts: { '3:tpc': { status: 'done', updatedAt: 300 }, broken: { message: '坏记录' } },
+  resources: {
+    'cloud|https://pan.baidu.com/s/backup?pwd=8888': {
+      url: 'https://pan.baidu.com/s/backup?pwd=8888',
+      type: 'cloud',
+      accessCode: '8888',
+      savedAt: 400,
+      updatedAt: 400,
+    },
+    bad: {},
+  },
 }, 1720000000000);
 assert.equal(backup.app, 'spEnhancer');
 assert.equal(backup.version, 1);
@@ -380,6 +432,8 @@ assert.deepEqual(backup.data.read, { 1: 100 });
 assert.deepEqual(backup.data.watch['2'].tags, ['资源']);
 assert.deepEqual(Object.keys(backup.data.progress), ['3']);
 assert.deepEqual(Object.keys(backup.data.autoBuyAttempts), ['3:tpc']);
+assert.deepEqual(Object.keys(backup.data.resources), ['cloud|https://pan.baidu.com/s/backup?pwd=8888']);
+assert.equal(backup.data.resources['cloud|https://pan.baidu.com/s/backup?pwd=8888'].accessCode, '8888');
 
 const normalizedBackup = enhancer.normalizeBackupPayload(JSON.stringify({
   exportedAt: 1720000000000,
@@ -421,6 +475,10 @@ const healthData = {
     good: { status: 'done', updatedAt: 300 },
     bad: { message: '坏记录' },
   },
+  resources: {
+    goodResource: { url: 'pan.baidu.com/s/health?pwd=9999', type: 'cloud', updatedAt: 300 },
+    badResource: {},
+  },
 };
 const healthReport = enhancer.collectDataHealthReport(healthData, healthNow);
 assert.equal(healthReport.counts.titleKeywords, 1);
@@ -431,13 +489,17 @@ assert.deepEqual(healthReport.duplicateProgressKeys, ['duplicate']);
 assert.deepEqual(healthReport.staleProgressKeys, ['stale']);
 assert.deepEqual(healthReport.invalidProgressKeys, ['broken']);
 assert.deepEqual(healthReport.invalidAutoBuyKeys, ['bad']);
+assert.deepEqual(healthReport.invalidResourceKeys, ['badResource']);
 assert.match(enhancer.formatDataHealthSummary(healthReport), /稍后看 2/);
+assert.match(enhancer.formatDataHealthSummary(healthReport), /资源 1/);
 assert.match(enhancer.formatDataHealthWarnings(healthReport), /重复稍后看 1/);
+assert.match(enhancer.formatDataHealthWarnings(healthReport), /异常资源 1/);
 
 const cleanedHealth = enhancer.cleanupDataHealthPayload(healthData, healthNow);
 assert.deepEqual(Object.keys(cleanedHealth.payload.data.watch), ['newWatch']);
 assert.deepEqual(Object.keys(cleanedHealth.payload.data.progress), ['fresh']);
 assert.deepEqual(Object.keys(cleanedHealth.payload.data.autoBuyAttempts), ['good']);
+assert.deepEqual(Object.keys(cleanedHealth.payload.data.resources), ['cloud|https://pan.baidu.com/s/health?pwd=9999']);
 assert.equal(cleanedHealth.after.cleanupCount, 0);
 assert.match(enhancer.formatBackupImportPreview(cleanedHealth.payload), /即将导入 South Plus \+\+\+ 本地备份/);
 

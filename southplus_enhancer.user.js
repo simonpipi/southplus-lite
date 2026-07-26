@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.1.4
+// @version      0.1.5
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        https://south-plus.org/*
@@ -38,10 +38,18 @@
   var PROGRESS_KEY = APP + ':readProgress:v1';
   var RESTORE_PROGRESS_KEY = APP + ':restoreProgressTid:v1';
   var AUTO_BUY_KEY = APP + ':autoBuyAttempts:v1';
+  var RESOURCE_KEY = APP + ':resources:v1';
   var AUTO_BUY_CHECK_TTL = 10 * 60 * 1000;
   var AUTO_BUY_ATTEMPT_LIMIT = 100;
+  var RESOURCE_LIMIT = 500;
   var READ_PROGRESS_LIMIT = 200;
   var STALE_PROGRESS_MAX_AGE = 180 * 24 * 60 * 60 * 1000;
+  var RESOURCE_STATUSES = {
+    saved: '已保存',
+    todo: '待下载',
+    done: '已处理',
+    invalid: '已失效',
+  };
   var RESOURCE_CATEGORIES = {
     magnet: '磁力',
     torrent: '种子',
@@ -878,6 +886,182 @@
     }).join(' / ');
   }
 
+  function normalizeResourceStatus(status) {
+    var value = String(status || 'saved');
+    return RESOURCE_STATUSES[value] ? value : 'saved';
+  }
+
+  function getResourceStatusLabel(status) {
+    return RESOURCE_STATUSES[normalizeResourceStatus(status)] || RESOURCE_STATUSES.saved;
+  }
+
+  function getResourceLibraryKey(item) {
+    var data = item || {};
+    var url = normalizeResourceUrl(data.url, data.pageUrl || data.sourceUrl);
+    var type = data.type || classifyResourceLink(url);
+    if (!url || !type) return '';
+    return type + '|' + url.toLowerCase();
+  }
+
+  function normalizeResourceRecord(record, key) {
+    var source = record || {};
+    var url = normalizeResourceUrl(source.url, source.pageUrl || source.sourceUrl);
+    var type = source.type || classifyResourceLink(url);
+    if (!url || !type) return null;
+    var label = source.label || getResourceDisplayLabel({ url: url, type: type });
+    var provider = type === 'cloud' ? getCloudProviderLabel(url) : label;
+    var savedAt = Number(source.savedAt || source.updatedAt || Date.now()) || Date.now();
+    var updatedAt = Number(source.updatedAt || savedAt) || savedAt;
+    var canonicalKey = getResourceLibraryKey({ url: url, type: type });
+    return {
+      key: canonicalKey || key || '',
+      url: url,
+      type: type,
+      label: label,
+      provider: provider,
+      accessCode: String(source.accessCode || ''),
+      sourceTitle: String(source.sourceTitle || source.title || ''),
+      sourceUrl: String(source.sourceUrl || source.pageUrl || ''),
+      floorLabel: String(source.floorLabel || ''),
+      author: String(source.author || ''),
+      text: String(source.text || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+      status: normalizeResourceStatus(source.status),
+      savedAt: savedAt,
+      updatedAt: updatedAt,
+    };
+  }
+
+  function createResourceRecord(item, meta, timestamp) {
+    var source = item || {};
+    var context = meta || {};
+    var now = Number(timestamp) || Date.now();
+    return normalizeResourceRecord({
+      url: source.url,
+      type: source.type,
+      label: source.label,
+      accessCode: source.accessCode,
+      sourceTitle: context.sourceTitle || source.sourceTitle,
+      sourceUrl: context.sourceUrl || source.sourceUrl || source.pageUrl,
+      floorLabel: source.floorLabel || context.floorLabel,
+      author: source.author || context.author,
+      text: source.text,
+      status: source.status || context.status || 'saved',
+      savedAt: now,
+      updatedAt: now,
+    });
+  }
+
+  function mergeResourceRecord(previous, next) {
+    if (!next) return previous || null;
+    if (!previous) return next;
+    return Object.assign({}, previous, next, {
+      status: previous.status || next.status,
+      savedAt: Number(previous.savedAt || next.savedAt) || next.savedAt,
+      accessCode: next.accessCode || previous.accessCode || '',
+      sourceTitle: next.sourceTitle || previous.sourceTitle || '',
+      sourceUrl: next.sourceUrl || previous.sourceUrl || '',
+      floorLabel: next.floorLabel || previous.floorLabel || '',
+      author: next.author || previous.author || '',
+      text: next.text || previous.text || '',
+      updatedAt: Math.max(Number(previous.updatedAt) || 0, Number(next.updatedAt) || 0),
+    });
+  }
+
+  function pruneResourceLibrary(resources, limit) {
+    var source = resources || {};
+    var max = Math.max(1, Number(limit) || RESOURCE_LIMIT);
+    var normalized = {};
+    Object.keys(source).forEach(function normalizeResourceKey(key) {
+      var record = normalizeResourceRecord(source[key], key);
+      if (!record || !record.key) return;
+      normalized[record.key] = mergeResourceRecord(normalized[record.key], record);
+    });
+    var keys = Object.keys(normalized)
+      .sort(function sortByResourceFreshness(left, right) {
+        return (Number(normalized[right].updatedAt || normalized[right].savedAt) || 0) -
+          (Number(normalized[left].updatedAt || normalized[left].savedAt) || 0);
+      })
+      .slice(0, max);
+    var result = {};
+    keys.forEach(function keepResource(key) {
+      result[key] = normalized[key];
+    });
+    return result;
+  }
+
+  function saveResourceLinksToLibrary(links, resources, meta, timestamp) {
+    var target = pruneResourceLibrary(resources || {});
+    var saved = 0;
+    getJumpResourceLinks(links).forEach(function saveResourceLink(item) {
+      var record = createResourceRecord(item, meta, timestamp);
+      if (!record || !record.key) return;
+      target[record.key] = mergeResourceRecord(target[record.key], record);
+      saved += 1;
+    });
+    return {
+      resources: pruneResourceLibrary(target),
+      saved: saved,
+    };
+  }
+
+  function getResourceCenterEntries(resources) {
+    var library = pruneResourceLibrary(resources || {});
+    return Object.keys(library)
+      .map(function toResourceEntry(key) {
+        var item = normalizeResourceRecord(library[key], key);
+        if (!item) return null;
+        return Object.assign({}, item, {
+          statusLabel: getResourceStatusLabel(item.status),
+          sourceText: [item.sourceTitle, item.floorLabel, item.author].filter(Boolean).join(' · '),
+          providerKey: (item.type === 'cloud' ? item.provider : item.label).toLowerCase(),
+        });
+      })
+      .filter(Boolean)
+      .sort(function sortResourceEntries(left, right) {
+        return (right.updatedAt || right.savedAt || 0) - (left.updatedAt || left.savedAt || 0);
+      });
+  }
+
+  function getResourceProviderOptions(entries) {
+    var seen = {};
+    return (entries || [])
+      .map(function toProviderOption(entry) {
+        var label = entry.type === 'cloud' ? entry.provider : entry.label;
+        var value = String(label || '').toLowerCase();
+        return { value: value, label: label || '未知来源' };
+      })
+      .filter(function keepUniqueProvider(option) {
+        if (!option.value || seen[option.value]) return false;
+        seen[option.value] = true;
+        return true;
+      })
+      .sort(function sortProvider(left, right) {
+        return left.label.localeCompare(right.label, 'zh-Hans-CN');
+      });
+  }
+
+  function filterResourceCenterEntries(entries, options) {
+    var query = normalizeCenterSearchQuery(options && options.query);
+    var status = String((options && options.filter) || 'all');
+    var provider = String((options && options.provider) || 'all').toLowerCase();
+    return (entries || []).filter(function matchResourceEntry(entry) {
+      if (!matchesCenterSearch(query, [
+        entry.url,
+        entry.label,
+        entry.provider,
+        entry.statusLabel,
+        entry.sourceTitle,
+        entry.floorLabel,
+        entry.author,
+        entry.accessCode,
+        entry.text,
+      ])) return false;
+      if (status !== 'all' && entry.status !== status) return false;
+      if (provider !== 'all' && entry.providerKey !== provider) return false;
+      return true;
+    });
+  }
+
   function clampPreviewZoom(value) {
     var zoom = Number(value);
     if (!isFinite(zoom)) return 1;
@@ -1191,6 +1375,7 @@
         watch: copyStorageMap(source.watch),
         progress: pruneReadProgress(copyStorageMap(source.progress)),
         autoBuyAttempts: pruneAutoBuyAttempts(copyStorageMap(source.autoBuyAttempts)),
+        resources: pruneResourceLibrary(copyStorageMap(source.resources)),
       },
     };
   }
@@ -1205,6 +1390,7 @@
       watch: source.watch,
       progress: source.progress,
       autoBuyAttempts: source.autoBuyAttempts || source.autoBuy,
+      resources: source.resources,
     }, payload.exportedAt);
   }
 
@@ -1215,6 +1401,7 @@
       watch: state && state.watch,
       progress: state && state.progress,
       autoBuyAttempts: loadAutoBuyAttempts(),
+      resources: state && state.resources,
     });
   }
 
@@ -1277,6 +1464,13 @@
     });
   }
 
+  function getInvalidResourceKeys(resources) {
+    var source = resources || {};
+    return Object.keys(source).filter(function isInvalidResource(key) {
+      return !normalizeResourceRecord(source[key], key);
+    });
+  }
+
   function getStaleProgressKeys(progress, now, maxAge) {
     var source = progress || {};
     var currentTime = Number(now) || Date.now();
@@ -1302,6 +1496,7 @@
     var watch = copyStorageMap(source.watch);
     var progress = copyStorageMap(source.progress);
     var autoBuyAttempts = copyStorageMap(source.autoBuyAttempts || source.autoBuy);
+    var resources = copyStorageMap(source.resources);
     var autoBuyStatusCounts = {};
 
     Object.keys(autoBuyAttempts).forEach(function countAutoBuyStatus(key) {
@@ -1315,6 +1510,7 @@
     var staleProgressKeys = getStaleProgressKeys(progress, now);
     var invalidProgressKeys = getInvalidProgressKeys(progress);
     var invalidAutoBuyKeys = getInvalidAutoBuyKeys(autoBuyAttempts);
+    var invalidResourceKeys = getInvalidResourceKeys(resources);
 
     return {
       counts: {
@@ -1325,6 +1521,7 @@
         watch: countMapItems(watch),
         progress: countMapItems(progress),
         autoBuyAttempts: countMapItems(autoBuyAttempts),
+        resources: countMapItems(pruneResourceLibrary(resources)),
       },
       autoBuyStatusCounts: autoBuyStatusCounts,
       duplicateWatchKeys: duplicateWatchKeys,
@@ -1333,12 +1530,14 @@
       orphanProgressKeys: getOrphanProgressKeys(progress, read, watch),
       invalidProgressKeys: invalidProgressKeys,
       invalidAutoBuyKeys: invalidAutoBuyKeys,
+      invalidResourceKeys: invalidResourceKeys,
       cleanupCount:
         duplicateWatchKeys.length +
         duplicateProgressKeys.length +
         staleProgressKeys.length +
         invalidProgressKeys.length +
-        invalidAutoBuyKeys.length,
+        invalidAutoBuyKeys.length +
+        invalidResourceKeys.length,
     };
   }
 
@@ -1349,12 +1548,14 @@
     var watch = copyStorageMap(source.watch);
     var progress = copyStorageMap(source.progress);
     var autoBuyAttempts = copyStorageMap(source.autoBuyAttempts || source.autoBuy);
+    var resources = copyStorageMap(source.resources);
     var before = collectDataHealthReport({
       settings: settings,
       read: read,
       watch: watch,
       progress: progress,
       autoBuyAttempts: autoBuyAttempts,
+      resources: resources,
     }, now);
 
     before.duplicateWatchKeys.forEach(function removeDuplicateWatch(key) {
@@ -1366,6 +1567,9 @@
     before.invalidAutoBuyKeys.forEach(function removeBadAutoBuy(key) {
       delete autoBuyAttempts[key];
     });
+    before.invalidResourceKeys.forEach(function removeBadResource(key) {
+      delete resources[key];
+    });
 
     var payload = createBackupPayload({
       settings: settings,
@@ -1373,6 +1577,7 @@
       watch: watch,
       progress: progress,
       autoBuyAttempts: autoBuyAttempts,
+      resources: resources,
     }, now);
 
     return {
@@ -1390,6 +1595,7 @@
       '稍后看 ' + (counts.watch || 0),
       '阅读进度 ' + (counts.progress || 0),
       '自动购买记录 ' + (counts.autoBuyAttempts || 0),
+      '资源 ' + (counts.resources || 0),
       '屏蔽词 ' + ((counts.titleKeywords || 0) + (counts.authorKeywords || 0)),
       '快捷回复 ' + (counts.quickReplies || 0),
     ].join(' · ');
@@ -1404,6 +1610,7 @@
     if (data.orphanProgressKeys && data.orphanProgressKeys.length) warnings.push('孤立进度 ' + data.orphanProgressKeys.length);
     if (data.invalidProgressKeys && data.invalidProgressKeys.length) warnings.push('异常进度 ' + data.invalidProgressKeys.length);
     if (data.invalidAutoBuyKeys && data.invalidAutoBuyKeys.length) warnings.push('异常购买记录 ' + data.invalidAutoBuyKeys.length);
+    if (data.invalidResourceKeys && data.invalidResourceKeys.length) warnings.push('异常资源 ' + data.invalidResourceKeys.length);
     return warnings.length ? warnings.join(' · ') : '未发现需要清理的重复或过期数据';
   }
 
@@ -1486,6 +1693,14 @@
     saveMap(AUTO_BUY_KEY, pruneAutoBuyAttempts(attempts));
   }
 
+  function loadResourceLibrary() {
+    return pruneResourceLibrary(loadMap(RESOURCE_KEY));
+  }
+
+  function saveResourceLibrary(resources) {
+    saveMap(RESOURCE_KEY, pruneResourceLibrary(resources));
+  }
+
   function applyBackupPayload(payload, settings, state) {
     var backup = normalizeBackupPayload(payload);
     if (!backup) return false;
@@ -1498,15 +1713,18 @@
     state.read = copyStorageMap(data.read);
     state.watch = copyStorageMap(data.watch);
     state.progress = pruneReadProgress(copyStorageMap(data.progress));
+    state.resources = pruneResourceLibrary(copyStorageMap(data.resources));
     saveSettings(settings);
     saveMap(READ_KEY, state.read);
     saveMap(WATCH_KEY, state.watch);
     saveReadProgress(state.progress);
     saveAutoBuyAttempts(data.autoBuyAttempts);
+    saveResourceLibrary(state.resources);
     clearReadProgressRestoreRequest(parseThreadId(location.href));
     refreshWatchCenter();
     refreshHistoryCenter();
     refreshAutoBuyCenter();
+    refreshResourceCenter();
     enhanceAll(settings, state);
     return true;
   }
@@ -2185,7 +2403,8 @@
       (
         panelState.query ||
         (panelState.filter && panelState.filter !== 'all') ||
-        (panelState.tag && panelState.tag !== 'all')
+        (panelState.tag && panelState.tag !== 'all') ||
+        (panelState.provider && panelState.provider !== 'all')
       )
     );
   }
@@ -2213,6 +2432,22 @@
       });
       controls.appendChild(filterSelect);
     }
+    if ((config.providers || []).length) {
+      var providerSelect = createEl('select');
+      providerSelect.dataset.spxCenterProvider = '1';
+      var allProviderOption = createEl('option');
+      allProviderOption.value = 'all';
+      allProviderOption.textContent = config.providerAllLabel || '全部来源';
+      providerSelect.appendChild(allProviderOption);
+      (config.providers || []).forEach(function appendProviderOption(item) {
+        var option = createEl('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        option.selected = String(panelState.provider || 'all') === String(item.value);
+        providerSelect.appendChild(option);
+      });
+      controls.appendChild(providerSelect);
+    }
     if ((config.tags || []).length) {
       var tagSelect = createEl('select');
       tagSelect.dataset.spxCenterTag = '1';
@@ -2235,7 +2470,7 @@
   function renderCenterPanel(panel, options) {
     if (!panel || !options) return;
     var scrollTop = panel.scrollTop || 0;
-    var panelState = ensureCenterPanelState(panel, options.stateDefaults || { query: '', filter: 'all', tag: 'all' });
+    var panelState = ensureCenterPanelState(panel, options.stateDefaults || { query: '', filter: 'all', tag: 'all', provider: 'all' });
     var entries = options.entries || [];
     var visibleEntries = typeof options.filterEntries === 'function'
       ? options.filterEntries(entries, panelState)
@@ -2329,7 +2564,7 @@
     panel.addEventListener('input', function handleCenterInput(event) {
       var target = event.target;
       if (!target || !target.dataset || target.dataset.spxCenterQuery !== '1') return;
-      var state = ensureCenterPanelState(panel, config.stateDefaults || { query: '', filter: 'all', tag: 'all' });
+      var state = ensureCenterPanelState(panel, config.stateDefaults || { query: '', filter: 'all', tag: 'all', provider: 'all' });
       if (state.query === target.value) return;
       state.query = target.value;
       var selectionStart = typeof target.selectionStart === 'number' ? target.selectionStart : null;
@@ -2351,13 +2586,16 @@
     panel.addEventListener('change', function handleCenterChange(event) {
       var target = event.target;
       if (!target || !target.dataset) return;
-      var state = ensureCenterPanelState(panel, config.stateDefaults || { query: '', filter: 'all', tag: 'all' });
+      var state = ensureCenterPanelState(panel, config.stateDefaults || { query: '', filter: 'all', tag: 'all', provider: 'all' });
       if (target.dataset.spxCenterFilter === '1') {
         if (state.filter === target.value) return;
         state.filter = target.value;
       } else if (target.dataset.spxCenterTag === '1') {
         if (state.tag === target.value) return;
         state.tag = target.value;
+      } else if (target.dataset.spxCenterProvider === '1') {
+        if (state.provider === target.value) return;
+        state.provider = target.value;
       } else {
         return;
       }
@@ -2798,6 +3036,164 @@
     });
   }
 
+  function renderResourceCenter(panel, state) {
+    state.resources = pruneResourceLibrary(state.resources || {});
+    var entries = getResourceCenterEntries(state.resources);
+    renderCenterPanel(panel, {
+      title: '资源中心',
+      stateDefaults: { query: '', filter: 'all', provider: 'all' },
+      summary: function summary(visibleEntries, entries, panelState) {
+        return (
+          (isCenterFiltered(panelState) ? (visibleEntries.length + ' / ') : '') +
+          entries.length +
+          ' 条资源'
+        );
+      },
+      headerActions: function headerActions(visibleEntries, entries, panelState) {
+        var actions = [];
+        if (visibleEntries.length) actions.push({ text: '复制筛选', dataset: { action: 'copy-visible-resources' } });
+        if (visibleEntries.length && isCenterFiltered(panelState)) {
+          actions.push({ text: '删除筛选', dataset: { action: 'remove-visible-resources' } });
+        }
+        if (entries.length) actions.push({ text: '清空', dataset: { action: 'clear-resources' } });
+        actions.push({ text: '关闭', dataset: { action: 'close-resource-center' } });
+        return actions;
+      },
+      controls: {
+        searchPlaceholder: '搜索资源、帖子、作者或提取码',
+        filters: [
+          { value: 'all', label: '全部状态' },
+          { value: 'saved', label: RESOURCE_STATUSES.saved },
+          { value: 'todo', label: RESOURCE_STATUSES.todo },
+          { value: 'done', label: RESOURCE_STATUSES.done },
+          { value: 'invalid', label: RESOURCE_STATUSES.invalid },
+        ],
+        providers: getResourceProviderOptions(entries),
+        providerAllLabel: '全部类型',
+      },
+      emptyText: '还没有保存的资源。可在阅读页资源面板或自动购买成功后存入。',
+      emptyFilteredText: '没有匹配的资源。',
+      entries: entries,
+      filterEntries: filterResourceCenterEntries,
+      getItemData: function getItemData(entry) {
+        return { key: entry.key };
+      },
+      createTitle: function createTitle(entry) {
+        return createCenterTitleElement({
+          text: entry.label + ' · ' + entry.url,
+          href: entry.url,
+          badgeText: entry.statusLabel,
+          badgeClass: 'spx-status-' + entry.status,
+          title: entry.url,
+        });
+      },
+      createMeta: function createMeta(entry) {
+        var metaParts = [];
+        if (entry.savedAt) metaParts.push('保存 ' + formatShortTime(entry.savedAt));
+        if (entry.provider) metaParts.push(entry.provider);
+        if (entry.sourceText) metaParts.push(entry.sourceText);
+        if (entry.accessCode) metaParts.push('提取码 ' + entry.accessCode);
+        return metaParts.join(' · ') || '暂无来源';
+      },
+      createActions: function createActions(entry) {
+        var actions = [
+          { text: '复制', dataset: { action: 'copy-resource', key: entry.key } },
+          { text: '待下载', dataset: { action: 'mark-resource-todo', key: entry.key } },
+          { text: '已处理', dataset: { action: 'mark-resource-done', key: entry.key } },
+          { text: '失效', dataset: { action: 'mark-resource-invalid', key: entry.key } },
+        ];
+        if (entry.status !== 'saved') actions.push({ text: '已保存', dataset: { action: 'mark-resource-saved', key: entry.key } });
+        if (entry.sourceUrl) actions.push({ text: '来源帖', href: entry.sourceUrl });
+        actions.push({ text: '删除', dataset: { action: 'remove-resource', key: entry.key } });
+        return actions;
+      },
+    });
+  }
+
+  function refreshResourceCenter() {
+    refreshCenterPanel('#spx-resource-center');
+  }
+
+  function saveResourceCenterState(state) {
+    state.resources = pruneResourceLibrary(state.resources || {});
+    saveResourceLibrary(state.resources);
+    refreshResourceCenter();
+  }
+
+  function createResourceCenterPanel(settings, state) {
+    return createCenterPanel({
+      id: 'spx-resource-center',
+      stateDefaults: { query: '', filter: 'all', provider: 'all' },
+      render: function render(panel) {
+        renderResourceCenter(panel, state);
+      },
+      onAction: function onAction(action, target, panel) {
+        state.resources = pruneResourceLibrary(state.resources || {});
+        if (action === 'close-resource-center') {
+          setCenterPanelHidden(panel, true, '[data-spx-resource-center-button="1"]');
+          return;
+        }
+        if (action === 'copy-visible-resources') {
+          var visibleForCopy = filterResourceCenterEntries(
+            getResourceCenterEntries(state.resources),
+            ensureCenterPanelState(panel, { query: '', filter: 'all', provider: 'all' })
+          );
+          copyTextToClipboard(formatResourceLinks(visibleForCopy)).then(
+            function showCopySuccess() {
+              setTemporaryText(target, '已复制 ' + visibleForCopy.length + ' 条', '复制筛选');
+            },
+            function showCopyFailure() {
+              setTemporaryText(target, '复制失败', '复制筛选');
+            }
+          );
+          return;
+        }
+        if (action === 'remove-visible-resources') {
+          var visibleEntries = filterResourceCenterEntries(
+            getResourceCenterEntries(state.resources),
+            ensureCenterPanelState(panel, { query: '', filter: 'all', provider: 'all' })
+          );
+          if (!visibleEntries.length) return;
+          if (typeof window.confirm === 'function' && !window.confirm('删除当前筛选结果中的资源？')) return;
+          visibleEntries.forEach(function removeVisibleResource(entry) {
+            delete state.resources[entry.key];
+          });
+          saveResourceCenterState(state);
+          renderResourceCenter(panel, state);
+          return;
+        }
+        if (action === 'clear-resources') {
+          if (typeof window.confirm === 'function' && !window.confirm('清空全部资源库记录？')) return;
+          state.resources = {};
+          saveResourceCenterState(state);
+          renderResourceCenter(panel, state);
+          return;
+        }
+
+        var key = target.dataset.key;
+        if (!key) return;
+        if (action === 'copy-resource') {
+          var entry = state.resources[key];
+          copyTextToClipboard(formatResourceLinks(entry ? [entry] : [])).catch(function noop() {});
+          return;
+        }
+        if (action === 'remove-resource') {
+          delete state.resources[key];
+          saveResourceCenterState(state);
+          renderResourceCenter(panel, state);
+          return;
+        }
+        if (/^mark-resource-/.test(action) && state.resources[key]) {
+          var status = action.replace('mark-resource-', '');
+          state.resources[key].status = normalizeResourceStatus(status);
+          state.resources[key].updatedAt = Date.now();
+          saveResourceCenterState(state);
+          renderResourceCenter(panel, state);
+        }
+      },
+    });
+  }
+
   function createForumQuickTools(settings, state, items) {
     if (qs('#spx-forum-tools')) return;
     var content = qs('#content') || qs('#main') || document.body;
@@ -3169,6 +3565,13 @@
       qs('h1', scope) ||
       qs('title', scope);
     return compactText(titleNode && titleNode.textContent) || compactText(document.title) || '未命名帖子';
+  }
+
+  function getCurrentResourceSourceMeta() {
+    return {
+      sourceTitle: getReadPageTitle(document),
+      sourceUrl: location.href.split('#')[0],
+    };
   }
 
   function getScrollTop() {
@@ -3919,7 +4322,11 @@
     }
     var resourceLinks = getJumpResourceLinks(extractReadPageResourceLinks(qsa('table.js-post'), location.href));
     var resourceSummary = formatResourceJumpSummary(resourceLinks);
-    showAutoBuyResourceJump(resourceLinks);
+    var savedResources = saveResourceLinksToLibrary(resourceLinks, state.resources, getCurrentResourceSourceMeta());
+    state.resources = savedResources.resources;
+    saveResourceLibrary(state.resources);
+    refreshResourceCenter();
+    showAutoBuyResourceJump(resourceLinks, state, savedResources.saved);
     context.pageRoot.dataset.spxAutoBuyStatus = 'done';
     recordAutoBuyAttempt(
       context.attemptKey,
@@ -4047,7 +4454,7 @@
         });
 
         extractResources.addEventListener('click', function openResources() {
-          openResourcePanel(posts, index, author);
+          openResourcePanel(posts, index, author, { state: state });
         });
 
         tools.appendChild(floor);
@@ -4136,20 +4543,22 @@
     content.insertBefore(panel, content.firstChild);
   }
 
-  function showAutoBuyResourceJump(links) {
+  function showAutoBuyResourceJump(links, state, savedCount) {
     var jumpLinks = getJumpResourceLinks(links);
     closeAutoBuyResourceJump();
     if (!jumpLinks.length || !document.body) return null;
 
     var panel = createEl('div', 'spx-auto-resource-jump');
-    var title = createEl('strong', '', '购买完成，识别到资源：' + formatResourceJumpSummary(jumpLinks));
+    var title = createEl('strong', '', '购买完成，识别到资源：' + formatResourceJumpSummary(jumpLinks) + (savedCount ? ' · 已存资源库' : ''));
     var actions = createEl('div', 'spx-auto-resource-actions');
     var copyButton = createEl('button', '', '复制全部资源');
     var detailButton = createEl('button', '', '资源面板');
+    var centerButton = createEl('button', '', '资源中心');
 
     panel.id = 'spx-auto-resource-jump';
     copyButton.type = 'button';
     detailButton.type = 'button';
+    centerButton.type = 'button';
 
     jumpLinks.slice(0, 8).forEach(function appendJumpLink(item, index) {
       var label = item.label || getResourceDisplayLabel(item);
@@ -4175,11 +4584,17 @@
       );
     });
     detailButton.addEventListener('click', function openAllAutoBuyResources() {
-      openResourcePanel(qsa('table.js-post'), 0, '', { defaultScope: 'all' });
+      openResourcePanel(qsa('table.js-post'), 0, '', { defaultScope: 'all', state: state });
+    });
+    centerButton.addEventListener('click', function openAutoBuyResourceCenter() {
+      var panel = createResourceCenterPanel(null, state || { resources: loadResourceLibrary() });
+      if (panel.spxRender) panel.spxRender();
+      setCenterPanelHidden(panel, false, '[data-spx-resource-center-button="1"]');
     });
 
     actions.appendChild(copyButton);
     actions.appendChild(detailButton);
+    actions.appendChild(centerButton);
     panel.appendChild(title);
     panel.appendChild(actions);
     mountAutoBuyResourceJump(panel);
@@ -4203,6 +4618,7 @@
     var typeSelect = createEl('select');
     var list = createEl('div', 'spx-watch-list');
     var copyButton = createEl('button', '', '复制当前');
+    var saveButton = createEl('button', '', '保存当前');
     var visibleLinks = [];
 
     closeButton.type = 'button';
@@ -4240,6 +4656,7 @@
     controls.appendChild(scopeSelect);
     controls.appendChild(typeSelect);
     controls.appendChild(copyButton);
+    controls.appendChild(saveButton);
 
     function renderLinks() {
       visibleLinks = filterResourceLinks(allLinks, {
@@ -4251,6 +4668,7 @@
       list.textContent = '';
       summary.textContent = '当前 ' + visibleLinks.length + ' / 全部 ' + allLinks.length + ' 条';
       copyButton.disabled = !visibleLinks.length;
+      saveButton.disabled = !getJumpResourceLinks(visibleLinks).length;
 
       if (!visibleLinks.length) {
         list.appendChild(createEl('div', 'spx-watch-empty', '没有匹配的资源链接。'));
@@ -4292,6 +4710,18 @@
           setTemporaryText(copyButton, '复制失败', '复制当前');
         }
       );
+    });
+    saveButton.addEventListener('click', function saveVisibleResourceLinks() {
+      var targetState = config.state;
+      if (!targetState) {
+        setTemporaryText(saveButton, '无法保存', '保存当前');
+        return;
+      }
+      var savedResources = saveResourceLinksToLibrary(visibleLinks, targetState.resources, getCurrentResourceSourceMeta());
+      targetState.resources = savedResources.resources;
+      saveResourceLibrary(targetState.resources);
+      refreshResourceCenter();
+      setTemporaryText(saveButton, savedResources.saved ? ('已保存 ' + savedResources.saved + ' 条') : '无可保存资源', '保存当前');
     });
 
     panel.appendChild(header);
@@ -5402,6 +5832,18 @@
           });
         },
       },
+      {
+        show: true,
+        create: function createResourceCenterButton() {
+          return createCenterToolbarButton(settings, state, {
+            text: '源',
+            title: '打开资源中心',
+            buttonDataset: 'spxResourceCenterButton',
+            buttonSelector: '[data-spx-resource-center-button="1"]',
+            createPanel: createResourceCenterPanel,
+          });
+        },
+      },
     ].forEach(function appendDynamicToolbarItem(item) {
       appendToolbarItem(toolbar, item.create(), item.show);
     });
@@ -5674,6 +6116,7 @@
       read: loadMap(READ_KEY),
       watch: loadMap(WATCH_KEY),
       progress: loadReadProgress(),
+      resources: loadResourceLibrary(),
     };
     injectStyles();
     setBodyClasses(settings);
@@ -5725,6 +6168,10 @@
     formatResourceLinks: formatResourceLinks,
     getJumpResourceLinks: getJumpResourceLinks,
     formatResourceJumpSummary: formatResourceJumpSummary,
+    pruneResourceLibrary: pruneResourceLibrary,
+    saveResourceLinksToLibrary: saveResourceLinksToLibrary,
+    getResourceCenterEntries: getResourceCenterEntries,
+    filterResourceCenterEntries: filterResourceCenterEntries,
     markThreadsRead: markThreadsRead,
     findThreadIdsByAuthor: findThreadIdsByAuthor,
     isStickyCell: isStickyCell,
