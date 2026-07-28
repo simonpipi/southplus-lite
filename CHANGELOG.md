@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.1.7 - 2026-07-28
+
+### Added
+
+- 资源中心新增待下载队列处理：支持复制当前筛选范围内的待下载资源，并可将当前筛选资源导出为带类型、提取码、来源帖和状态的文本清单。
+
+### Changed
+
+- 增强资源识别：新增电驴 `ed2k`、压缩包 / 镜像文件、更多跳转包装参数和提取码 / 访问码 / 解压码文案识别，自动购买资源跳转与资源中心同步支持这些类型。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
+## 0.1.6 - 2026-07-27
+
+### Changed
+
+- 优化单文件结构：拆分样式规则生成和工具栏配置构建，降低后续维护导航、阅读布局、中心面板和工具栏入口时的改动范围。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.1.5 - 2026-07-26
 
 ### Added

@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.1\.5/);
+assert.match(source, /@version\s+0\.1\.7/);
 
 assert.equal(enhancer.parsePostPrice('本帖售价：5 SP币'), 5);
 assert.equal(enhancer.parsePostPrice('购买需要 12.5 SP'), 12.5);
@@ -53,7 +53,9 @@ assert.equal(
   'https://pan.baidu.com/s/abc?pwd=1234'
 );
 assert.equal(enhancer.classifyResourceLink('magnet:?xt=urn:btih:ABC123'), 'magnet');
+assert.equal(enhancer.classifyResourceLink('ed2k://|file|demo.zip|12345|ABCDEF|/'), 'ed2k');
 assert.equal(enhancer.classifyResourceLink('https://example.com/file.torrent'), 'torrent');
+assert.equal(enhancer.classifyResourceLink('https://example.com/file.rar'), 'archive');
 assert.equal(enhancer.classifyResourceLink('https://pan.baidu.com/s/abc?pwd=1234'), 'cloud');
 assert.equal(enhancer.classifyResourceLink('https://img.example.com/a.jpg'), 'image');
 assert.equal(enhancer.classifyResourceLink('https://south-plus.org/read.php?tid=1'), 'external');
@@ -122,6 +124,34 @@ assert.equal(
   '[百度网盘] B1F bob https://pan.baidu.com/s/abc?pwd=1234 提取码 1234\n[夸克网盘] B1F bob https://pan.quark.cn/s/qwer'
 );
 
+assert.equal(
+  enhancer.normalizeResourceUrl(
+    '/go.php?redirect_url=https%3A%2F%2Ffiles.example.com%2Fpack.zip',
+    'https://south-plus.org/read.php?tid=99'
+  ),
+  'https://files.example.com/pack.zip'
+);
+const extendedResources = enhancer.extractResourceLinksFromText(
+  '电驴 ed2k://|file|demo.zip|12345|ABCDEF|/ 压缩包 https://files.example.com/archive.7z?download=1 跳转 https://south-plus.org/go.php?redirect_url=https%3A%2F%2Ffiles.example.com%2Fpack.rar 百度 https://pan.baidu.com/s/efgh 提取密码是 ab12',
+  'https://south-plus.org/read.php?tid=99',
+  { floorLabel: 'B3F', author: 'carol', postIndex: 3 }
+);
+assert.deepEqual(
+  extendedResources.map(function mapExtendedResource(item) {
+    return [item.type, item.label, item.url, item.accessCode];
+  }),
+  [
+    ['ed2k', '电驴', 'ed2k://|file|demo.zip|12345|ABCDEF|/', ''],
+    ['archive', '压缩包', 'https://files.example.com/archive.7z?download=1', ''],
+    ['archive', '压缩包', 'https://files.example.com/pack.rar', ''],
+    ['cloud', '百度网盘', 'https://pan.baidu.com/s/efgh', 'ab12'],
+  ]
+);
+assert.equal(
+  enhancer.formatResourceJumpSummary(extendedResources),
+  '电驴 1 / 压缩包 2 / 百度网盘 1'
+);
+
 const savedResourceLibrary = enhancer.saveResourceLinksToLibrary(
   jumpedResources,
   {
@@ -155,6 +185,25 @@ assert.deepEqual(
     return entry.url;
   }),
   ['https://pan.baidu.com/s/abc?pwd=1234']
+);
+const downloadQueueEntries = enhancer.getResourceDownloadQueueEntries(resourceCenterEntries);
+assert.deepEqual(
+  downloadQueueEntries.map(function mapDownloadQueue(entry) {
+    return [entry.type, entry.url, entry.status];
+  }),
+  [
+    ['cloud', 'https://pan.baidu.com/s/abc?pwd=1234', 'todo'],
+  ]
+);
+assert.equal(
+  enhancer.formatResourceDownloadList(downloadQueueEntries),
+  [
+    '#1 [百度网盘] https://pan.baidu.com/s/abc?pwd=1234',
+    '提取码：1234',
+    '来源：资源帖 · B1F · bob',
+    '来源链接：https://south-plus.org/read.php?tid=99',
+    '状态：待下载',
+  ].join('\n')
 );
 assert.deepEqual(
   Object.keys(enhancer.pruneResourceLibrary({

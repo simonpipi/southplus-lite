@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.1.5
+// @version      0.1.7
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        https://south-plus.org/*
@@ -52,7 +52,9 @@
   };
   var RESOURCE_CATEGORIES = {
     magnet: '磁力',
+    ed2k: '电驴',
     torrent: '种子',
+    archive: '压缩包',
     cloud: '网盘',
     image: '图片',
     external: '外链',
@@ -83,6 +85,8 @@
   ].join('|');
   var CLOUD_RESOURCE_HOST_RE = new RegExp('(?:^|\\.)(?:' + CLOUD_RESOURCE_HOST_PATTERN + ')$', 'i');
   var CLOUD_RESOURCE_PATH_RE = new RegExp('^(?:(?:www|share|pan)\\.)?(?:' + CLOUD_RESOURCE_HOST_PATTERN + ')\\/', 'i');
+  var TORRENT_RESOURCE_EXT_RE = /\.torrent(?:[?#&]|$)/i;
+  var ARCHIVE_RESOURCE_EXT_RE = /\.(?:zip|rar|7z|tar|tgz|gz|bz2|xz|iso|001)(?:[?#&]|$)/i;
   var DEFAULT_SETTINGS = {
     cleanMode: true,
     readerMode: true,
@@ -618,6 +622,7 @@
   function isResourceLikeToken(value) {
     var text = trimResourceUrlToken(value);
     return /^magnet:\?/i.test(text) ||
+      /^ed2k:\/\//i.test(text) ||
       /^https?:\/\//i.test(text) ||
       /^\/\//.test(text) ||
       CLOUD_RESOURCE_PATH_RE.test(text);
@@ -635,16 +640,39 @@
       return decoded;
     }
 
-    var paramNames = ['url', 'u', 'target', 'to', 'link', 'href'];
+    var paramNames = [
+      'url',
+      'u',
+      'target',
+      'to',
+      'link',
+      'href',
+      'go',
+      'jump',
+      'redirect',
+      'redirect_url',
+      'redirect_uri',
+      'r',
+      'site',
+      'src',
+      'source',
+      'file',
+      'down',
+      'download',
+    ];
     for (var index = 0; index < paramNames.length; index += 1) {
       var raw = parsed.searchParams.get(paramNames[index]);
       var candidate = decodeResourceUrlToken(raw);
       if (candidate && isResourceLikeToken(candidate)) return candidate;
     }
 
-    var queryText = decodeResourceUrlToken(parsed.search.slice(1));
+    var queryText = [
+      decodeResourceUrlToken(parsed.search.slice(1)),
+      decodeResourceUrlToken(parsed.hash.replace(/^#/, '')),
+      decoded,
+    ].join(' ');
     var resourceMatch = queryText.match(new RegExp(
-      "(magnet:\\?xt=urn:[^\\s<>\"'，。；、)）\\]]+|https?:\\/\\/[^\\s<>\"'，。；、)）\\]]+|(?:(?:www|share|pan)\\.)?(?:" +
+      "(magnet:\\?xt=urn:[^\\s<>\"'，。；、)）\\]]+|ed2k:\\/\\/\\|file\\|[^\\s<>\"'，。；、)）\\]]+|https?:\\/\\/[^\\s<>\"'，。；、)）\\]]+|(?:(?:www|share|pan)\\.)?(?:" +
         CLOUD_RESOURCE_HOST_PATTERN +
         ")\\/[^\\s<>\"'，。；、)）\\]]+)",
       'i'
@@ -657,6 +685,7 @@
     if (!text) return '';
     if (/^(?:javascript|mailto|tel|data):/i.test(text) || text.charAt(0) === '#') return '';
     if (/^magnet:\?/i.test(text)) return text;
+    if (/^ed2k:\/\//i.test(text)) return text;
     if (CLOUD_RESOURCE_PATH_RE.test(text)) {
       text = 'https://' + text;
     }
@@ -672,9 +701,15 @@
     var text = String(url || '');
     var lower = text.toLowerCase();
     if (/^magnet:\?/i.test(text)) return 'magnet';
-    if (/\.torrent(?:[?#]|$)/i.test(lower)) return 'torrent';
+    if (/^ed2k:\/\//i.test(text)) return 'ed2k';
+    if (TORRENT_RESOURCE_EXT_RE.test(lower)) return 'torrent';
+    if (ARCHIVE_RESOURCE_EXT_RE.test(lower)) return 'archive';
     try {
-      var host = new URL(text).hostname.toLowerCase();
+      var parsedUrl = new URL(text);
+      var host = parsedUrl.hostname.toLowerCase();
+      var path = decodeURIComponent(parsedUrl.pathname || '').toLowerCase();
+      if (TORRENT_RESOURCE_EXT_RE.test(path)) return 'torrent';
+      if (ARCHIVE_RESOURCE_EXT_RE.test(path)) return 'archive';
       if (CLOUD_RESOURCE_HOST_RE.test(host)) return 'cloud';
     } catch (error) {
       if (CLOUD_RESOURCE_PATH_RE.test(lower)) return 'cloud';
@@ -722,7 +757,9 @@
 
   function extractResourceAccessCode(value) {
     var text = String(value || '').replace(/\s+/g, ' ');
-    var match = text.match(/(?:提取码|访问码|取件码|解压码|密码|pass|pwd)\s*[:：=]?\s*([A-Za-z0-9]{3,12})/i);
+    var compactText = text.replace(/\s+/g, '');
+    var match = text.match(/(?:提取码|提取碼|提取密码|访问码|访问密码|分享码|分享密码|取件码|取件密码|解压码|解压密码|密码|pass(?:word)?|pwd|code|access\s*code)\s*(?:是|为)?\s*[:：=]?\s*([A-Za-z0-9]{3,12})/i) ||
+      compactText.match(/(?:提取码|提取碼|提取密码|访问码|访问密码|分享码|分享密码|取件码|取件密码|解压码|解压密码|密码)(?:是|为)?[:：=]?([A-Za-z0-9]{3,12})/i);
     return match ? match[1] : '';
   }
 
@@ -769,6 +806,7 @@
     var links = [];
     var patterns = [
       /magnet:\?xt=urn:[^\s<>"'，。；、)）\]]+/ig,
+      /ed2k:\/\/\|file\|[^\s<>"'，。；、)）\]]+/ig,
       /https?:\/\/[^\s<>"'，。；、)）\]]+/ig,
       new RegExp(
         "(?:(?:www|share|pan)\\.)?(?:" + CLOUD_RESOURCE_HOST_PATTERN + ")\\/[^\\s<>\"'，。；、)）\\]]+",
@@ -866,8 +904,30 @@
 
   function getJumpResourceLinks(links) {
     return dedupeResourceLinks(links).filter(function keepJumpResource(item) {
-      return item && /^(?:magnet|torrent|cloud|external)$/.test(item.type || '');
+      return item && /^(?:magnet|ed2k|torrent|archive|cloud|external)$/.test(item.type || '');
     });
+  }
+
+  function getResourceDownloadQueueEntries(entries) {
+    return getJumpResourceLinks(entries).filter(function keepTodoResource(item) {
+      return normalizeResourceStatus(item.status) === 'todo';
+    });
+  }
+
+  function formatResourceDownloadList(entries) {
+    return getJumpResourceLinks(entries)
+      .map(function formatResourceDownloadItem(item, index) {
+        var lines = [
+          '#' + (index + 1) + ' [' + (item.label || getResourceDisplayLabel(item)) + '] ' + item.url,
+        ];
+        var source = [item.sourceTitle, item.floorLabel, item.author].filter(Boolean).join(' · ');
+        if (item.accessCode) lines.push('提取码：' + item.accessCode);
+        if (source) lines.push('来源：' + source);
+        if (item.sourceUrl) lines.push('来源链接：' + item.sourceUrl);
+        if (item.status) lines.push('状态：' + getResourceStatusLabel(item.status));
+        return lines.join('\n');
+      })
+      .join('\n\n');
   }
 
   function formatResourceJumpSummary(links) {
@@ -1914,6 +1974,11 @@
       '.spx-site-shell #set-content table{box-sizing:border-box!important;width:100%!important;max-width:100%!important;}',
       '.spx-site-shell #set-content .set-tab-table{box-sizing:border-box!important;width:100%!important;margin:0 0 12px!important;overflow:auto!important;}',
       '.spx-site-shell #set-content .set-tab-box{box-sizing:border-box!important;width:100%!important;overflow:visible!important;}',
+    ].concat(getInjectedContentLayoutStyleRules(), getInjectedWidgetStyleRules()).join('\n');
+  }
+
+  function getInjectedContentLayoutStyleRules() {
+    return [
       '.spx-reader,.spx-reader body{background:#f4f6f8!important;background-image:none!important;color:#263238!important;font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
       '.spx-reader #wrapA,.spx-reader #main,.spx-reader #content{background:#f4f6f8!important;background-image:none!important;}',
       '.spx-reader #main>br,.spx-reader #content>br{display:none!important;}',
@@ -2062,6 +2127,11 @@
       '.spx-clean:not(.spx-site-shell) #wrapA{max-width:1180px!important;margin:0 auto!important;}',
       '.spx-clean #main{margin-top:8px!important;}',
       '.spx-clean table{border-collapse:collapse;}',
+    ];
+  }
+
+  function getInjectedWidgetStyleRules() {
+    return [
       '.spx-toolbar{position:fixed;right:14px;bottom:18px;z-index:99999;display:flex;flex-direction:column;gap:6px;font:12px/1.2 Arial,Helvetica,sans-serif;}',
       '.spx-toolbar button,.spx-toolbar a{width:42px;height:30px;border:1px solid var(--spx-line);border-radius:6px;background:var(--spx-panel);color:var(--spx-text);box-shadow:0 2px 8px rgba(15,23,42,.12);cursor:pointer;text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;padding:0;}',
       '.spx-toolbar button:hover,.spx-toolbar a:hover{border-color:var(--spx-accent);color:var(--spx-accent);}',
@@ -2156,7 +2226,7 @@
       '.spx-folded-quote:after{content:"";position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(transparent,var(--spx-panel));}',
       '@media(max-width:900px){.spx-home-dashboard #content{width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-home-dashboard #spx-home-grid{grid-template-columns:1fr!important}.spx-home-dashboard .spx-home-module,.spx-home-dashboard .spx-home-module[data-spx-large="1"]{grid-column:1!important}.spx-home-dashboard #header,.spx-home-dashboard #mainNav,.spx-home-dashboard #infobox,.spx-home-dashboard #notice,.spx-home-dashboard .spx-home-quick{width:calc(100vw - 16px)!important}.spx-home-dashboard .spx-home-module tr.tr3{grid-template-columns:1fr!important;gap:4px!important}.spx-home-dashboard .spx-home-module tr.tr3>td:first-child{display:none!important}}',
       '@media(max-width:760px){.spx-preview-lightbox{padding:0!important}.spx-preview-lightbox-shell{border:0!important;border-radius:0!important}.spx-preview-lightbox-toolbar{align-items:flex-start!important;min-height:0!important;padding:8px!important}.spx-preview-lightbox-actions{gap:4px!important}.spx-preview-lightbox button{height:30px!important;padding:0 8px!important}.spx-preview-lightbox-canvas{padding:22px 50px!important}.spx-preview-lightbox-nav{width:38px!important;height:54px!important;font-size:26px!important}.spx-preview-lightbox-prev{left:6px!important}.spx-preview-lightbox-next{right:6px!important}.spx-preview-lightbox-caption{padding:6px 9px!important}.spx-preview-lightbox-help{display:none!important}.spx-reader body{font-size:16px!important}.spx-reader #wrapA{width:auto!important;margin:0 6px!important}.spx-reader .tpc_content{font-size:17px!important;line-height:1.9!important;padding:12px!important}.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{display:flex!important;flex-direction:column!important;gap:12px!important;padding:14px!important}.spx-reader .spx-post-body-split .tpc_content,.spx-immersive-read .spx-post-body-split .tpc_content{padding:0!important}.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{width:auto!important;max-height:360px!important;margin:0!important;padding:10px!important}.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{height:132px!important}.spx-immersive-read #wrapA,.spx-immersive-read #main,.spx-immersive-read #content{width:100vw!important;margin:0!important}.spx-immersive-read table.js-post{width:calc(100vw - 14px)!important;margin:10px 7px!important}.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{font-size:19px!important;padding:16px 14px 6px!important}.spx-immersive-read .tpc_content{font-size:var(--spx-immersive-font-size,20px)!important;line-height:1.98!important;padding:14px!important}.spx-toolbar{right:8px;bottom:8px}.spx-toolbar button,.spx-toolbar a{width:38px;height:30px}.spx-settings,.spx-watch-center{right:8px;bottom:52px}}',
-    ].join('\n');
+    ];
   }
 
   function injectStyles() {
@@ -3043,15 +3113,20 @@
       title: '资源中心',
       stateDefaults: { query: '', filter: 'all', provider: 'all' },
       summary: function summary(visibleEntries, entries, panelState) {
+        var queueCount = getResourceDownloadQueueEntries(entries).length;
         return (
           (isCenterFiltered(panelState) ? (visibleEntries.length + ' / ') : '') +
           entries.length +
-          ' 条资源'
+          ' 条资源' +
+          (queueCount ? (' · 待下载 ' + queueCount + ' 条') : '')
         );
       },
       headerActions: function headerActions(visibleEntries, entries, panelState) {
         var actions = [];
+        var visibleQueue = getResourceDownloadQueueEntries(visibleEntries);
         if (visibleEntries.length) actions.push({ text: '复制筛选', dataset: { action: 'copy-visible-resources' } });
+        if (visibleQueue.length) actions.push({ text: '复制待下载', dataset: { action: 'copy-download-queue' } });
+        if (visibleEntries.length) actions.push({ text: '导出清单', dataset: { action: 'export-visible-resources' } });
         if (visibleEntries.length && isCenterFiltered(panelState)) {
           actions.push({ text: '删除筛选', dataset: { action: 'remove-visible-resources' } });
         }
@@ -3146,6 +3221,41 @@
               setTemporaryText(target, '复制失败', '复制筛选');
             }
           );
+          return;
+        }
+        if (action === 'copy-download-queue') {
+          var visibleQueueForCopy = getResourceDownloadQueueEntries(filterResourceCenterEntries(
+            getResourceCenterEntries(state.resources),
+            ensureCenterPanelState(panel, { query: '', filter: 'all', provider: 'all' })
+          ));
+          copyTextToClipboard(formatResourceDownloadList(visibleQueueForCopy)).then(
+            function showQueueCopySuccess() {
+              setTemporaryText(target, '已复制 ' + visibleQueueForCopy.length + ' 条', '复制待下载');
+            },
+            function showQueueCopyFailure() {
+              setTemporaryText(target, '复制失败', '复制待下载');
+            }
+          );
+          return;
+        }
+        if (action === 'export-visible-resources') {
+          var visibleForExport = filterResourceCenterEntries(
+            getResourceCenterEntries(state.resources),
+            ensureCenterPanelState(panel, { query: '', filter: 'all', provider: 'all' })
+          );
+          if (!visibleForExport.length) return;
+          if (exportResourceDownloadList(visibleForExport)) {
+            setTemporaryText(target, '已导出 ' + visibleForExport.length + ' 条', '导出清单');
+          } else {
+            copyTextToClipboard(formatResourceDownloadList(visibleForExport)).then(
+              function showExportCopySuccess() {
+                setTemporaryText(target, '已复制清单', '导出清单');
+              },
+              function showExportFailure() {
+                setTemporaryText(target, '导出失败', '导出清单');
+              }
+            );
+          }
           return;
         }
         if (action === 'remove-visible-resources') {
@@ -4514,6 +4624,52 @@
     return fallbackCopyText(text);
   }
 
+  function formatResourceDownloadFileName(timestamp) {
+    var rawTime = Number(timestamp);
+    var date = new Date(isFinite(rawTime) ? rawTime : Date.now());
+    var pad = function padDatePart(value) {
+      return String(value).padStart(2, '0');
+    };
+    return [
+      'southplus-resources-',
+      date.getFullYear(),
+      pad(date.getMonth() + 1),
+      pad(date.getDate()),
+      '-',
+      pad(date.getHours()),
+      pad(date.getMinutes()),
+      '.txt',
+    ].join('');
+  }
+
+  function downloadTextFile(filename, text) {
+    if (
+      typeof Blob === 'undefined' ||
+      typeof URL === 'undefined' ||
+      typeof URL.createObjectURL !== 'function' ||
+      !document.body
+    ) return false;
+    var blob = new Blob([String(text || '')], { type: 'text/plain;charset=utf-8' });
+    var href = URL.createObjectURL(blob);
+    var link = createEl('a');
+    link.href = href;
+    link.download = filename || formatResourceDownloadFileName();
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(function revokeObjectUrl() {
+      URL.revokeObjectURL(href);
+    }, 0);
+    return true;
+  }
+
+  function exportResourceDownloadList(entries) {
+    var text = formatResourceDownloadList(entries);
+    if (!text) return false;
+    return downloadTextFile(formatResourceDownloadFileName(), text);
+  }
+
   function setTemporaryText(node, text, restoreText, delay) {
     if (!node) return;
     node.textContent = text;
@@ -4642,7 +4798,9 @@
     [
       { value: 'all', text: '全部类型' },
       { value: 'magnet', text: '磁力' },
+      { value: 'ed2k', text: '电驴' },
       { value: 'torrent', text: '种子' },
+      { value: 'archive', text: '压缩包' },
       { value: 'cloud', text: '网盘' },
       { value: 'image', text: '图片' },
       { value: 'external', text: '外链' },
@@ -5688,12 +5846,13 @@
     toolbar.appendChild(item);
   }
 
-  function createToolbar(settings, state) {
-    if (qs('#spx-toolbar')) return;
-    var toolbar = createEl('div', 'spx-toolbar');
-    toolbar.id = 'spx-toolbar';
-    var page = currentPageNumber(location.href);
+  function appendToolbarConfigItems(toolbar, configs, createItem) {
+    (configs || []).forEach(function appendToolbarConfigItem(config) {
+      appendToolbarItem(toolbar, createItem(config), config.show);
+    });
+  }
 
+  function appendToolbarNavigation(toolbar, page, url, root) {
     toolbar.appendChild(toolbarButton('顶', '回到顶部', function top() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }));
@@ -5701,151 +5860,81 @@
       window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
     }));
 
-    if (shouldShowToolbarAction('prevPage', location.href, document)) {
-      toolbar.appendChild(toolbarLink('上', '上一页', buildPageUrl(location.href, Math.max(1, page - 1))));
+    if (shouldShowToolbarAction('prevPage', url, root)) {
+      toolbar.appendChild(toolbarLink('上', '上一页', buildPageUrl(url, Math.max(1, page - 1))));
     }
-    if (shouldShowToolbarAction('nextPage', location.href, document)) {
-      toolbar.appendChild(toolbarLink('下', '下一页', buildPageUrl(location.href, page + 1)));
+    if (shouldShowToolbarAction('nextPage', url, root)) {
+      toolbar.appendChild(toolbarLink('下', '下一页', buildPageUrl(url, page + 1)));
     }
-
     if (shouldShowToolbarFeature('latest')) {
       toolbar.appendChild(toolbarLink('新', '最新帖子', location.origin + '/search2.php?orderway-postdate-asc-desc-newatc-1.html'));
     }
-    if (shouldShowToolbarAction('home', location.href, document)) {
+    if (shouldShowToolbarAction('home', url, root)) {
       toolbar.appendChild(toolbarLink('首', '论坛首页', location.origin + '/index.php'));
     }
+  }
 
-    [
+  function getToolbarToggleConfigs(url, root) {
+    return [
+      { show: shouldShowToolbarFeature('clean'), key: 'cleanMode', text: '净', title: '切换清爽模式' },
+      { show: shouldShowToolbarAction('reader', url, root), key: 'readerMode', text: '字', title: '切换阅读排版优化' },
+      { show: shouldShowToolbarAction('adBlock', url, root), key: 'adBlock', text: '广', title: '切换隐藏广告' },
+      { show: shouldShowToolbarAction('homeDashboard', url, root), key: 'homeDashboard', text: '模', title: '切换首页模块全屏' },
+      { show: shouldShowToolbarAction('immersiveRead', url, root), key: 'immersiveRead', text: '屏', title: '切换帖子页沉浸全屏' },
+      { show: shouldShowToolbarAction('previewGallery', url, root), key: 'unifiedPreviewGallery', text: '图', title: '切换预览图集中显示' },
+      { show: shouldShowToolbarAction('unreadOnly', url, root), key: 'unreadOnly', text: '未', title: '只看未读' },
+      { show: shouldShowToolbarAction('onlyOriginalAuthor', url, root), key: 'onlyOriginalAuthor', text: '楼', title: '只看楼主' },
+    ];
+  }
+
+  function getToolbarCenterConfigs() {
+    return [
       {
-        show: shouldShowToolbarFeature('clean'),
-        create: function createCleanButton() {
-          return createSettingToggleToolbarButton(settings, state, {
-            key: 'cleanMode',
-            text: '净',
-            title: '切换清爽模式',
-          });
-        },
-      },
-      {
-        show: shouldShowToolbarAction('reader', location.href, document),
-        create: function createReaderButton() {
-          return createSettingToggleToolbarButton(settings, state, {
-            key: 'readerMode',
-            text: '字',
-            title: '切换阅读排版优化',
-          });
-        },
-      },
-      {
-        show: shouldShowToolbarAction('adBlock', location.href, document),
-        create: function createAdButton() {
-          return createSettingToggleToolbarButton(settings, state, {
-            key: 'adBlock',
-            text: '广',
-            title: '切换隐藏广告',
-          });
-        },
-      },
-      {
-        show: shouldShowToolbarAction('homeDashboard', location.href, document),
-        create: function createHomeButton() {
-          return createSettingToggleToolbarButton(settings, state, {
-            key: 'homeDashboard',
-            text: '模',
-            title: '切换首页模块全屏',
-          });
-        },
-      },
-      {
-        show: shouldShowToolbarAction('immersiveRead', location.href, document),
-        create: function createImmersiveButton() {
-          return createSettingToggleToolbarButton(settings, state, {
-            key: 'immersiveRead',
-            text: '屏',
-            title: '切换帖子页沉浸全屏',
-          });
-        },
-      },
-      {
-        show: shouldShowToolbarAction('previewGallery', location.href, document),
-        create: function createPreviewButton() {
-          return createSettingToggleToolbarButton(settings, state, {
-            key: 'unifiedPreviewGallery',
-            text: '图',
-            title: '切换预览图集中显示',
-          });
-        },
-      },
-      {
-        show: shouldShowToolbarAction('unreadOnly', location.href, document),
-        create: function createUnreadButton() {
-          return createSettingToggleToolbarButton(settings, state, {
-            key: 'unreadOnly',
-            text: '未',
-            title: '只看未读',
-          });
-        },
-      },
-      {
-        show: shouldShowToolbarAction('onlyOriginalAuthor', location.href, document),
-        create: function createAuthorButton() {
-          return createSettingToggleToolbarButton(settings, state, {
-            key: 'onlyOriginalAuthor',
-            text: '楼',
-            title: '只看楼主',
-          });
-        },
+        show: true,
+        text: '存',
+        title: '打开稍后看中心',
+        buttonDataset: 'spxWatchCenterButton',
+        buttonSelector: '[data-spx-watch-center-button="1"]',
+        createPanel: createWatchCenterPanel,
       },
       {
         show: true,
-        create: function createWatchCenterButton() {
-          return createCenterToolbarButton(settings, state, {
-            text: '存',
-            title: '打开稍后看中心',
-            buttonDataset: 'spxWatchCenterButton',
-            buttonSelector: '[data-spx-watch-center-button="1"]',
-            createPanel: createWatchCenterPanel,
-          });
-        },
+        text: '历',
+        title: '打开最近浏览',
+        buttonDataset: 'spxHistoryCenterButton',
+        buttonSelector: '[data-spx-history-center-button="1"]',
+        createPanel: createHistoryCenterPanel,
       },
       {
         show: true,
-        create: function createHistoryCenterButton() {
-          return createCenterToolbarButton(settings, state, {
-            text: '历',
-            title: '打开最近浏览',
-            buttonDataset: 'spxHistoryCenterButton',
-            buttonSelector: '[data-spx-history-center-button="1"]',
-            createPanel: createHistoryCenterPanel,
-          });
-        },
+        text: '买',
+        title: '打开自动购买记录',
+        buttonDataset: 'spxAutoBuyCenterButton',
+        buttonSelector: '[data-spx-auto-buy-center-button="1"]',
+        createPanel: createAutoBuyCenterPanel,
       },
       {
         show: true,
-        create: function createAutoBuyCenterButton() {
-          return createCenterToolbarButton(settings, state, {
-            text: '买',
-            title: '打开自动购买记录',
-            buttonDataset: 'spxAutoBuyCenterButton',
-            buttonSelector: '[data-spx-auto-buy-center-button="1"]',
-            createPanel: createAutoBuyCenterPanel,
-          });
-        },
+        text: '源',
+        title: '打开资源中心',
+        buttonDataset: 'spxResourceCenterButton',
+        buttonSelector: '[data-spx-resource-center-button="1"]',
+        createPanel: createResourceCenterPanel,
       },
-      {
-        show: true,
-        create: function createResourceCenterButton() {
-          return createCenterToolbarButton(settings, state, {
-            text: '源',
-            title: '打开资源中心',
-            buttonDataset: 'spxResourceCenterButton',
-            buttonSelector: '[data-spx-resource-center-button="1"]',
-            createPanel: createResourceCenterPanel,
-          });
-        },
-      },
-    ].forEach(function appendDynamicToolbarItem(item) {
-      appendToolbarItem(toolbar, item.create(), item.show);
+    ];
+  }
+
+  function createToolbar(settings, state) {
+    if (qs('#spx-toolbar')) return;
+    var toolbar = createEl('div', 'spx-toolbar');
+    toolbar.id = 'spx-toolbar';
+
+    appendToolbarNavigation(toolbar, currentPageNumber(location.href), location.href, document);
+    appendToolbarConfigItems(toolbar, getToolbarToggleConfigs(location.href, document), function createToggleItem(config) {
+      return createSettingToggleToolbarButton(settings, state, config);
+    });
+    appendToolbarConfigItems(toolbar, getToolbarCenterConfigs(), function createCenterItem(config) {
+      return createCenterToolbarButton(settings, state, config);
     });
 
     toolbar.appendChild(toolbarButton('设', '打开设置', function openSettings() {
@@ -6167,6 +6256,9 @@
     filterResourceLinks: filterResourceLinks,
     formatResourceLinks: formatResourceLinks,
     getJumpResourceLinks: getJumpResourceLinks,
+    getResourceDownloadQueueEntries: getResourceDownloadQueueEntries,
+    formatResourceDownloadList: formatResourceDownloadList,
+    formatResourceDownloadFileName: formatResourceDownloadFileName,
     formatResourceJumpSummary: formatResourceJumpSummary,
     pruneResourceLibrary: pruneResourceLibrary,
     saveResourceLinksToLibrary: saveResourceLinksToLibrary,
