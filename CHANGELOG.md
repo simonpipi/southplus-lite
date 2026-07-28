@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.8 - 2026-07-28
+
+### Changed
+
+- 回复表单原生 `提交` 按钮接入无刷新提交：点击页面自带提交按钮后，会复用 AJAX 提交并局部刷新帖子内容，避免整页刷新。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.1.7 - 2026-07-28
 
 ### Added

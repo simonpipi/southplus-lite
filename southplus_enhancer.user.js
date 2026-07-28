@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.1.7
+// @version      0.1.8
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        https://south-plus.org/*
@@ -5448,11 +5448,7 @@
     if (!editor) return false;
     var form = editor.closest && editor.closest('form');
     if (form) {
-      var submitter =
-        qs('input[type="submit"]', form) ||
-        qs('button[type="submit"]', form) ||
-        qs('input[name="submit"]', form) ||
-        qs('button[name="submit"]', form);
+      var submitter = getQuickReplySubmitter(form);
       if (submitter && typeof submitter.click === 'function') {
         submitter.click();
         return true;
@@ -5479,6 +5475,37 @@
     return false;
   }
 
+  function isQuickReplySubmitter(node) {
+    if (!node || !node.tagName) return false;
+    var tag = String(node.tagName || '').toUpperCase();
+    var type = String(node.getAttribute && node.getAttribute('type') || '').toLowerCase();
+    if (tag === 'BUTTON') return !type || type === 'submit';
+    if (tag === 'INPUT') return type === 'submit' || type === 'image';
+    return false;
+  }
+
+  function getQuickReplySubmitter(form, preferred) {
+    if (!form) return null;
+    if (preferred && isQuickReplySubmitter(preferred)) return preferred;
+    if (form.spxQuickReplySubmitter && isQuickReplySubmitter(form.spxQuickReplySubmitter)) {
+      return form.spxQuickReplySubmitter;
+    }
+    return (
+      qs('input[type="submit"]', form) ||
+      qs('button[type="submit"]', form) ||
+      qs('button:not([type])', form) ||
+      qs('input[name="submit"]', form) ||
+      qs('button[name="submit"]', form)
+    );
+  }
+
+  function getQuickReplyClickedSubmitter(target, form) {
+    if (!target || !form) return null;
+    var node = target.closest ? target.closest('input,button') : target;
+    if (!node || (typeof form.contains === 'function' && !form.contains(node))) return null;
+    return isQuickReplySubmitter(node) ? node : null;
+  }
+
   function setQuickReplyPanelPending(panel, pending) {
     if (!panel) return;
     if (pending) {
@@ -5497,6 +5524,24 @@
     }
   }
 
+  function setQuickReplyFormPending(form, pending) {
+    if (!form || !form.dataset) return;
+    if (pending) {
+      form.dataset.spxQuickReplyPending = '1';
+    } else {
+      delete form.dataset.spxQuickReplyPending;
+    }
+    qsa('input[type="submit"],button[type="submit"],button:not([type])', form)
+      .forEach(function toggleFormSubmit(submitter) {
+        submitter.disabled = !!pending;
+      });
+  }
+
+  function setQuickReplyPending(form, panel, pending) {
+    setQuickReplyFormPending(form, pending);
+    setQuickReplyPanelPending(panel, pending);
+  }
+
   function setQuickReplyPanelError(panel) {
     if (!panel) return;
     var status = qs('.spx-quick-reply-status', panel);
@@ -5505,16 +5550,8 @@
     status.textContent = '提交失败，内容已保留，请重试。';
   }
 
-  function submitQuickReply(editor, settings, state) {
-    if (!editor) return false;
-    var form = editor.closest && editor.closest('form');
-    var submitter = form && (
-      qs('input[type="submit"]', form) ||
-      qs('button[type="submit"]', form) ||
-      qs('input[name="submit"]', form) ||
-      qs('button[name="submit"]', form)
-    );
-    var panel = qs('#spx-quick-reply');
+  function submitQuickReplyAjax(editor, form, submitter, settings, state, panel) {
+    if (!editor || !form) return false;
     var fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function'
       ? window.fetch.bind(window)
       : null;
@@ -5527,7 +5564,7 @@
     );
 
     if (!request || !fetchImpl || detectPageType(location.href) !== 'read') {
-      return submitQuickReplyNative(editor);
+      return false;
     }
 
     return performQuickReplySubmit({
@@ -5535,10 +5572,13 @@
       pageUrl: location.href,
       fetch: fetchImpl,
       isPending: function isPending() {
-        return !!(panel && panel.dataset.spxQuickReplyPending === '1');
+        return !!(
+          (panel && panel.dataset.spxQuickReplyPending === '1') ||
+          (form.dataset && form.dataset.spxQuickReplyPending === '1')
+        );
       },
       setPending: function setPending(pending) {
-        setQuickReplyPanelPending(panel, pending);
+        setQuickReplyPending(form, panel, pending);
       },
       applyHtml: function applyHtml(html) {
         return replaceReadPageContent(html, settings, state);
@@ -5547,6 +5587,43 @@
         setQuickReplyPanelError(panel);
       },
     });
+  }
+
+  function submitQuickReply(editor, settings, state, submitter) {
+    if (!editor) return false;
+    var form = editor.closest && editor.closest('form');
+    var panel = qs('#spx-quick-reply');
+    var ajaxResult = submitQuickReplyAjax(
+      editor,
+      form,
+      getQuickReplySubmitter(form, submitter),
+      settings,
+      state,
+      panel
+    );
+    if (ajaxResult === false) return submitQuickReplyNative(editor);
+    return ajaxResult;
+  }
+
+  function bindQuickReplyFormSubmit(editor, settings, state, panel) {
+    if (!editor || !editor.closest) return false;
+    var form = editor.closest('form');
+    if (!form || form.dataset.spxQuickReplySubmitBound === '1') return false;
+    form.dataset.spxQuickReplySubmitBound = '1';
+
+    form.addEventListener('click', function rememberQuickReplySubmitter(event) {
+      var submitter = getQuickReplyClickedSubmitter(event.target, form);
+      if (submitter) form.spxQuickReplySubmitter = submitter;
+    }, true);
+
+    form.addEventListener('submit', function handleQuickReplySubmit(event) {
+      var submitter = getQuickReplySubmitter(form, event && event.submitter);
+      var currentPanel = qs('#spx-quick-reply') || panel;
+      var ajaxResult = submitQuickReplyAjax(editor, form, submitter, settings, state, currentPanel);
+      if (ajaxResult === false) return;
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    });
+    return true;
   }
 
   function getQuickReplyMount(editor) {
@@ -5570,7 +5647,7 @@
     header.appendChild(createEl(
       'span',
       'spx-quick-reply-status',
-      '点击语句后自动提交，无刷新展示'
+      '快捷语句或提交按钮都会无刷新展示'
     ));
     var list = createEl('div', 'spx-quick-reply-list');
 
@@ -5598,6 +5675,7 @@
 
     var editor = getQuickReplyEditor(document);
     var panel = createQuickReplyPanel(settings, editor, state);
+    bindQuickReplyFormSubmit(editor, settings, state, panel);
     var mount = getQuickReplyMount(editor);
     if (!panel || !mount || !mount.parent) return;
 
@@ -5651,7 +5729,7 @@
       '<div>作者屏蔽关键词，每行一个</div>',
       '<textarea data-list="authorKeywords"></textarea>',
       '<div>快捷回复语句，每行一个</div>',
-      '<div class="spx-help">帖子详情页或回复页会显示为快捷按钮；点击后自动提交，帖子页会无刷新展示新回复。</div>',
+      '<div class="spx-help">帖子详情页或回复页会显示为快捷按钮；快捷语句和帖子页原生提交按钮都会无刷新展示新回复。</div>',
       '<textarea data-list="quickReplies"></textarea>',
       '<div class="spx-row">',
       '<button class="spx-primary" data-action="save">保存</button>',
@@ -6294,6 +6372,8 @@
     shouldShowToolbarAction: shouldShowToolbarAction,
     getSettingsPanelKeys: getSettingsPanelKeys,
     createQuickReplyRequest: createQuickReplyRequest,
+    isQuickReplySubmitter: isQuickReplySubmitter,
+    getQuickReplySubmitter: getQuickReplySubmitter,
     performQuickReplySubmit: performQuickReplySubmit,
     buildPageUrl: buildPageUrl,
     detectPageType: detectPageType,

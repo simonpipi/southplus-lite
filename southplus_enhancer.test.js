@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.1\.7/);
+assert.match(source, /@version\s+0\.1\.8/);
 
 assert.equal(enhancer.parsePostPrice('本帖售价：5 SP币'), 5);
 assert.equal(enhancer.parsePostPrice('购买需要 12.5 SP'), 12.5);
@@ -641,6 +641,49 @@ const shadowedActionRequest = enhancer.createQuickReplyRequest(
 );
 
 assert.equal(shadowedActionRequest.url, 'https://south-plus.org/post.php?');
+
+function createFakeSubmitter(tagName, type, name, value) {
+  return {
+    tagName,
+    name,
+    value,
+    getAttribute(attribute) {
+      return attribute === 'type' ? type : null;
+    },
+  };
+}
+
+const nativeSubmitInput = createFakeSubmitter('INPUT', 'submit', 'Submit', '提交');
+const defaultSubmitButton = createFakeSubmitter('BUTTON', null, 'Submit', '提交');
+const resetButton = createFakeSubmitter('BUTTON', 'reset', 'reset', '重置');
+assert.equal(enhancer.isQuickReplySubmitter(nativeSubmitInput), true);
+assert.equal(enhancer.isQuickReplySubmitter(defaultSubmitButton), true);
+assert.equal(enhancer.isQuickReplySubmitter(resetButton), false);
+assert.strictEqual(
+  enhancer.getQuickReplySubmitter({
+    querySelector(selector) {
+      return selector === 'button:not([type])' ? defaultSubmitButton : null;
+    },
+  }),
+  defaultSubmitButton
+);
+assert.strictEqual(
+  enhancer.getQuickReplySubmitter({
+    spxQuickReplySubmitter: defaultSubmitButton,
+    querySelector() {
+      return nativeSubmitInput;
+    },
+  }),
+  defaultSubmitButton
+);
+assert.strictEqual(
+  enhancer.getQuickReplySubmitter({
+    querySelector() {
+      return nativeSubmitInput;
+    },
+  }, defaultSubmitButton),
+  defaultSubmitButton
+);
 
 async function testQuickReplySubmissionFlow() {
   const pageUrl = 'https://south-plus.org/read.php?tid=123';
