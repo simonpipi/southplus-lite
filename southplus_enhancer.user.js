@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.1.9
+// @version      0.1.10
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -1343,9 +1343,7 @@
   function getSettingsPanelKeys(url, root) {
     var keys = [];
     var allKeys = [
-      'adBlock',
       'cleanMode',
-      'homeDashboard',
       'readerMode',
       'immersiveRead',
       'unifiedPreviewGallery',
@@ -1358,16 +1356,14 @@
     ];
 
     allKeys.forEach(function keepUsefulSetting(key) {
-      if (key === 'adBlock' && shouldShowToolbarAction('adBlock', url, root)) keys.push(key);
       if (key === 'cleanMode' && shouldShowToolbarFeature('clean')) keys.push(key);
-      if (key === 'homeDashboard' && shouldShowToolbarAction('homeDashboard', url, root)) keys.push(key);
       if (key === 'readerMode' && shouldShowToolbarAction('reader', url, root)) keys.push(key);
       if (key === 'immersiveRead' && shouldShowToolbarAction('immersiveRead', url, root)) keys.push(key);
       if (key === 'unifiedPreviewGallery' && shouldShowToolbarAction('previewGallery', url, root)) keys.push(key);
       if (key === 'compactRead' && detectPageType(url) === 'read') keys.push(key);
       if (key === 'foldQuotes' && detectPageType(url) === 'read') keys.push(key);
       if (key === 'hideUserProfile' && detectPageType(url) === 'read') keys.push(key);
-      if (key === 'autoBuyPost' && detectPageType(url) === 'read') keys.push(key);
+      if (key === 'autoBuyPost') keys.push(key);
       if (key === 'unreadOnly' && shouldShowToolbarAction('unreadOnly', url, root)) keys.push(key);
       if (key === 'onlyOriginalAuthor' && shouldShowToolbarAction('onlyOriginalAuthor', url, root)) keys.push(key);
     });
@@ -5736,9 +5732,7 @@
     if (panel) return panel;
 
     var settingLabels = {
-      adBlock: '隐藏广告',
       cleanMode: '清爽模式',
-      homeDashboard: '首页模块全屏',
       readerMode: '阅读排版优化',
       immersiveRead: '帖子页沉浸全屏',
       unifiedPreviewGallery: '预览图集中显示',

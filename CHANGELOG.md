@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.10 - 2026-07-29
+
+### Changed
+
+- 设置面板移除重复的 `隐藏广告` 和 `首页模块全屏` 开关；对应功能仍保留在工具箱内，并继续按原设置生效。
+- 自动购买开关和购买价格上限恢复为全局设置入口，不再只在阅读页显示，避免从列表页或首页打开设置时看不到 SP 限制。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.1.9 - 2026-07-29
 
 ### Added
