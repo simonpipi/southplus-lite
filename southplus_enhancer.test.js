@@ -3,11 +3,15 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.1\.10/);
+assert.match(source, /@version\s+0\.1\.12/);
 assert.match(source, /South Plus 工具箱/);
 assert.match(source, /spx-toolbox-action/);
 assert.match(source, /隐藏广告/);
 assert.match(source, /首页模块全屏/);
+assert.match(source, /本地存储体积/);
+assert.match(source, /spx-storage-usage/);
+assert.match(source, /加载更多图片/);
+assert.match(source, /spx-preview-load-more/);
 const emptyRoot = { querySelector: function querySelector() { return null; }, querySelectorAll: function querySelectorAll() { return []; } };
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('adBlock'), false);
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('homeDashboard'), false);
@@ -51,6 +55,22 @@ assert.equal(
     { src: '' },
   ]),
   'https://south-plus.org/a.jpg\nhttps://south-plus.org/b.jpg'
+);
+assert.deepEqual(
+  enhancer.getPreviewGalleryRenderState(100, 36, 36),
+  { total: 100, rendered: 36, hasMore: true, nextLimit: 72 }
+);
+assert.deepEqual(
+  enhancer.getPreviewGalleryRenderState(40, 72, 36),
+  { total: 40, rendered: 40, hasMore: false, nextLimit: 40 }
+);
+assert.equal(
+  enhancer.formatPreviewGallerySummary(100, 100, 36, false),
+  '已显示 36 / 当前页 100 张，点击进入灯箱'
+);
+assert.equal(
+  enhancer.formatPreviewGallerySummary(100, 50, 36, true),
+  '大图已显示 36 / 50（当前页 100 张），点击进入灯箱'
 );
 
 assert.equal(enhancer.normalizeResourceUrl('pan.baidu.com/s/abc?pwd=1234'), 'https://pan.baidu.com/s/abc?pwd=1234');
@@ -561,6 +581,24 @@ assert.deepEqual(Object.keys(cleanedHealth.payload.data.autoBuyAttempts), ['good
 assert.deepEqual(Object.keys(cleanedHealth.payload.data.resources), ['cloud|https://pan.baidu.com/s/health?pwd=9999']);
 assert.equal(cleanedHealth.after.cleanupCount, 0);
 assert.match(enhancer.formatBackupImportPreview(cleanedHealth.payload), /即将导入 South Plus \+\+\+ 本地备份/);
+
+assert.equal(enhancer.formatStorageBytes(1536), '1.5 KB');
+const storageReport = enhancer.collectStorageUsageReport(healthData);
+assert.equal(storageReport.entries.length, 6);
+const resourceUsage = storageReport.entries.find(function findResourceUsage(entry) {
+  return entry.label === '资源库';
+});
+assert.equal(resourceUsage.count, 1);
+assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 6 项 · 最大：/);
+assert.match(enhancer.formatStorageUsageEntry(resourceUsage), /^资源库：.* \/ 1 条 \/ 上限 500$/);
+assert.equal(enhancer.formatStorageUsageWarnings(storageReport), '当前体积正常，暂无额外清理建议');
+
+const crowdedProgress = {};
+for (let index = 0; index < 160; index += 1) {
+  crowdedProgress[index] = { title: '进度 ' + index, updatedAt: healthNow + index };
+}
+const crowdedStorageReport = enhancer.collectStorageUsageReport({ progress: crowdedProgress });
+assert.match(enhancer.formatStorageUsageWarnings(crowdedStorageReport), /阅读进度接近 200 条上限/);
 
 const autoBuyEntries = enhancer.getAutoBuyCenterEntries({
   '1:tpc': { status: 'failed', message: '失败原因', price: 5, updatedAt: 100 },

@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.12 - 2026-07-29
+
+### Changed
+
+- 预览图面板改为首批渲染 36 张图片，滚动到底部或点击 `加载更多图片` 再追加下一批，减少多图帖子首次打开时的 DOM 和图片加载压力。
+- 预览图缩略图启用浏览器原生懒加载，悬停放大图改为鼠标悬停或键盘聚焦时再加载，避免重复提前请求大图。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
+## 0.1.11 - 2026-07-29
+
+### Added
+
+- 数据健康面板新增本地存储体积统计：按设置、已读、稍后看、阅读进度、自动购买记录和资源库展示 JSON 文本估算大小、记录数量和上限提示。
+
+### Changed
+
+- 数据健康统计补齐资源库输入，清理建议会提示接近记录上限或单项占用较高的数据类别，方便先导出备份再清理。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.1.10 - 2026-07-29
 
 ### Changed

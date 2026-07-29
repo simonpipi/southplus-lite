@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.1.10
+// @version      0.1.12
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -60,6 +60,8 @@
   var RESOURCE_LIMIT = 500;
   var READ_PROGRESS_LIMIT = 200;
   var STALE_PROGRESS_MAX_AGE = 180 * 24 * 60 * 60 * 1000;
+  var LOCAL_STORAGE_WARNING_BYTES = 4 * 1024 * 1024;
+  var PREVIEW_GALLERY_BATCH_SIZE = 36;
   var RESOURCE_STATUSES = {
     saved: '已保存',
     todo: '待下载',
@@ -562,6 +564,34 @@
         return true;
       })
       .join('\n');
+  }
+
+  function getPreviewGalleryRenderState(total, limit, batchSize) {
+    var count = Math.max(0, Number(total) || 0);
+    var step = Math.max(1, Number(batchSize) || PREVIEW_GALLERY_BATCH_SIZE);
+    var nextLimit = Math.max(0, Number(limit) || step);
+    var rendered = Math.min(count, nextLimit);
+    return {
+      total: count,
+      rendered: rendered,
+      hasMore: rendered < count,
+      nextLimit: Math.min(count, rendered + step),
+    };
+  }
+
+  function formatPreviewGallerySummary(total, visibleCount, renderedCount, largeOnly) {
+    var pageTotal = Math.max(0, Number(total) || 0);
+    var visible = Math.max(0, Number(visibleCount) || 0);
+    var renderedValue = renderedCount == null ? visible : Number(renderedCount);
+    var rendered = Math.min(visible, Math.max(0, renderedValue || 0));
+    if (largeOnly) {
+      return rendered < visible
+        ? '大图已显示 ' + rendered + ' / ' + visible + '（当前页 ' + pageTotal + ' 张），点击进入灯箱'
+        : '大图 ' + visible + ' / 当前页 ' + pageTotal + ' 张，点击进入灯箱';
+    }
+    return rendered < visible
+      ? '已显示 ' + rendered + ' / 当前页 ' + pageTotal + ' 张，点击进入灯箱'
+      : '当前页 ' + pageTotal + ' 张，点击进入灯箱';
   }
 
   function isVisibleThreadRow(row) {
@@ -1481,6 +1511,118 @@
     return Object.keys(value || {}).length;
   }
 
+  function estimateTextBytes(value) {
+    var text = String(value == null ? '' : value);
+    if (typeof TextEncoder !== 'undefined') {
+      try {
+        return new TextEncoder().encode(text).length;
+      } catch (error) {
+        // Fall back to a small UTF-8 byte counter below.
+      }
+    }
+    var bytes = 0;
+    for (var index = 0; index < text.length; index += 1) {
+      var code = text.charCodeAt(index);
+      if (code <= 0x7f) bytes += 1;
+      else if (code <= 0x7ff) bytes += 2;
+      else if (code >= 0xd800 && code <= 0xdbff) {
+        bytes += 4;
+        index += 1;
+      } else {
+        bytes += 3;
+      }
+    }
+    return bytes;
+  }
+
+  function stringifyStorageValue(value) {
+    try {
+      return JSON.stringify(value == null ? {} : value);
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function formatStorageBytes(bytes) {
+    var size = Math.max(0, Number(bytes) || 0);
+    if (size < 1024) return size + ' B';
+    if (size < 1024 * 1024) return (size / 1024).toFixed(size >= 10 * 1024 ? 0 : 1) + ' KB';
+    return (size / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  function createStorageUsageEntry(key, label, value, count, limit) {
+    var text = stringifyStorageValue(value);
+    return {
+      key: key,
+      label: label,
+      bytes: estimateTextBytes(text),
+      size: formatStorageBytes(estimateTextBytes(text)),
+      count: Math.max(0, Number(count) || 0),
+      limit: Math.max(0, Number(limit) || 0),
+    };
+  }
+
+  function collectStorageUsageReport(data) {
+    var backup = createBackupPayload(data || {});
+    var source = backup.data || {};
+    var entries = [
+      createStorageUsageEntry(STORE_KEY, '设置', source.settings, 1, 0),
+      createStorageUsageEntry(READ_KEY, '已读记录', source.read, countMapItems(source.read), 0),
+      createStorageUsageEntry(WATCH_KEY, '稍后看', source.watch, countMapItems(source.watch), 0),
+      createStorageUsageEntry(PROGRESS_KEY, '阅读进度', source.progress, countMapItems(source.progress), READ_PROGRESS_LIMIT),
+      createStorageUsageEntry(AUTO_BUY_KEY, '自动购买记录', source.autoBuyAttempts, countMapItems(source.autoBuyAttempts), AUTO_BUY_ATTEMPT_LIMIT),
+      createStorageUsageEntry(RESOURCE_KEY, '资源库', source.resources, countMapItems(source.resources), RESOURCE_LIMIT),
+    ];
+    var totalBytes = entries.reduce(function sumBytes(total, entry) {
+      return total + entry.bytes;
+    }, 0);
+    var largest = entries.slice().sort(function sortByBytes(left, right) {
+      return right.bytes - left.bytes;
+    })[0] || null;
+    var suggestions = [];
+
+    if (totalBytes >= LOCAL_STORAGE_WARNING_BYTES) {
+      suggestions.push('本地存储接近浏览器常见上限，建议先导出备份再清理旧记录');
+    }
+    entries.forEach(function addLimitSuggestion(entry) {
+      if (!entry.limit) return;
+      if (entry.count >= Math.floor(entry.limit * 0.8)) {
+        suggestions.push(entry.label + '接近 ' + entry.limit + ' 条上限，建议清理或导出归档');
+      }
+    });
+    if (largest && largest.bytes >= 512 * 1024) {
+      suggestions.push(largest.label + '占用超过 512 KB，优先检查这一项');
+    }
+
+    return {
+      entries: entries,
+      totalBytes: totalBytes,
+      totalSize: formatStorageBytes(totalBytes),
+      largest: largest,
+      suggestions: suggestions,
+    };
+  }
+
+  function formatStorageUsageSummary(report) {
+    var data = report || collectStorageUsageReport({});
+    var largest = data.largest;
+    return '本地存储约 ' + data.totalSize + ' · ' + (data.entries || []).length + ' 项' +
+      (largest ? ' · 最大：' + largest.label + ' ' + largest.size : '');
+  }
+
+  function formatStorageUsageWarnings(report) {
+    var data = report || {};
+    return data.suggestions && data.suggestions.length
+      ? data.suggestions.join(' · ')
+      : '当前体积正常，暂无额外清理建议';
+  }
+
+  function formatStorageUsageEntry(entry) {
+    if (!entry) return '';
+    return entry.label + '：' + entry.size + ' / ' + entry.count + ' 条' +
+      (entry.limit ? ' / 上限 ' + entry.limit : '');
+  }
+
   function getDataRecordTimestamp(record) {
     if (typeof record === 'number') return Number(record) || 0;
     return Number(record && (record.updatedAt || record.savedAt || record.createdAt)) || 0;
@@ -2094,6 +2236,9 @@
       '.spx-immersive-read .spx-preview-item{display:block;overflow:hidden;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;text-decoration:none;}',
       '.spx-immersive-read .spx-preview-item img{display:block;width:100%;height:180px;object-fit:cover;background:#fff;}',
       '.spx-immersive-read .spx-preview-item span{display:block;padding:6px 8px;font-size:12px;line-height:1.35;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '.spx-immersive-read .spx-preview-load-more{display:block;width:100%;height:32px;margin:10px 0 0;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#334155;font-size:12px;cursor:pointer;}',
+      '.spx-immersive-read .spx-preview-load-more:hover,.spx-immersive-read .spx-preview-load-more:focus-visible{border-color:#38bdf8;background:#e0f2fe;color:#075985;outline:none;}',
+      '.spx-immersive-read .spx-preview-load-more[hidden]{display:none!important;}',
       '.spx-immersive-read .spx-preview-empty{padding:10px 2px;color:#94a3b8;font-size:13px;}',
       '.spx-immersive-read .spx-preview-source{display:none!important;}',
       '.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{display:block!important;box-sizing:border-box!important;max-width:980px!important;margin:0 auto!important;padding:22px 18px 8px!important;font-size:21px!important;line-height:1.45!important;color:#111827!important;}',
@@ -2116,6 +2261,9 @@
       '.spx-reader .spx-preview-item .spx-preview-hover-image,.spx-immersive-read .spx-preview-item .spx-preview-hover-image{display:none!important;position:fixed!important;left:50%!important;top:50%!important;transform:translate(-50%,-50%)!important;z-index:100002!important;width:auto!important;height:auto!important;max-width:min(72vw,980px)!important;max-height:min(86vh,820px)!important;object-fit:contain!important;padding:6px!important;background:#fff!important;border:1px solid #cbd5e1!important;border-radius:10px!important;box-shadow:0 18px 52px rgba(15,23,42,.35)!important;pointer-events:none!important;}',
       '.spx-reader .spx-preview-item:hover .spx-preview-hover-image,.spx-immersive-read .spx-preview-item:hover .spx-preview-hover-image{display:block!important;}',
       '.spx-reader .spx-preview-item span,.spx-immersive-read .spx-preview-item span{display:block!important;padding:5px 7px!important;font-size:12px!important;line-height:1.35!important;color:#475569!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
+      '.spx-reader .spx-preview-load-more,.spx-immersive-read .spx-preview-load-more{box-sizing:border-box!important;display:block!important;width:100%!important;height:32px!important;margin:10px 0 0!important;border:1px solid #cbd5e1!important;border-radius:7px!important;background:#fff!important;color:#334155!important;font-size:12px!important;cursor:pointer!important;}',
+      '.spx-reader .spx-preview-load-more:hover,.spx-reader .spx-preview-load-more:focus-visible,.spx-immersive-read .spx-preview-load-more:hover,.spx-immersive-read .spx-preview-load-more:focus-visible{border-color:#38bdf8!important;background:#e0f2fe!important;color:#075985!important;outline:none!important;}',
+      '.spx-reader .spx-preview-load-more[hidden],.spx-immersive-read .spx-preview-load-more[hidden]{display:none!important;}',
       '.spx-reader .spx-preview-source,.spx-immersive-read .spx-preview-source{display:none!important;}',
       '.spx-preview-lightbox{position:fixed!important;inset:0!important;z-index:100010!important;box-sizing:border-box!important;display:flex!important;padding:18px!important;background:rgba(2,6,23,.9)!important;backdrop-filter:blur(5px)!important;color:#e2e8f0!important;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
       '.spx-preview-lightbox-shell{box-sizing:border-box!important;display:flex!important;flex:1!important;min-width:0!important;min-height:0!important;flex-direction:column!important;overflow:hidden!important;border:1px solid rgba(148,163,184,.34)!important;border-radius:12px!important;background:#020617!important;box-shadow:0 24px 80px rgba(0,0,0,.5)!important;}',
@@ -2185,6 +2333,8 @@
       '.spx-settings .spx-primary{background:var(--spx-accent);border-color:var(--spx-accent);color:#fff;}',
       '.spx-data-health{box-sizing:border-box;margin-top:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;}',
       '.spx-data-health[hidden]{display:none!important;}',
+      '.spx-storage-usage{display:grid;gap:4px;margin:6px 0 8px;font-size:12px;color:#334155;}',
+      '.spx-storage-usage>div{display:flex;justify-content:space-between;gap:10px;padding:4px 6px;border-radius:6px;background:#fff;border:1px solid #e5e7eb;}',
       '.spx-watch-center{position:fixed;right:66px;bottom:18px;width:min(460px,calc(100vw - 24px));max-height:80vh;overflow:auto;z-index:100000;background:var(--spx-panel);border:1px solid var(--spx-line);box-shadow:0 12px 36px rgba(15,23,42,.24);border-radius:8px;padding:12px;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;}',
       '.spx-resource-panel{width:min(560px,calc(100vw - 24px));}',
       '.spx-watch-center[hidden]{display:none!important;}',
@@ -5190,14 +5340,18 @@
     var copyAllButton = createEl('button', '', '复制全部链接');
     var largeOnlyButton = createEl('button', '', '只看大图');
     var grid = createEl('div', 'spx-preview-grid');
+    var loadMoreButton = createEl('button', 'spx-preview-load-more', '加载更多图片');
     var showLargeOnly = false;
     var visiblePreviewImages = previewImages.slice();
+    var renderedPreviewLimit = PREVIEW_GALLERY_BATCH_SIZE;
     var copyAllTimer = null;
 
     copyAllButton.type = 'button';
     largeOnlyButton.type = 'button';
-    copyAllButton.title = '复制当前显示的全部原图地址';
+    loadMoreButton.type = 'button';
+    copyAllButton.title = '复制当前筛选范围内的全部原图地址';
     largeOnlyButton.title = '只显示尺寸较大的预览图';
+    loadMoreButton.title = '继续加载下一批预览图';
     largeOnlyButton.setAttribute('aria-pressed', 'false');
 
     function setPreviewButtonText(button, text, delay) {
@@ -5210,17 +5364,25 @@
 
     function syncPreviewHeader() {
       var largeCount = previewImages.filter(isLargePreviewImage).length;
-      summary.textContent = showLargeOnly
-        ? '大图 ' + visiblePreviewImages.length + ' / 当前页 ' + previewImages.length + ' 张，点击进入灯箱'
-        : '当前页 ' + previewImages.length + ' 张，点击进入灯箱';
+      var renderState = getPreviewGalleryRenderState(visiblePreviewImages.length, renderedPreviewLimit);
+      summary.textContent = formatPreviewGallerySummary(
+        previewImages.length,
+        visiblePreviewImages.length,
+        renderState.rendered,
+        showLargeOnly
+      );
       largeOnlyButton.hidden = largeCount === previewImages.length;
       largeOnlyButton.setAttribute('aria-pressed', showLargeOnly ? 'true' : 'false');
       copyAllButton.disabled = !visiblePreviewImages.length;
+      loadMoreButton.hidden = !renderState.hasMore;
+      loadMoreButton.textContent = '加载更多图片（' + renderState.rendered + ' / ' + renderState.total + '）';
     }
 
     function renderPreviewGrid() {
       visiblePreviewImages = showLargeOnly ? previewImages.filter(isLargePreviewImage) : previewImages.slice();
       grid.textContent = '';
+      var renderState = getPreviewGalleryRenderState(visiblePreviewImages.length, renderedPreviewLimit);
+      var renderedImages = visiblePreviewImages.slice(0, renderState.rendered);
       syncPreviewHeader();
 
       if (!visiblePreviewImages.length) {
@@ -5228,7 +5390,7 @@
         return;
       }
 
-      visiblePreviewImages.forEach(function appendPreview(item, index) {
+      renderedImages.forEach(function appendPreview(item, index) {
         var link = createEl('a', 'spx-preview-item');
         link.href = item.src;
         link.target = '_blank';
@@ -5251,12 +5413,19 @@
         var thumb = createEl('img');
         thumb.src = item.src;
         thumb.loading = 'lazy';
+        thumb.decoding = 'async';
         thumb.alt = '预览图 ' + (index + 1);
 
         var hoverImage = createEl('img', 'spx-preview-hover-image');
-        hoverImage.src = item.src;
         hoverImage.loading = 'lazy';
+        hoverImage.decoding = 'async';
+        hoverImage.dataset.src = item.src;
         hoverImage.alt = '预览图 ' + (index + 1) + ' 放大预览';
+        function loadHoverImage() {
+          if (!hoverImage.src) hoverImage.src = hoverImage.dataset.src || item.src;
+        }
+        link.addEventListener('mouseenter', loadHoverImage);
+        link.addEventListener('focus', loadHoverImage);
 
         var label = createEl('span', '', '图 ' + (index + 1));
         link.appendChild(thumb);
@@ -5264,6 +5433,18 @@
         link.appendChild(label);
         grid.appendChild(link);
       });
+    }
+
+    function loadNextPreviewBatch() {
+      var renderState = getPreviewGalleryRenderState(visiblePreviewImages.length, renderedPreviewLimit);
+      if (!renderState.hasMore) return;
+      renderedPreviewLimit = renderState.nextLimit;
+      renderPreviewGrid();
+    }
+
+    function handlePreviewPanelScroll() {
+      if (loadMoreButton.hidden) return;
+      if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 160) loadNextPreviewBatch();
     }
 
     copyAllButton.addEventListener('click', function copyAllPreviewLinks() {
@@ -5283,8 +5464,11 @@
 
     largeOnlyButton.addEventListener('click', function toggleLargeOnly() {
       showLargeOnly = !showLargeOnly;
+      renderedPreviewLimit = PREVIEW_GALLERY_BATCH_SIZE;
       renderPreviewGrid();
     });
+    loadMoreButton.addEventListener('click', loadNextPreviewBatch);
+    panel.addEventListener('scroll', handlePreviewPanelScroll);
 
     actions.appendChild(copyAllButton);
     actions.appendChild(largeOnlyButton);
@@ -5293,6 +5477,7 @@
     header.appendChild(actions);
     panel.appendChild(header);
     panel.appendChild(grid);
+    panel.appendChild(loadMoreButton);
     renderPreviewGrid();
 
     mountPreviewPanel(firstPost, content, panel);
@@ -5829,18 +6014,29 @@
         watch: state && state.watch,
         progress: state && state.progress,
         autoBuyAttempts: loadAutoBuyAttempts(),
+        resources: state && state.resources,
       };
     }
 
     function renderDataHealthPanel(message) {
       var box = qs('[data-role="data-health"]', panel);
       if (!box) return;
-      var report = collectDataHealthReport(getCurrentDataHealthPayload());
+      var payload = getCurrentDataHealthPayload();
+      var report = collectDataHealthReport(payload);
+      var storageReport = collectStorageUsageReport(payload);
       box.hidden = false;
       box.textContent = '';
       box.appendChild(createEl('strong', '', '本地数据健康'));
       box.appendChild(createEl('div', 'spx-help', formatDataHealthSummary(report)));
       box.appendChild(createEl('div', 'spx-help', formatDataHealthWarnings(report)));
+      box.appendChild(createEl('strong', '', '本地存储体积'));
+      box.appendChild(createEl('div', 'spx-help', formatStorageUsageSummary(storageReport)));
+      var usageList = createEl('div', 'spx-storage-usage');
+      storageReport.entries.forEach(function appendStorageEntry(entry) {
+        usageList.appendChild(createEl('div', '', formatStorageUsageEntry(entry)));
+      });
+      box.appendChild(usageList);
+      box.appendChild(createEl('div', 'spx-help', formatStorageUsageWarnings(storageReport)));
       if (message) box.appendChild(createEl('div', 'spx-help', message));
 
       var actions = createEl('div', 'spx-row');
@@ -6539,6 +6735,11 @@
     cleanupDataHealthPayload: cleanupDataHealthPayload,
     formatDataHealthSummary: formatDataHealthSummary,
     formatDataHealthWarnings: formatDataHealthWarnings,
+    collectStorageUsageReport: collectStorageUsageReport,
+    formatStorageBytes: formatStorageBytes,
+    formatStorageUsageSummary: formatStorageUsageSummary,
+    formatStorageUsageWarnings: formatStorageUsageWarnings,
+    formatStorageUsageEntry: formatStorageUsageEntry,
     formatBackupImportPreview: formatBackupImportPreview,
     formatReadProgress: formatReadProgress,
     getReadProgressRestoreTarget: getReadProgressRestoreTarget,
@@ -6556,6 +6757,8 @@
     extractPreviewImageUrls: extractPreviewImageUrls,
     isLargePreviewImage: isLargePreviewImage,
     formatPreviewImageLinks: formatPreviewImageLinks,
+    getPreviewGalleryRenderState: getPreviewGalleryRenderState,
+    formatPreviewGallerySummary: formatPreviewGallerySummary,
     normalizeResourceUrl: normalizeResourceUrl,
     classifyResourceLink: classifyResourceLink,
     getCloudProviderLabel: getCloudProviderLabel,
