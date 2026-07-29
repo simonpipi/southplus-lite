@@ -3,7 +3,9 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.1\.8/);
+assert.match(source, /@version\s+0\.1\.9/);
+assert.match(source, /South Plus 工具箱/);
+assert.match(source, /spx-toolbox-action/);
 
 assert.equal(enhancer.parsePostPrice('本帖售价：5 SP币'), 5);
 assert.equal(enhancer.parsePostPrice('购买需要 12.5 SP'), 12.5);

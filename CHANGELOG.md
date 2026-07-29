@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.9 - 2026-07-29
+
+### Added
+
+- 新增分组工具箱：右下角工具栏保留 `顶部`、`底部`、`工具`、`设置` 四个高频入口，其他功能在工具箱内按页面导航、阅读模式、我的中心和设置分组展示完整名称与说明。
+- 扩展常用 Plus 镜像域名匹配，覆盖 South / North / Level / Soul / Snow / Spring / Summer / Blue / White Plus 的根域和子域访问方式。
+
+### Changed
+
+- 优化工具栏与工具箱视觉样式：按钮改为更清晰的两字入口，工具箱增加分组数量、卡片悬停态、激活态和移动端单列布局。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.1.8 - 2026-07-28
 
 ### Changed

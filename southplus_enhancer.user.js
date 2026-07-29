@@ -1,13 +1,29 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.1.8
+// @version      0.1.9
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
-// @match        https://south-plus.org/*
-// @match        https://www.south-plus.net/*
-// @match        https://bbs.blue-plus.net/*
-// @match        https://white-plus.net/*
+// @match        *://*.south-plus.net/*
+// @match        *://south-plus.net/*
+// @match        *://*.south-plus.org/*
+// @match        *://south-plus.org/*
+// @match        *://*.white-plus.net/*
+// @match        *://white-plus.net/*
+// @match        *://*.north-plus.net/*
+// @match        *://north-plus.net/*
+// @match        *://*.level-plus.net/*
+// @match        *://level-plus.net/*
+// @match        *://*.soul-plus.net/*
+// @match        *://soul-plus.net/*
+// @match        *://*.snow-plus.net/*
+// @match        *://snow-plus.net/*
+// @match        *://*.spring-plus.net/*
+// @match        *://spring-plus.net/*
+// @match        *://*.summer-plus.net/*
+// @match        *://summer-plus.net/*
+// @match        *://*.blue-plus.net/*
+// @match        *://blue-plus.net/*
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
@@ -2132,10 +2148,34 @@
 
   function getInjectedWidgetStyleRules() {
     return [
-      '.spx-toolbar{position:fixed;right:14px;bottom:18px;z-index:99999;display:flex;flex-direction:column;gap:6px;font:12px/1.2 Arial,Helvetica,sans-serif;}',
-      '.spx-toolbar button,.spx-toolbar a{width:42px;height:30px;border:1px solid var(--spx-line);border-radius:6px;background:var(--spx-panel);color:var(--spx-text);box-shadow:0 2px 8px rgba(15,23,42,.12);cursor:pointer;text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;padding:0;}',
-      '.spx-toolbar button:hover,.spx-toolbar a:hover{border-color:var(--spx-accent);color:var(--spx-accent);}',
-      '.spx-toolbar .spx-active{background:#e6fffb;border-color:var(--spx-accent);color:var(--spx-accent);font-weight:bold;}',
+      '.spx-toolbar{position:fixed;right:14px;bottom:18px;z-index:99999;display:flex;flex-direction:column;gap:7px;box-sizing:border-box;padding:6px;border:1px solid rgba(203,213,225,.8);border-radius:16px;background:rgba(255,255,255,.92);box-shadow:0 18px 46px rgba(15,23,42,.18);font:12px/1.2 Arial,Helvetica,sans-serif;backdrop-filter:blur(10px);}',
+      '.spx-toolbar button,.spx-toolbar a{width:52px;height:36px;border:1px solid transparent;border-radius:12px;background:#fff;color:var(--spx-text);box-shadow:0 4px 12px rgba(15,23,42,.08);cursor:pointer;text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;padding:0;font-size:13px;font-weight:800;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease,box-shadow .16s ease;}',
+      '.spx-toolbar button:hover,.spx-toolbar a:hover,.spx-toolbar button:focus-visible,.spx-toolbar a:focus-visible{border-color:var(--spx-accent);color:var(--spx-accent);box-shadow:0 7px 18px rgba(15,118,110,.16);outline:none;transform:translateY(-1px);}',
+      '.spx-toolbar .spx-active{background:#ccfbf1;border-color:#0f766e;color:#0f766e;font-weight:bold;box-shadow:inset 0 0 0 1px rgba(15,118,110,.12),0 6px 16px rgba(15,118,110,.14);}',
+      '.spx-toolbox{position:fixed;right:82px;bottom:18px;width:min(470px,calc(100vw - 24px));max-height:82vh;overflow:hidden;z-index:100000;box-sizing:border-box;background:rgba(255,255,255,.98);border:1px solid rgba(148,163,184,.48);box-shadow:0 24px 80px rgba(15,23,42,.3);border-radius:18px;padding:0;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;backdrop-filter:blur(12px);}',
+      '.spx-toolbox[hidden]{display:none!important;}',
+      '.spx-toolbox-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:15px 16px 13px;border-bottom:1px solid #e2e8f0;background:linear-gradient(135deg,#f8fafc 0%,#ecfeff 100%);}',
+      '.spx-toolbox-eyebrow{margin:0 0 3px;color:#0f766e;font-size:11px;font-weight:900;letter-spacing:.08em;}',
+      '.spx-toolbox-header h3{margin:0;color:#0f172a;font-size:17px;line-height:1.25;}',
+      '.spx-toolbox-header p{margin:4px 0 0;color:#64748b;font-size:12px;line-height:1.45;}',
+      '.spx-toolbox-close{flex:none;width:32px;height:32px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#334155;cursor:pointer;font-size:18px;font-weight:800;line-height:1;}',
+      '.spx-toolbox-close:hover,.spx-toolbox-close:focus-visible{border-color:#0f766e;color:#0f766e;outline:none;}',
+      '.spx-toolbox-body{box-sizing:border-box;max-height:calc(82vh - 78px);overflow:auto;padding:13px 14px 14px;scrollbar-width:thin;}',
+      '.spx-toolbox-section{margin-top:14px;}',
+      '.spx-toolbox-section:first-of-type{margin-top:0;}',
+      '.spx-toolbox-section-title{display:flex;align-items:center;gap:8px;margin:0 0 8px;color:#475569;font-size:12px;font-weight:900;letter-spacing:.02em;}',
+      '.spx-toolbox-section-title:after{content:"";height:1px;flex:1;background:#e2e8f0;}',
+      '.spx-toolbox-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#e0f2fe;color:#075985;font-size:11px;font-weight:900;letter-spacing:0;}',
+      '.spx-toolbox-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;}',
+      '.spx-toolbox-action{box-sizing:border-box;min-width:0;min-height:64px;display:flex!important;align-items:center!important;justify-content:flex-start!important;gap:10px;position:relative;border:1px solid #dbe4ee!important;border-radius:12px!important;background:#fff!important;color:#1f2937!important;padding:10px 11px!important;text-align:left!important;text-decoration:none!important;cursor:pointer!important;box-shadow:0 5px 16px rgba(15,23,42,.06)!important;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease,box-shadow .16s ease!important;}',
+      '.spx-toolbox-action:hover,.spx-toolbox-action:focus-visible{border-color:var(--spx-accent)!important;background:#f0fdfa!important;color:#0f766e!important;text-decoration:none!important;outline:none!important;box-shadow:0 10px 24px rgba(15,118,110,.15)!important;transform:translateY(-1px)!important;}',
+      '.spx-toolbox-action.spx-active{border-color:#0f766e!important;background:#ccfbf1!important;color:#0f766e!important;box-shadow:0 8px 22px rgba(15,118,110,.18)!important;}',
+      '.spx-toolbox-action.spx-active:before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:0 999px 999px 0;background:#0f766e;}',
+      '.spx-toolbox-key{flex:none;width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:#f8fafc;border:1px solid #cbd5e1;color:#075985;font-size:15px;font-weight:900;}',
+      '.spx-toolbox-action.spx-active .spx-toolbox-key{border-color:#0f766e;background:#f0fdfa;color:#0f766e;}',
+      '.spx-toolbox-copy{min-width:0;display:block;}',
+      '.spx-toolbox-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:inherit;font-size:13px;font-weight:800;line-height:1.25;}',
+      '.spx-toolbox-desc{display:-webkit-box;overflow:hidden;-webkit-line-clamp:2;-webkit-box-orient:vertical;margin-top:4px;color:#64748b;font-size:11px;line-height:1.3;}',
       '.spx-settings{position:fixed;right:66px;bottom:18px;width:min(360px,calc(100vw - 24px));max-height:80vh;overflow:auto;z-index:100000;background:var(--spx-panel);border:1px solid var(--spx-line);box-shadow:0 12px 36px rgba(15,23,42,.24);border-radius:8px;padding:12px;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;}',
       '.spx-settings[hidden]{display:none!important;}',
       '.spx-settings h3{margin:0 0 10px;font-size:15px;}',
@@ -2225,7 +2265,7 @@
       '.spx-folded-quote{max-height:110px;overflow:hidden;position:relative;border-bottom:1px dashed var(--spx-line);}',
       '.spx-folded-quote:after{content:"";position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(transparent,var(--spx-panel));}',
       '@media(max-width:900px){.spx-home-dashboard #content{width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-home-dashboard #spx-home-grid{grid-template-columns:1fr!important}.spx-home-dashboard .spx-home-module,.spx-home-dashboard .spx-home-module[data-spx-large="1"]{grid-column:1!important}.spx-home-dashboard #header,.spx-home-dashboard #mainNav,.spx-home-dashboard #infobox,.spx-home-dashboard #notice,.spx-home-dashboard .spx-home-quick{width:calc(100vw - 16px)!important}.spx-home-dashboard .spx-home-module tr.tr3{grid-template-columns:1fr!important;gap:4px!important}.spx-home-dashboard .spx-home-module tr.tr3>td:first-child{display:none!important}}',
-      '@media(max-width:760px){.spx-preview-lightbox{padding:0!important}.spx-preview-lightbox-shell{border:0!important;border-radius:0!important}.spx-preview-lightbox-toolbar{align-items:flex-start!important;min-height:0!important;padding:8px!important}.spx-preview-lightbox-actions{gap:4px!important}.spx-preview-lightbox button{height:30px!important;padding:0 8px!important}.spx-preview-lightbox-canvas{padding:22px 50px!important}.spx-preview-lightbox-nav{width:38px!important;height:54px!important;font-size:26px!important}.spx-preview-lightbox-prev{left:6px!important}.spx-preview-lightbox-next{right:6px!important}.spx-preview-lightbox-caption{padding:6px 9px!important}.spx-preview-lightbox-help{display:none!important}.spx-reader body{font-size:16px!important}.spx-reader #wrapA{width:auto!important;margin:0 6px!important}.spx-reader .tpc_content{font-size:17px!important;line-height:1.9!important;padding:12px!important}.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{display:flex!important;flex-direction:column!important;gap:12px!important;padding:14px!important}.spx-reader .spx-post-body-split .tpc_content,.spx-immersive-read .spx-post-body-split .tpc_content{padding:0!important}.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{width:auto!important;max-height:360px!important;margin:0!important;padding:10px!important}.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{height:132px!important}.spx-immersive-read #wrapA,.spx-immersive-read #main,.spx-immersive-read #content{width:100vw!important;margin:0!important}.spx-immersive-read table.js-post{width:calc(100vw - 14px)!important;margin:10px 7px!important}.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{font-size:19px!important;padding:16px 14px 6px!important}.spx-immersive-read .tpc_content{font-size:var(--spx-immersive-font-size,20px)!important;line-height:1.98!important;padding:14px!important}.spx-toolbar{right:8px;bottom:8px}.spx-toolbar button,.spx-toolbar a{width:38px;height:30px}.spx-settings,.spx-watch-center{right:8px;bottom:52px}}',
+      '@media(max-width:760px){.spx-preview-lightbox{padding:0!important}.spx-preview-lightbox-shell{border:0!important;border-radius:0!important}.spx-preview-lightbox-toolbar{align-items:flex-start!important;min-height:0!important;padding:8px!important}.spx-preview-lightbox-actions{gap:4px!important}.spx-preview-lightbox button{height:30px!important;padding:0 8px!important}.spx-preview-lightbox-canvas{padding:22px 50px!important}.spx-preview-lightbox-nav{width:38px!important;height:54px!important;font-size:26px!important}.spx-preview-lightbox-prev{left:6px!important}.spx-preview-lightbox-next{right:6px!important}.spx-preview-lightbox-caption{padding:6px 9px!important}.spx-preview-lightbox-help{display:none!important}.spx-reader body{font-size:16px!important}.spx-reader #wrapA{width:auto!important;margin:0 6px!important}.spx-reader .tpc_content{font-size:17px!important;line-height:1.9!important;padding:12px!important}.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{display:flex!important;flex-direction:column!important;gap:12px!important;padding:14px!important}.spx-reader .spx-post-body-split .tpc_content,.spx-immersive-read .spx-post-body-split .tpc_content{padding:0!important}.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{width:auto!important;max-height:360px!important;margin:0!important;padding:10px!important}.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{height:132px!important}.spx-immersive-read #wrapA,.spx-immersive-read #main,.spx-immersive-read #content{width:100vw!important;margin:0!important}.spx-immersive-read table.js-post{width:calc(100vw - 14px)!important;margin:10px 7px!important}.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{font-size:19px!important;padding:16px 14px 6px!important}.spx-immersive-read .tpc_content{font-size:var(--spx-immersive-font-size,20px)!important;line-height:1.98!important;padding:14px!important}.spx-toolbar{right:8px;bottom:8px;padding:5px;border-radius:14px}.spx-toolbar button,.spx-toolbar a{width:46px;height:32px;font-size:12px}.spx-settings,.spx-watch-center,.spx-toolbox{right:8px;bottom:58px}.spx-toolbox-grid{grid-template-columns:1fr}.spx-toolbox{max-height:78vh;border-radius:14px}.spx-toolbox-body{max-height:calc(78vh - 78px);padding:11px}.spx-toolbox-action{min-height:58px!important}.spx-toolbox-desc{-webkit-line-clamp:1}}',
     ];
   }
 
@@ -5898,70 +5938,80 @@
     return panel;
   }
 
-  function createSettingToggleToolbarButton(settings, state, config) {
-    var button = toolbarButton(config.text, config.title, function toggleSetting() {
-      settings[config.key] = !settings[config.key];
-      saveSettings(settings);
-      enhanceAll(settings, state);
-      button.classList.toggle('spx-active', !!settings[config.key]);
-    });
-    button.classList.toggle('spx-active', !!settings[config.key]);
-    return button;
-  }
-
-  function createCenterToolbarButton(settings, state, config) {
-    var button = toolbarButton(config.text, config.title, function toggleCenterPanel() {
-      var panel = config.createPanel(settings, state);
-      if (panel.spxRender) panel.spxRender();
-      setCenterPanelHidden(panel, !panel.hidden, config.buttonSelector);
-    });
-    if (config.buttonDataset) button.dataset[config.buttonDataset] = '1';
-    return button;
-  }
-
-  function appendToolbarItem(toolbar, item, shouldAppend) {
-    if (!toolbar || !item || shouldAppend === false) return;
-    toolbar.appendChild(item);
-  }
-
-  function appendToolbarConfigItems(toolbar, configs, createItem) {
-    (configs || []).forEach(function appendToolbarConfigItem(config) {
-      appendToolbarItem(toolbar, createItem(config), config.show);
-    });
-  }
-
-  function appendToolbarNavigation(toolbar, page, url, root) {
-    toolbar.appendChild(toolbarButton('顶', '回到顶部', function top() {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }));
-    toolbar.appendChild(toolbarButton('底', '滚到底部', function bottom() {
-      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-    }));
-
-    if (shouldShowToolbarAction('prevPage', url, root)) {
-      toolbar.appendChild(toolbarLink('上', '上一页', buildPageUrl(url, Math.max(1, page - 1))));
-    }
-    if (shouldShowToolbarAction('nextPage', url, root)) {
-      toolbar.appendChild(toolbarLink('下', '下一页', buildPageUrl(url, page + 1)));
-    }
-    if (shouldShowToolbarFeature('latest')) {
-      toolbar.appendChild(toolbarLink('新', '最新帖子', location.origin + '/search2.php?orderway-postdate-asc-desc-newatc-1.html'));
-    }
-    if (shouldShowToolbarAction('home', url, root)) {
-      toolbar.appendChild(toolbarLink('首', '论坛首页', location.origin + '/index.php'));
-    }
+  function getToolbarNavigationConfigs(url, root) {
+    var page = currentPageNumber(url);
+    return [
+      {
+        show: true,
+        group: '页面导航',
+        text: '顶',
+        label: '回到顶部',
+        title: '回到顶部',
+        description: '快速滚动到页面开头',
+        onClick: function top() {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
+      },
+      {
+        show: true,
+        group: '页面导航',
+        text: '底',
+        label: '滚到底部',
+        title: '滚到底部',
+        description: '快速滚动到页面末尾',
+        onClick: function bottom() {
+          window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+        },
+      },
+      {
+        show: shouldShowToolbarAction('prevPage', url, root),
+        group: '页面导航',
+        text: '上',
+        label: '上一页',
+        title: '上一页',
+        description: '切换到上一页内容',
+        href: buildPageUrl(url, Math.max(1, page - 1)),
+      },
+      {
+        show: shouldShowToolbarAction('nextPage', url, root),
+        group: '页面导航',
+        text: '下',
+        label: '下一页',
+        title: '下一页',
+        description: '切换到下一页内容',
+        href: buildPageUrl(url, page + 1),
+      },
+      {
+        show: shouldShowToolbarFeature('latest'),
+        group: '页面导航',
+        text: '新',
+        label: '最新帖子',
+        title: '最新帖子',
+        description: '打开站点最新帖子列表',
+        href: location.origin + '/search2.php?orderway-postdate-asc-desc-newatc-1.html',
+      },
+      {
+        show: shouldShowToolbarAction('home', url, root),
+        group: '页面导航',
+        text: '首',
+        label: '论坛首页',
+        title: '论坛首页',
+        description: '回到当前站点首页',
+        href: location.origin + '/index.php',
+      },
+    ];
   }
 
   function getToolbarToggleConfigs(url, root) {
     return [
-      { show: shouldShowToolbarFeature('clean'), key: 'cleanMode', text: '净', title: '切换清爽模式' },
-      { show: shouldShowToolbarAction('reader', url, root), key: 'readerMode', text: '字', title: '切换阅读排版优化' },
-      { show: shouldShowToolbarAction('adBlock', url, root), key: 'adBlock', text: '广', title: '切换隐藏广告' },
-      { show: shouldShowToolbarAction('homeDashboard', url, root), key: 'homeDashboard', text: '模', title: '切换首页模块全屏' },
-      { show: shouldShowToolbarAction('immersiveRead', url, root), key: 'immersiveRead', text: '屏', title: '切换帖子页沉浸全屏' },
-      { show: shouldShowToolbarAction('previewGallery', url, root), key: 'unifiedPreviewGallery', text: '图', title: '切换预览图集中显示' },
-      { show: shouldShowToolbarAction('unreadOnly', url, root), key: 'unreadOnly', text: '未', title: '只看未读' },
-      { show: shouldShowToolbarAction('onlyOriginalAuthor', url, root), key: 'onlyOriginalAuthor', text: '楼', title: '只看楼主' },
+      { show: shouldShowToolbarFeature('clean'), group: '阅读模式', key: 'cleanMode', text: '净', label: '清爽模式', title: '切换清爽模式', description: '隐藏低频模块和干扰内容' },
+      { show: shouldShowToolbarAction('reader', url, root), group: '阅读模式', key: 'readerMode', text: '字', label: '阅读排版', title: '切换阅读排版优化', description: '优化字体、宽度和正文间距' },
+      { show: shouldShowToolbarAction('adBlock', url, root), group: '阅读模式', key: 'adBlock', text: '广', label: '隐藏广告', title: '切换隐藏广告', description: '隐藏广告链接、图片和容器' },
+      { show: shouldShowToolbarAction('homeDashboard', url, root), group: '阅读模式', key: 'homeDashboard', text: '模', label: '首页模块', title: '切换首页模块全屏', description: '以网格方式整理首页板块' },
+      { show: shouldShowToolbarAction('immersiveRead', url, root), group: '阅读模式', key: 'immersiveRead', text: '屏', label: '沉浸阅读', title: '切换帖子页沉浸全屏', description: '放大帖子内容并弱化周边' },
+      { show: shouldShowToolbarAction('previewGallery', url, root), group: '阅读模式', key: 'unifiedPreviewGallery', text: '图', label: '预览图集', title: '切换预览图集中显示', description: '集中查看当前页正文图片' },
+      { show: shouldShowToolbarAction('unreadOnly', url, root), group: '阅读模式', key: 'unreadOnly', text: '未', label: '只看未读', title: '只看未读', description: '论坛列表隐藏已读主题' },
+      { show: shouldShowToolbarAction('onlyOriginalAuthor', url, root), group: '阅读模式', key: 'onlyOriginalAuthor', text: '楼', label: '只看楼主', title: '只看楼主', description: '阅读页隐藏非楼主回复' },
     ];
   }
 
@@ -5969,32 +6019,48 @@
     return [
       {
         show: true,
+        group: '我的中心',
         text: '存',
+        label: '稍后看',
         title: '打开稍后看中心',
+        description: '管理保存的主题和续读入口',
+        panelId: 'spx-watch-center',
         buttonDataset: 'spxWatchCenterButton',
         buttonSelector: '[data-spx-watch-center-button="1"]',
         createPanel: createWatchCenterPanel,
       },
       {
         show: true,
+        group: '我的中心',
         text: '历',
+        label: '最近浏览',
         title: '打开最近浏览',
+        description: '查看阅读历史和进度',
+        panelId: 'spx-history-center',
         buttonDataset: 'spxHistoryCenterButton',
         buttonSelector: '[data-spx-history-center-button="1"]',
         createPanel: createHistoryCenterPanel,
       },
       {
         show: true,
+        group: '我的中心',
         text: '买',
+        label: '购买记录',
         title: '打开自动购买记录',
+        description: '查看自动购买执行状态',
+        panelId: 'spx-auto-buy-center',
         buttonDataset: 'spxAutoBuyCenterButton',
         buttonSelector: '[data-spx-auto-buy-center-button="1"]',
         createPanel: createAutoBuyCenterPanel,
       },
       {
         show: true,
+        group: '我的中心',
         text: '源',
+        label: '资源中心',
         title: '打开资源中心',
+        description: '管理磁力、网盘和种子资源',
+        panelId: 'spx-resource-center',
         buttonDataset: 'spxResourceCenterButton',
         buttonSelector: '[data-spx-resource-center-button="1"]',
         createPanel: createResourceCenterPanel,
@@ -6002,23 +6068,193 @@
     ];
   }
 
+  function getToolbarSettingsConfig() {
+    return {
+      show: true,
+      group: '设置',
+      text: '设',
+      label: '脚本设置',
+      title: '打开脚本设置面板',
+      description: '配置开关、备份和数据健康',
+      kind: 'settings',
+    };
+  }
+
+  function getToolboxActionConfigs(url, root) {
+    return getToolbarNavigationConfigs(url, root)
+      .concat(getToolbarToggleConfigs(url, root))
+      .concat(getToolbarCenterConfigs())
+      .concat([getToolbarSettingsConfig()])
+      .filter(function keepVisibleToolboxAction(config) {
+        return config && config.show !== false;
+      });
+  }
+
+  function getToolboxGroups(url, root) {
+    var order = ['页面导航', '阅读模式', '我的中心', '设置'];
+    var groups = {};
+    getToolboxActionConfigs(url, root).forEach(function collectToolboxConfig(config) {
+      var group = config.group || '其他';
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(config);
+    });
+    return order.concat(Object.keys(groups).filter(function keepExtraGroup(group) {
+      return order.indexOf(group) === -1;
+    })).filter(function hasGroupItems(group) {
+      return groups[group] && groups[group].length;
+    }).map(function toToolboxGroup(group) {
+      return { title: group, items: groups[group] };
+    });
+  }
+
+  function setToolboxHidden(panel, hidden, buttonSelector) {
+    if (!panel) return;
+    panel.hidden = !!hidden;
+    if (buttonSelector) {
+      qsa(buttonSelector).forEach(function toggleToolboxButton(button) {
+        button.classList.toggle('spx-active', !panel.hidden);
+        button.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
+      });
+    }
+  }
+
+  function isToolboxActionActive(config, settings) {
+    if (!config) return false;
+    if (config.key) return !!(settings && settings[config.key]);
+    if (config.panelId) {
+      var panel = qs('#' + config.panelId);
+      return !!(panel && !panel.hidden);
+    }
+    return false;
+  }
+
+  function appendToolboxActionContent(node, config) {
+    node.appendChild(createEl('span', 'spx-toolbox-key', config.text || ''));
+    var copy = createEl('span', 'spx-toolbox-copy');
+    copy.appendChild(createEl('span', 'spx-toolbox-name', config.label || config.title || config.text || '工具'));
+    copy.appendChild(createEl('span', 'spx-toolbox-desc', config.description || config.title || ''));
+    node.appendChild(copy);
+  }
+
+  function createToolboxActionElement(config, settings, state, toolbox) {
+    var node = createEl(config.href ? 'a' : 'button', 'spx-toolbox-action');
+    node.title = config.title || config.label || '';
+    if (config.href) {
+      node.href = config.href;
+    } else {
+      node.type = 'button';
+    }
+    if (config.buttonDataset) node.dataset[config.buttonDataset] = '1';
+    node.classList.toggle('spx-active', isToolboxActionActive(config, settings));
+    appendToolboxActionContent(node, config);
+
+    if (config.href) return node;
+
+    node.addEventListener('click', function handleToolboxAction() {
+      if (config.kind === 'settings') {
+        var settingsPanel = createSettingsPanel(settings, state);
+        if (settingsPanel.spxSync) settingsPanel.spxSync();
+        settingsPanel.hidden = !settingsPanel.hidden;
+        setToolboxHidden(toolbox, true, '[data-spx-toolbox-button="1"]');
+        return;
+      }
+      if (config.key) {
+        settings[config.key] = !settings[config.key];
+        saveSettings(settings);
+        enhanceAll(settings, state);
+        if (toolbox && toolbox.spxRender) toolbox.spxRender();
+        return;
+      }
+      if (config.createPanel) {
+        var centerPanel = config.createPanel(settings, state);
+        if (centerPanel.spxRender) centerPanel.spxRender();
+        setCenterPanelHidden(centerPanel, !centerPanel.hidden, config.buttonSelector);
+        setToolboxHidden(toolbox, true, '[data-spx-toolbox-button="1"]');
+        return;
+      }
+      if (typeof config.onClick === 'function') {
+        config.onClick();
+        setToolboxHidden(toolbox, true, '[data-spx-toolbox-button="1"]');
+      }
+    });
+
+    return node;
+  }
+
+  function createToolboxPanel(settings, state) {
+    var panel = qs('#spx-toolbox');
+    if (panel) return panel;
+
+    panel = createEl('div', 'spx-toolbox');
+    panel.id = 'spx-toolbox';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'South Plus 工具箱');
+    panel.hidden = true;
+    panel.spxRender = function renderToolbox() {
+      panel.textContent = '';
+      var header = createEl('div', 'spx-toolbox-header');
+      var title = createEl('div');
+      title.appendChild(createEl('div', 'spx-toolbox-eyebrow', '功能分组'));
+      title.appendChild(createEl('h3', '', 'South Plus 工具箱'));
+      title.appendChild(createEl('p', '', '完整名称和用途说明都放在这里，右侧只保留高频入口。'));
+      var closeButton = createEl('button', 'spx-toolbox-close', '×');
+      closeButton.type = 'button';
+      closeButton.title = '关闭工具箱';
+      closeButton.addEventListener('click', function closeToolbox() {
+        setToolboxHidden(panel, true, '[data-spx-toolbox-button="1"]');
+      });
+      header.appendChild(title);
+      header.appendChild(closeButton);
+      panel.appendChild(header);
+
+      var body = createEl('div', 'spx-toolbox-body');
+      getToolboxGroups(location.href, document).forEach(function appendGroup(group) {
+        var section = createEl('section', 'spx-toolbox-section');
+        var sectionTitle = createEl('div', 'spx-toolbox-section-title');
+        sectionTitle.appendChild(createEl('span', '', group.title));
+        sectionTitle.appendChild(createEl('span', 'spx-toolbox-count', String(group.items.length)));
+        section.appendChild(sectionTitle);
+        var grid = createEl('div', 'spx-toolbox-grid');
+        group.items.forEach(function appendToolboxAction(config) {
+          grid.appendChild(createToolboxActionElement(config, settings, state, panel));
+        });
+        section.appendChild(grid);
+        body.appendChild(section);
+      });
+      panel.appendChild(body);
+    };
+    panel.spxRender();
+    document.body.appendChild(panel);
+    return panel;
+  }
+
   function createToolbar(settings, state) {
     if (qs('#spx-toolbar')) return;
     var toolbar = createEl('div', 'spx-toolbar');
     toolbar.id = 'spx-toolbar';
+    var toolbox = createToolboxPanel(settings, state);
 
-    appendToolbarNavigation(toolbar, currentPageNumber(location.href), location.href, document);
-    appendToolbarConfigItems(toolbar, getToolbarToggleConfigs(location.href, document), function createToggleItem(config) {
-      return createSettingToggleToolbarButton(settings, state, config);
+    toolbar.appendChild(toolbarButton('顶部', '回到顶部', function top() {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }));
+    toolbar.appendChild(toolbarButton('底部', '滚到底部', function bottom() {
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+    }));
+    var toolboxButton = toolbarButton('工具', '打开工具箱', function toggleToolbox() {
+      if (toolbox.spxRender) toolbox.spxRender();
+      setToolboxHidden(toolbox, !toolbox.hidden, '[data-spx-toolbox-button="1"]');
     });
-    appendToolbarConfigItems(toolbar, getToolbarCenterConfigs(), function createCenterItem(config) {
-      return createCenterToolbarButton(settings, state, config);
-    });
+    toolboxButton.dataset.spxToolboxButton = '1';
+    toolboxButton.setAttribute('aria-haspopup', 'dialog');
+    toolboxButton.setAttribute('aria-controls', 'spx-toolbox');
+    toolboxButton.setAttribute('aria-expanded', 'false');
+    toolbar.appendChild(toolboxButton);
 
-    toolbar.appendChild(toolbarButton('设', '打开设置', function openSettings() {
+    toolbar.appendChild(toolbarButton('设置', '打开设置', function openSettings() {
       var panel = createSettingsPanel(settings, state);
       if (panel.spxSync) panel.spxSync();
       panel.hidden = !panel.hidden;
+      setToolboxHidden(toolbox, true, '[data-spx-toolbox-button="1"]');
     }));
     document.body.appendChild(toolbar);
   }
