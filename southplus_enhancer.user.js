@@ -5940,13 +5940,30 @@
 
   function getQuickReplyEditor(root) {
     var scope = root || document;
-    return (
-      qs('textarea[name="atc_content"]', scope) ||
-      qs('textarea[name="content"]', scope) ||
-      qs('textarea#atc_content', scope) ||
-      qs('textarea[id*="content"]', scope) ||
-      qs('textarea', scope)
-    );
+    var selectors = [
+      'textarea[name="atc_content"]',
+      'textarea[name="content"]',
+      'textarea#atc_content',
+      'textarea[id*="content"]',
+      'textarea',
+    ];
+    for (var index = 0; index < selectors.length; index += 1) {
+      var editor = qsa(selectors[index], scope).filter(isQuickReplyEditorCandidate)[0];
+      if (editor) return editor;
+    }
+    return null;
+  }
+
+  function isQuickReplyEditorCandidate(editor) {
+    if (!editor) return false;
+    if (editor.disabled || editor.readOnly) return false;
+    if (
+      editor.closest &&
+      editor.closest('#spx-settings,#spx-toolbox,#spx-watch-center,#spx-history-center,#spx-auto-buy-center,#spx-resource-center,#spx-preview-lightbox')
+    ) {
+      return false;
+    }
+    return true;
   }
 
   function insertTextIntoEditor(editor, text) {
@@ -7244,6 +7261,7 @@
     createQuickReplyRequest: createQuickReplyRequest,
     isQuickReplySubmitter: isQuickReplySubmitter,
     getQuickReplySubmitter: getQuickReplySubmitter,
+    isQuickReplyEditorCandidate: isQuickReplyEditorCandidate,
     performQuickReplySubmit: performQuickReplySubmit,
     buildPageUrl: buildPageUrl,
     detectPageType: detectPageType,

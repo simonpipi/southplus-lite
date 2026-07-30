@@ -798,6 +798,15 @@ assert.strictEqual(
   }, defaultSubmitButton),
   defaultSubmitButton
 );
+assert.equal(enhancer.isQuickReplyEditorCandidate({ disabled: false, readOnly: false, closest: function noWidgetOwner() { return null; } }), true);
+assert.equal(enhancer.isQuickReplyEditorCandidate({ disabled: true, readOnly: false, closest: function noWidgetOwner() { return null; } }), false);
+assert.equal(enhancer.isQuickReplyEditorCandidate({
+  disabled: false,
+  readOnly: false,
+  closest: function widgetOwner(selector) {
+    return selector.indexOf('#spx-settings') !== -1 ? { id: 'spx-settings' } : null;
+  },
+}), false);
 
 async function testQuickReplySubmissionFlow() {
   const pageUrl = 'https://south-plus.org/read.php?tid=123';
