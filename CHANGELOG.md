@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.2.5 - 2026-07-30
+
+### Changed
+
+- 帖子真实正文容器 `#read_tpc.f14` 统一调整为 `16px`，行高收为约 `1.78`，兼顾可读性和紧凑度。
+- 沉浸阅读模式忽略本地旧 `immersiveFontSize` 设置，避免旧值继续把正文顶回 18px 或 20px。
+
+### Fixed
+
+- 修复只调整外层 `.tpc_content` 导致内层 `#read_tpc.f14` 仍保留站点 `14px` 字号的问题。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
+## 0.2.4 - 2026-07-30
+
+### Changed
+
+- 帖子正文默认字号调大到适中尺寸，并收紧正文换行行距，改善“帖子间距大但字偏小”的阅读观感。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
+## 0.2.3 - 2026-07-30
+
+### Fixed
+
+- 工具箱弹出层与设置面板改为互斥显示，避免同时打开时重叠遮挡。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.2.2 - 2026-07-30
 
 ### Added

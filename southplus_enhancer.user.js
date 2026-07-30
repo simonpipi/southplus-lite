@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.2.2
+// @version      0.2.5
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -62,6 +62,8 @@
   var STALE_PROGRESS_MAX_AGE = 180 * 24 * 60 * 60 * 1000;
   var LOCAL_STORAGE_WARNING_BYTES = 4 * 1024 * 1024;
   var PREVIEW_GALLERY_BATCH_SIZE = 36;
+  var TOOLBOX_BUTTON_SELECTOR = '[data-spx-toolbox-button="1"]';
+  var SETTINGS_BUTTON_SELECTOR = '[data-spx-settings-button="1"]';
   var RESOURCE_STATUSES = {
     saved: '已保存',
     todo: '待下载',
@@ -109,7 +111,7 @@
     cleanMode: true,
     readerMode: true,
     immersiveRead: true,
-    immersiveFontSize: 20,
+    immersiveFontSize: 16,
     unifiedPreviewGallery: true,
     homeDashboard: true,
     adBlock: true,
@@ -1620,6 +1622,7 @@
         settings[key] = !!settings[key];
       }
     });
+    settings.immersiveFontSize = 16;
     settings.autoBuyMaxSp = Math.max(0, Number(settings.autoBuyMaxSp) || 0);
     settings.titleKeywords = normalizeListValue(settings.titleKeywords, parseLineList);
     settings.authorKeywords = normalizeListValue(settings.authorKeywords, parseLineList);
@@ -2334,8 +2337,9 @@
       '.spx-reader.spx-compact-read table.js-post>tbody>tr>th.r_two,.spx-reader.spx-hide-profile table.js-post>tbody>tr>th.r_two{width:112px!important;max-width:112px!important;min-width:112px!important;}',
       '.spx-reader table.js-post td{font-size:15px!important;line-height:1.75!important;}',
       '.spx-reader .h1,.spx-reader [id^="subject_"]{font-size:18px!important;line-height:1.55!important;font-weight:700!important;color:#111827!important;}',
-      '.spx-reader .tpc_content{box-sizing:border-box!important;max-width:900px!important;margin:0 auto!important;padding:14px 18px 20px!important;font-size:17px!important;line-height:1.95!important;letter-spacing:0!important;color:#1f2937!important;word-break:break-word!important;}',
-      '.spx-reader .tpc_content br{line-height:2!important;}',
+      '.spx-reader .tpc_content{box-sizing:border-box!important;max-width:900px!important;margin:0 auto!important;padding:14px 18px 20px!important;font-size:16px!important;line-height:1.78!important;letter-spacing:0!important;color:#1f2937!important;word-break:break-word!important;}',
+      '.spx-reader .tpc_content #read_tpc,.spx-reader .tpc_content>.f14{font-size:16px!important;line-height:1.78!important;}',
+      '.spx-reader .tpc_content br{line-height:1.75!important;}',
       '.spx-reader .tpc_content img{max-width:100%!important;height:auto!important;border-radius:4px!important;}',
       '.spx-reader .tiptop,.spx-reader .readbot{max-width:920px!important;margin-left:auto!important;margin-right:auto!important;color:#64748b!important;}',
       '.spx-reader .signature,.spx-reader .sigline{max-width:900px!important;margin-left:auto!important;margin-right:auto!important;color:#64748b!important;font-size:13px!important;}',
@@ -2419,7 +2423,8 @@
       '.spx-immersive-read .spx-preview-empty{padding:10px 2px;color:#94a3b8;font-size:13px;}',
       '.spx-immersive-read .spx-preview-source{display:none!important;}',
       '.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{display:block!important;box-sizing:border-box!important;max-width:980px!important;margin:0 auto!important;padding:22px 18px 8px!important;font-size:21px!important;line-height:1.45!important;color:#111827!important;}',
-      '.spx-immersive-read .tpc_content{max-width:980px!important;margin:0 auto!important;padding:18px 34px 34px!important;font-size:var(--spx-immersive-font-size,20px)!important;line-height:2.06!important;color:#172033!important;background:#fff!important;}',
+      '.spx-immersive-read .tpc_content{max-width:980px!important;margin:0 auto!important;padding:18px 34px 34px!important;font-size:16px!important;line-height:1.78!important;color:#172033!important;background:#fff!important;}',
+      '.spx-immersive-read .tpc_content #read_tpc,.spx-immersive-read .tpc_content>.f14{font-size:16px!important;line-height:1.78!important;}',
       '.spx-immersive-read .tiptop,.spx-immersive-read .readbot,.spx-immersive-read .signature,.spx-immersive-read .sigline{max-width:980px!important;margin-left:auto!important;margin-right:auto!important;padding-left:18px!important;padding-right:18px!important;color:#94a3b8!important;font-size:12px!important;opacity:.58!important;}',
       '.spx-immersive-read textarea,.spx-immersive-read input[type="text"]{font-size:16px!important;}',
       '.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{box-sizing:border-box!important;display:grid!important;grid-template-columns:minmax(360px,560px) minmax(0,1fr)!important;gap:22px!important;align-items:start!important;max-width:100%!important;margin:0 auto!important;padding:18px 36px 36px!important;background:#fff!important;}',
@@ -2609,11 +2614,11 @@
       '.spx-preview-images img{display:block;width:100%;height:118px;object-fit:cover;}',
       '.spx-preview-status{color:#94a3b8;font-size:12px;}',
       '.spx-compact-read .user-info,.spx-compact-read .readprofile,.spx-hide-profile .user-pic,.spx-hide-profile .user-info,.spx-hide-profile .readprofile{display:none!important;}',
-      '.spx-compact-read:not(.spx-reader) .tpc_content{font-size:14px;line-height:1.75;max-width:920px;}',
+      '.spx-compact-read:not(.spx-reader) .tpc_content{font-size:15px;line-height:1.7;max-width:920px;}',
       '.spx-folded-quote{max-height:110px;overflow:hidden;position:relative;border-bottom:1px dashed var(--spx-line);}',
       '.spx-folded-quote:after{content:"";position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(transparent,var(--spx-panel));}',
       '@media(max-width:900px){.spx-home-dashboard #content{width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-home-dashboard #spx-home-grid{grid-template-columns:1fr!important}.spx-home-dashboard .spx-home-module,.spx-home-dashboard .spx-home-module[data-spx-large="1"]{grid-column:1!important}.spx-home-dashboard #header,.spx-home-dashboard #mainNav,.spx-home-dashboard #infobox,.spx-home-dashboard #notice,.spx-home-dashboard .spx-home-quick{width:calc(100vw - 16px)!important}.spx-home-dashboard .spx-home-module tr.tr3{grid-template-columns:1fr!important;gap:4px!important}.spx-home-dashboard .spx-home-module tr.tr3>td:first-child{display:none!important}}',
-      '@media(max-width:760px){.spx-preview-lightbox{padding:0!important}.spx-preview-lightbox-shell{border:0!important;border-radius:0!important}.spx-preview-lightbox-toolbar{align-items:flex-start!important;min-height:0!important;padding:8px!important}.spx-preview-lightbox-actions{gap:4px!important}.spx-preview-lightbox button{height:30px!important;padding:0 8px!important}.spx-preview-lightbox-canvas{padding:22px 50px!important}.spx-preview-lightbox-nav{width:38px!important;height:54px!important;font-size:26px!important}.spx-preview-lightbox-prev{left:6px!important}.spx-preview-lightbox-next{right:6px!important}.spx-preview-lightbox-caption{padding:6px 9px!important}.spx-preview-lightbox-help{display:none!important}.spx-reader body{font-size:16px!important}.spx-reader #wrapA{width:auto!important;margin:0 6px!important}.spx-reader .tpc_content{font-size:17px!important;line-height:1.9!important;padding:12px!important}.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{display:flex!important;flex-direction:column!important;gap:12px!important;padding:14px!important}.spx-reader .spx-post-body-split .tpc_content,.spx-immersive-read .spx-post-body-split .tpc_content{padding:0!important}.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{width:auto!important;max-height:360px!important;margin:0!important;padding:10px!important}.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{height:132px!important}.spx-immersive-read #wrapA,.spx-immersive-read #main,.spx-immersive-read #content{width:100vw!important;margin:0!important}.spx-immersive-read table.js-post{width:calc(100vw - 14px)!important;margin:10px 7px!important}.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{font-size:19px!important;padding:16px 14px 6px!important}.spx-immersive-read .tpc_content{font-size:var(--spx-immersive-font-size,20px)!important;line-height:1.98!important;padding:14px!important}.spx-toolbar{right:8px;bottom:8px;padding:5px;border-radius:14px}.spx-toolbar button,.spx-toolbar a{width:46px;height:32px;font-size:12px}.spx-settings,.spx-watch-center,.spx-toolbox{right:8px;bottom:58px}.spx-toolbox-grid{grid-template-columns:1fr}.spx-toolbox{max-height:78vh;border-radius:14px}.spx-toolbox-body{max-height:calc(78vh - 78px);padding:11px}.spx-toolbox-action{min-height:58px!important}.spx-toolbox-desc{-webkit-line-clamp:1}}',
+      '@media(max-width:760px){.spx-preview-lightbox{padding:0!important}.spx-preview-lightbox-shell{border:0!important;border-radius:0!important}.spx-preview-lightbox-toolbar{align-items:flex-start!important;min-height:0!important;padding:8px!important}.spx-preview-lightbox-actions{gap:4px!important}.spx-preview-lightbox button{height:30px!important;padding:0 8px!important}.spx-preview-lightbox-canvas{padding:22px 50px!important}.spx-preview-lightbox-nav{width:38px!important;height:54px!important;font-size:26px!important}.spx-preview-lightbox-prev{left:6px!important}.spx-preview-lightbox-next{right:6px!important}.spx-preview-lightbox-caption{padding:6px 9px!important}.spx-preview-lightbox-help{display:none!important}.spx-reader body{font-size:16px!important}.spx-reader #wrapA{width:auto!important;margin:0 6px!important}.spx-reader .tpc_content{font-size:16px!important;line-height:1.76!important;padding:12px!important}.spx-reader .tpc_content #read_tpc,.spx-reader .tpc_content>.f14{font-size:16px!important;line-height:1.76!important}.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{display:flex!important;flex-direction:column!important;gap:12px!important;padding:14px!important}.spx-reader .spx-post-body-split .tpc_content,.spx-immersive-read .spx-post-body-split .tpc_content{padding:0!important}.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{width:auto!important;max-height:360px!important;margin:0!important;padding:10px!important}.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{height:132px!important}.spx-immersive-read #wrapA,.spx-immersive-read #main,.spx-immersive-read #content{width:100vw!important;margin:0!important}.spx-immersive-read table.js-post{width:calc(100vw - 14px)!important;margin:10px 7px!important}.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{font-size:19px!important;padding:16px 14px 6px!important}.spx-immersive-read .tpc_content{font-size:16px!important;line-height:1.76!important;padding:14px!important}.spx-immersive-read .tpc_content #read_tpc,.spx-immersive-read .tpc_content>.f14{font-size:16px!important;line-height:1.76!important}.spx-toolbar{right:8px;bottom:8px;padding:5px;border-radius:14px}.spx-toolbar button,.spx-toolbar a{width:46px;height:32px;font-size:12px}.spx-settings,.spx-watch-center,.spx-toolbox{right:8px;bottom:58px}.spx-toolbox-grid{grid-template-columns:1fr}.spx-toolbox{max-height:78vh;border-radius:14px}.spx-toolbox-body{max-height:calc(78vh - 78px);padding:11px}.spx-toolbox-action{min-height:58px!important}.spx-toolbox-desc{-webkit-line-clamp:1}}',
     ];
   }
 
@@ -2637,7 +2642,7 @@
     document.documentElement.classList.toggle('spx-profile-page', shouldUseProfilePage(location.href));
     document.documentElement.classList.toggle('spx-compact-read', !!settings.compactRead);
     document.documentElement.classList.toggle('spx-hide-profile', !!settings.hideUserProfile);
-    document.documentElement.style.setProperty('--spx-immersive-font-size', String(settings.immersiveFontSize || 20) + 'px');
+    document.documentElement.style.setProperty('--spx-immersive-font-size', '16px');
   }
 
   function extractAccountUserId(root, url) {
@@ -6662,9 +6667,9 @@
       if (!action) return;
       if (action === 'save') {
         saveForm();
-        panel.hidden = true;
+        setSettingsPanelHidden(panel, true, SETTINGS_BUTTON_SELECTOR);
       }
-      if (action === 'close') panel.hidden = true;
+      if (action === 'close') setSettingsPanelHidden(panel, true, SETTINGS_BUTTON_SELECTOR);
       if (action === 'export-backup') {
         var exported = downloadBackupPayload(collectBackupPayload(settings, state));
         setTemporaryButtonText(event.target, exported ? '已导出备份' : '导出失败');
@@ -6893,15 +6898,23 @@
     });
   }
 
-  function setToolboxHidden(panel, hidden, buttonSelector) {
+  function setPopupPanelHidden(panel, hidden, buttonSelector) {
     if (!panel) return;
     panel.hidden = !!hidden;
     if (buttonSelector) {
-      qsa(buttonSelector).forEach(function toggleToolboxButton(button) {
+      qsa(buttonSelector).forEach(function togglePopupButton(button) {
         button.classList.toggle('spx-active', !panel.hidden);
         button.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
       });
     }
+  }
+
+  function setToolboxHidden(panel, hidden, buttonSelector) {
+    setPopupPanelHidden(panel, hidden, buttonSelector);
+  }
+
+  function setSettingsPanelHidden(panel, hidden, buttonSelector) {
+    setPopupPanelHidden(panel, hidden, buttonSelector);
   }
 
   function isToolboxActionActive(config, settings) {
@@ -6910,6 +6923,10 @@
     if (config.panelId) {
       var panel = qs('#' + config.panelId);
       return !!(panel && !panel.hidden);
+    }
+    if (config.kind === 'settings') {
+      var settingsPanel = qs('#spx-settings');
+      return !!(settingsPanel && !settingsPanel.hidden);
     }
     return false;
   }
@@ -6940,8 +6957,8 @@
       if (config.kind === 'settings') {
         var settingsPanel = createSettingsPanel(settings, state);
         if (settingsPanel.spxSync) settingsPanel.spxSync();
-        settingsPanel.hidden = !settingsPanel.hidden;
-        setToolboxHidden(toolbox, true, '[data-spx-toolbox-button="1"]');
+        setSettingsPanelHidden(settingsPanel, !settingsPanel.hidden, SETTINGS_BUTTON_SELECTOR);
+        setToolboxHidden(toolbox, true, TOOLBOX_BUTTON_SELECTOR);
         return;
       }
       if (config.key) {
@@ -6955,12 +6972,12 @@
         var centerPanel = config.createPanel(settings, state);
         if (centerPanel.spxRender) centerPanel.spxRender();
         setCenterPanelHidden(centerPanel, !centerPanel.hidden, config.buttonSelector);
-        setToolboxHidden(toolbox, true, '[data-spx-toolbox-button="1"]');
+        setToolboxHidden(toolbox, true, TOOLBOX_BUTTON_SELECTOR);
         return;
       }
       if (typeof config.onClick === 'function') {
         config.onClick();
-        setToolboxHidden(toolbox, true, '[data-spx-toolbox-button="1"]');
+        setToolboxHidden(toolbox, true, TOOLBOX_BUTTON_SELECTOR);
       }
     });
 
@@ -6987,7 +7004,7 @@
       closeButton.type = 'button';
       closeButton.title = '关闭工具箱';
       closeButton.addEventListener('click', function closeToolbox() {
-        setToolboxHidden(panel, true, '[data-spx-toolbox-button="1"]');
+        setToolboxHidden(panel, true, TOOLBOX_BUTTON_SELECTOR);
       });
       header.appendChild(title);
       header.appendChild(closeButton);
@@ -7028,7 +7045,12 @@
     }));
     var toolboxButton = toolbarButton('工具', '打开工具箱', function toggleToolbox() {
       if (toolbox.spxRender) toolbox.spxRender();
-      setToolboxHidden(toolbox, !toolbox.hidden, '[data-spx-toolbox-button="1"]');
+      var nextToolboxHidden = !toolbox.hidden;
+      setToolboxHidden(toolbox, nextToolboxHidden, TOOLBOX_BUTTON_SELECTOR);
+      if (!nextToolboxHidden) {
+        var settingsPanel = qs('#spx-settings');
+        if (settingsPanel) setSettingsPanelHidden(settingsPanel, true, SETTINGS_BUTTON_SELECTOR);
+      }
     });
     toolboxButton.dataset.spxToolboxButton = '1';
     toolboxButton.setAttribute('aria-haspopup', 'dialog');
@@ -7036,12 +7058,17 @@
     toolboxButton.setAttribute('aria-expanded', 'false');
     toolbar.appendChild(toolboxButton);
 
-    toolbar.appendChild(toolbarButton('设置', '打开设置', function openSettings() {
+    var settingsButton = toolbarButton('设置', '打开设置', function openSettings() {
       var panel = createSettingsPanel(settings, state);
       if (panel.spxSync) panel.spxSync();
-      panel.hidden = !panel.hidden;
-      setToolboxHidden(toolbox, true, '[data-spx-toolbox-button="1"]');
-    }));
+      setToolboxHidden(toolbox, true, TOOLBOX_BUTTON_SELECTOR);
+      setSettingsPanelHidden(panel, !panel.hidden, SETTINGS_BUTTON_SELECTOR);
+    });
+    settingsButton.dataset.spxSettingsButton = '1';
+    settingsButton.setAttribute('aria-haspopup', 'dialog');
+    settingsButton.setAttribute('aria-controls', 'spx-settings');
+    settingsButton.setAttribute('aria-expanded', 'false');
+    toolbar.appendChild(settingsButton);
     document.body.appendChild(toolbar);
   }
 
