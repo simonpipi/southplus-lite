@@ -1,17 +1,5 @@
 # Changelog
 
-## 0.2.1 - 2026-07-30
-
-### Fixed
-
-- 修复资源工作台筛选栏在控件较多时搜索框被挤成窄空白框的问题，控制项会自动换行并保留可读宽度。
-
-### Verified
-
-- `node --check southplus_enhancer.user.js`
-- `node southplus_enhancer.test.js`
-- `git diff --check`
-
 ## 0.2.0 - 2026-07-30
 
 ### Added
@@ -23,6 +11,10 @@
 ### Changed
 
 - 资源工作台顶部统计会显示待下载、已选数量和来源分组状态，便于大批资源整理。
+
+### Fixed
+
+- 修复资源工作台筛选栏在控件较多时搜索框被挤成窄空白框的问题，控制项会自动换行并保留可读宽度。
 
 ### Verified
 
