@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.2.0
+// @version      0.2.1
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -2456,10 +2456,10 @@
       '.spx-watch-center-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;}',
       '.spx-watch-center h3{margin:0;font-size:15px;}',
       '.spx-watch-center .spx-watch-summary{color:var(--spx-sub);font-size:12px;}',
-      '.spx-watch-controls{display:flex;align-items:center;gap:8px;margin:0 0 10px;}',
+      '.spx-watch-controls{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 10px;}',
       '.spx-watch-controls input,.spx-watch-controls select{box-sizing:border-box;height:32px;border:1px solid var(--spx-line);border-radius:6px;background:#fff;color:var(--spx-text);padding:0 10px;font-size:12px;}',
-      '.spx-watch-controls input{flex:1;min-width:0;}',
-      '.spx-watch-controls select{flex:none;min-width:112px;max-width:148px;}',
+      '.spx-watch-controls input{flex:1 1 180px;min-width:180px;}',
+      '.spx-watch-controls select{flex:1 0 126px;min-width:112px;max-width:180px;}',
       '.spx-watch-list{display:flex;flex-direction:column;gap:8px;}',
       '.spx-watch-item{box-sizing:border-box;padding:9px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;}',
       '.spx-watch-title{display:block;margin-bottom:4px;color:#075985!important;font-size:14px;font-weight:800;line-height:1.35;text-decoration:none;}',

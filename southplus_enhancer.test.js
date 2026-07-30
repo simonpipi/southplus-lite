@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.2\.0/);
+assert.match(source, /@version\s+0\.2\.1/);
 assert.match(source, /South Plus 工具箱/);
 assert.match(source, /spx-toolbox-action/);
 assert.match(source, /隐藏广告/);
@@ -15,6 +15,7 @@ assert.match(source, /spx-preview-load-more/);
 assert.match(source, /资源工作台/);
 assert.doesNotMatch(source, /资源中心/);
 assert.match(source, /select-visible-resources/);
+assert.match(source, /spx-watch-controls\{display:flex;align-items:center;flex-wrap:wrap/);
 const emptyRoot = { querySelector: function querySelector() { return null; }, querySelectorAll: function querySelectorAll() { return []; } };
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('adBlock'), false);
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('homeDashboard'), false);
