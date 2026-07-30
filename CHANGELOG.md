@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1 - 2026-07-30
+
+### Added
+
+- 设置面板新增独立 `本地体积` 入口，以面板形式展示设置、已读、稍后看、阅读进度、自动购买记录和资源库的 localStorage 占用、记录数量、上限比例和清理建议。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.2.0 - 2026-07-30
 
 ### Added

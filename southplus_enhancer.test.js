@@ -3,13 +3,16 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.2\.0/);
+assert.match(source, /@version\s+0\.2\.1/);
 assert.match(source, /South Plus 工具箱/);
 assert.match(source, /spx-toolbox-action/);
 assert.match(source, /隐藏广告/);
 assert.match(source, /首页模块全屏/);
-assert.match(source, /本地存储体积/);
 assert.match(source, /spx-storage-usage/);
+assert.match(source, /show-storage-usage/);
+assert.match(source, /本地数据体积/);
+assert.match(source, /本地体积/);
+assert.match(source, /\.spx-settings \.spx-row\{display:flex;flex-wrap:wrap/);
 assert.match(source, /加载更多图片/);
 assert.match(source, /spx-preview-load-more/);
 assert.match(source, /资源工作台/);
@@ -649,6 +652,8 @@ const resourceUsage = storageReport.entries.find(function findResourceUsage(entr
 assert.equal(resourceUsage.count, 1);
 assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 6 项 · 最大：/);
 assert.match(enhancer.formatStorageUsageEntry(resourceUsage), /^资源库：.* \/ 1 条 \/ 上限 500$/);
+assert.equal(enhancer.formatStorageUsageLimit(resourceUsage), '1 / 500 条（0%）');
+assert.equal(enhancer.getStorageUsageLevel(resourceUsage), 'ok');
 assert.equal(enhancer.formatStorageUsageWarnings(storageReport), '当前体积正常，暂无额外清理建议');
 
 const crowdedProgress = {};
@@ -657,6 +662,9 @@ for (let index = 0; index < 160; index += 1) {
 }
 const crowdedStorageReport = enhancer.collectStorageUsageReport({ progress: crowdedProgress });
 assert.match(enhancer.formatStorageUsageWarnings(crowdedStorageReport), /阅读进度接近 200 条上限/);
+assert.equal(enhancer.getStorageUsageLevel(crowdedStorageReport.entries.find(function findProgressUsage(entry) {
+  return entry.label === '阅读进度';
+})), 'warning');
 
 const autoBuyEntries = enhancer.getAutoBuyCenterEntries({
   '1:tpc': { status: 'failed', message: '失败原因', price: 5, updatedAt: 100 },

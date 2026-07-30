@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.2.0
+// @version      0.2.1
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -1732,6 +1732,21 @@
       : '当前体积正常，暂无额外清理建议';
   }
 
+  function formatStorageUsageLimit(entry) {
+    if (!entry) return '0 条';
+    if (!entry.limit) return entry.count + ' 条';
+    var ratio = Math.round(clampRatio(entry.count / entry.limit) * 100);
+    return entry.count + ' / ' + entry.limit + ' 条（' + ratio + '%）';
+  }
+
+  function getStorageUsageLevel(entry) {
+    if (!entry) return 'ok';
+    if (entry.limit && entry.count >= Math.floor(entry.limit * 0.9)) return 'danger';
+    if (entry.limit && entry.count >= Math.floor(entry.limit * 0.8)) return 'warning';
+    if (entry.bytes >= 512 * 1024) return 'warning';
+    return 'ok';
+  }
+
   function formatStorageUsageEntry(entry) {
     if (!entry) return '';
     return entry.label + '：' + entry.size + ' / ' + entry.count + ' 条' +
@@ -2443,13 +2458,20 @@
       '.spx-settings .spx-number-setting input{box-sizing:border-box;width:84px;height:30px;border:1px solid var(--spx-line);border-radius:6px;padding:0 8px;text-align:right;}',
       '.spx-settings textarea{box-sizing:border-box;width:100%;min-height:74px;border:1px solid var(--spx-line);border-radius:6px;padding:7px;font:12px/1.4 monospace;}',
       '.spx-settings .spx-help{margin:4px 0 8px;color:var(--spx-sub);font-size:12px;}',
-      '.spx-settings .spx-row{display:flex;gap:8px;margin-top:10px;}',
+      '.spx-settings .spx-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}',
       '.spx-settings button{border:1px solid var(--spx-line);border-radius:6px;background:#fff;padding:6px 10px;cursor:pointer;}',
       '.spx-settings .spx-primary{background:var(--spx-accent);border-color:var(--spx-accent);color:#fff;}',
       '.spx-data-health{box-sizing:border-box;margin-top:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;}',
       '.spx-data-health[hidden]{display:none!important;}',
-      '.spx-storage-usage{display:grid;gap:4px;margin:6px 0 8px;font-size:12px;color:#334155;}',
-      '.spx-storage-usage>div{display:flex;justify-content:space-between;gap:10px;padding:4px 6px;border-radius:6px;background:#fff;border:1px solid #e5e7eb;}',
+      '.spx-storage-usage{display:grid;gap:6px;margin:7px 0 9px;font-size:12px;color:#334155;}',
+      '.spx-storage-usage-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:7px 8px;border-radius:7px;background:#fff;border:1px solid #e5e7eb;}',
+      '.spx-storage-usage-row.spx-storage-warning{border-color:#fbbf24;background:#fffbeb;}',
+      '.spx-storage-usage-row.spx-storage-danger{border-color:#f87171;background:#fef2f2;}',
+      '.spx-storage-usage-main{min-width:0;display:block;}',
+      '.spx-storage-usage-main b{display:block;color:#0f172a;font-size:12px;line-height:1.3;}',
+      '.spx-storage-usage-main em{display:block;margin-top:2px;color:#94a3b8;font-style:normal;font-size:11px;line-height:1.25;word-break:break-all;}',
+      '.spx-storage-usage-meta{flex:none;text-align:right;color:#334155;font-weight:800;line-height:1.45;white-space:nowrap;}',
+      '.spx-storage-suggestions{margin:6px 0 8px;padding:7px 8px;border-radius:7px;background:#fff;border:1px solid #e5e7eb;color:#475569;font-size:12px;line-height:1.45;}',
       '.spx-watch-center{position:fixed;right:66px;bottom:18px;width:min(460px,calc(100vw - 24px));max-height:80vh;overflow:auto;z-index:100000;background:var(--spx-panel);border:1px solid var(--spx-line);box-shadow:0 12px 36px rgba(15,23,42,.24);border-radius:8px;padding:12px;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;}',
       '.spx-resource-panel{width:min(560px,calc(100vw - 24px));}',
       '.spx-watch-center[hidden]{display:none!important;}',
@@ -6331,6 +6353,7 @@
       '<button data-action="export-backup">导出备份</button>',
       '<button data-action="import-backup">导入备份</button>',
       '<button data-action="show-data-health">数据健康</button>',
+      '<button data-action="show-storage-usage">本地体积</button>',
       '<button data-action="clear-read">清空已读</button>',
       '<button data-action="clear-progress">清空进度</button>',
       settingKeys.indexOf('autoBuyPost') !== -1 ? '<button data-action="clear-auto-buy">清空自动购买记录</button>' : '',
@@ -6394,6 +6417,37 @@
       };
     }
 
+    function appendStorageUsageDetails(box, storageReport) {
+      box.appendChild(createEl('strong', '', '本地数据体积'));
+      box.appendChild(createEl('div', 'spx-help', formatStorageUsageSummary(storageReport)));
+      var usageList = createEl('div', 'spx-storage-usage');
+      storageReport.entries.forEach(function appendStorageEntry(entry) {
+        var row = createEl('div', 'spx-storage-usage-row spx-storage-' + getStorageUsageLevel(entry));
+        var main = createEl('span', 'spx-storage-usage-main');
+        main.appendChild(createEl('b', '', entry.label));
+        main.appendChild(createEl('em', '', entry.key));
+        row.appendChild(main);
+        row.appendChild(createEl('span', 'spx-storage-usage-meta', entry.size + ' · ' + formatStorageUsageLimit(entry)));
+        usageList.appendChild(row);
+      });
+      box.appendChild(usageList);
+      box.appendChild(createEl('div', 'spx-storage-suggestions', '清理建议：' + formatStorageUsageWarnings(storageReport)));
+    }
+
+    function appendDataHealthActions(box, report, refreshAction) {
+      var actions = createEl('div', 'spx-row');
+      var refresh = createEl('button', '', refreshAction === 'refresh-storage-usage' ? '刷新体积' : '刷新统计');
+      var cleanup = createEl('button', '', '清理重复/过期');
+      refresh.type = 'button';
+      cleanup.type = 'button';
+      refresh.dataset.action = refreshAction || 'refresh-data-health';
+      cleanup.dataset.action = 'cleanup-data-health';
+      cleanup.disabled = !report.cleanupCount;
+      actions.appendChild(refresh);
+      actions.appendChild(cleanup);
+      box.appendChild(actions);
+    }
+
     function renderDataHealthPanel(message) {
       var box = qs('[data-role="data-health"]', panel);
       if (!box) return;
@@ -6405,27 +6459,22 @@
       box.appendChild(createEl('strong', '', '本地数据健康'));
       box.appendChild(createEl('div', 'spx-help', formatDataHealthSummary(report)));
       box.appendChild(createEl('div', 'spx-help', formatDataHealthWarnings(report)));
-      box.appendChild(createEl('strong', '', '本地存储体积'));
-      box.appendChild(createEl('div', 'spx-help', formatStorageUsageSummary(storageReport)));
-      var usageList = createEl('div', 'spx-storage-usage');
-      storageReport.entries.forEach(function appendStorageEntry(entry) {
-        usageList.appendChild(createEl('div', '', formatStorageUsageEntry(entry)));
-      });
-      box.appendChild(usageList);
-      box.appendChild(createEl('div', 'spx-help', formatStorageUsageWarnings(storageReport)));
+      appendStorageUsageDetails(box, storageReport);
       if (message) box.appendChild(createEl('div', 'spx-help', message));
+      appendDataHealthActions(box, report, 'refresh-data-health');
+    }
 
-      var actions = createEl('div', 'spx-row');
-      var refresh = createEl('button', '', '刷新统计');
-      var cleanup = createEl('button', '', '清理重复/过期');
-      refresh.type = 'button';
-      cleanup.type = 'button';
-      refresh.dataset.action = 'refresh-data-health';
-      cleanup.dataset.action = 'cleanup-data-health';
-      cleanup.disabled = !report.cleanupCount;
-      actions.appendChild(refresh);
-      actions.appendChild(cleanup);
-      box.appendChild(actions);
+    function renderStorageUsagePanel(message) {
+      var box = qs('[data-role="data-health"]', panel);
+      if (!box) return;
+      var payload = getCurrentDataHealthPayload();
+      var report = collectDataHealthReport(payload);
+      var storageReport = collectStorageUsageReport(payload);
+      box.hidden = false;
+      box.textContent = '';
+      appendStorageUsageDetails(box, storageReport);
+      if (message) box.appendChild(createEl('div', 'spx-help', message));
+      appendDataHealthActions(box, report, 'refresh-storage-usage');
     }
 
     function applyDataHealthCleanup(button) {
@@ -6460,6 +6509,9 @@
       }
       if (action === 'show-data-health' || action === 'refresh-data-health') {
         renderDataHealthPanel();
+      }
+      if (action === 'show-storage-usage' || action === 'refresh-storage-usage') {
+        renderStorageUsagePanel();
       }
       if (action === 'cleanup-data-health') {
         applyDataHealthCleanup(event.target);
@@ -7115,6 +7167,8 @@
     formatStorageBytes: formatStorageBytes,
     formatStorageUsageSummary: formatStorageUsageSummary,
     formatStorageUsageWarnings: formatStorageUsageWarnings,
+    formatStorageUsageLimit: formatStorageUsageLimit,
+    getStorageUsageLevel: getStorageUsageLevel,
     formatStorageUsageEntry: formatStorageUsageEntry,
     formatBackupImportPreview: formatBackupImportPreview,
     formatReadProgress: formatReadProgress,
