@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.1\.12/);
+assert.match(source, /@version\s+0\.2\.0/);
 assert.match(source, /South Plus 工具箱/);
 assert.match(source, /spx-toolbox-action/);
 assert.match(source, /隐藏广告/);
@@ -12,6 +12,9 @@ assert.match(source, /本地存储体积/);
 assert.match(source, /spx-storage-usage/);
 assert.match(source, /加载更多图片/);
 assert.match(source, /spx-preview-load-more/);
+assert.match(source, /资源工作台/);
+assert.doesNotMatch(source, /资源中心/);
+assert.match(source, /select-visible-resources/);
 const emptyRoot = { querySelector: function querySelector() { return null; }, querySelectorAll: function querySelectorAll() { return []; } };
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('adBlock'), false);
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('homeDashboard'), false);
@@ -191,30 +194,50 @@ const savedResourceLibrary = enhancer.saveResourceLinksToLibrary(
       accessCode: '1234',
       status: 'todo',
       sourceTitle: '旧来源',
+      note: '旧备注',
+      tags: ['旧标签'],
       savedAt: 100,
       updatedAt: 100,
     },
   },
-  { sourceTitle: '资源帖', sourceUrl: 'https://south-plus.org/read.php?tid=99' },
+  { sourceTitle: '资源帖', sourceUrl: 'https://south-plus.org/read.php?tid=99', note: '自动保存', tags: ['合集'] },
   5000
 );
 assert.equal(savedResourceLibrary.saved, 3);
 const resourceCenterEntries = enhancer.getResourceCenterEntries(savedResourceLibrary.resources);
 assert.deepEqual(
   resourceCenterEntries.map(function mapResourceCenter(entry) {
-    return [entry.type, entry.provider, entry.status, entry.accessCode, entry.sourceTitle];
+    return [entry.type, entry.provider, entry.status, entry.accessCode, entry.sourceTitle, entry.note, entry.tagText];
   }),
   [
-    ['cloud', '百度网盘', 'todo', '1234', '资源帖'],
-    ['torrent', '种子', 'saved', '', '资源帖'],
-    ['cloud', '夸克网盘', 'saved', '', '资源帖'],
+    ['cloud', '百度网盘', 'todo', '1234', '资源帖', '自动保存', '旧标签 / 合集'],
+    ['torrent', '种子', 'saved', '', '资源帖', '自动保存', '合集'],
+    ['cloud', '夸克网盘', 'saved', '', '资源帖', '自动保存', '合集'],
   ]
 );
+assert.deepEqual(enhancer.normalizeResourceTags(' 合集，待下载\n合集 '), ['合集', '待下载']);
 assert.deepEqual(
   enhancer.filterResourceCenterEntries(resourceCenterEntries, { query: '1234', filter: 'todo', provider: '百度网盘' }).map(function mapResource(entry) {
     return entry.url;
   }),
   ['https://pan.baidu.com/s/abc?pwd=1234']
+);
+assert.deepEqual(
+  enhancer.filterResourceCenterEntries(resourceCenterEntries, { tag: '合集' }).map(function mapResource(entry) {
+    return entry.url;
+  }),
+  [
+    'https://pan.baidu.com/s/abc?pwd=1234',
+    'https://files.example.com/a.torrent',
+    'https://pan.quark.cn/s/qwer',
+  ]
+);
+const resourceGroups = enhancer.groupResourceCenterEntries(resourceCenterEntries);
+assert.deepEqual(
+  resourceGroups.map(function mapResourceGroup(group) {
+    return [group.label, group.entries.length, group.sourceUrl];
+  }),
+  [['资源帖', 3, 'https://south-plus.org/read.php?tid=99']]
 );
 const downloadQueueEntries = enhancer.getResourceDownloadQueueEntries(resourceCenterEntries);
 assert.deepEqual(
@@ -232,8 +255,39 @@ assert.equal(
     '提取码：1234',
     '来源：资源帖 · B1F · bob',
     '来源链接：https://south-plus.org/read.php?tid=99',
+    '备注：自动保存',
+    '标签：旧标签 / 合集',
     '状态：待下载',
   ].join('\n')
+);
+assert.equal(
+  enhancer.formatResourceMarkdownList(downloadQueueEntries),
+  [
+    '1. **百度网盘**：https://pan.baidu.com/s/abc?pwd=1234',
+    '   - 提取码：1234',
+    '   - 来源：资源帖 · B1F · bob',
+    '   - 来源链接：https://south-plus.org/read.php?tid=99',
+    '   - 备注：自动保存',
+    '   - 标签：旧标签 / 合集',
+    '   - 状态：待下载',
+  ].join('\n')
+);
+const selectionState = {};
+enhancer.setResourceSelection(resourceCenterEntries.slice(0, 2), selectionState, true);
+assert.deepEqual(
+  enhancer.getSelectedResourceKeys(resourceCenterEntries, selectionState),
+  ['cloud|https://pan.baidu.com/s/abc?pwd=1234', 'torrent|https://files.example.com/a.torrent']
+);
+assert.deepEqual(
+  enhancer.getResourceEntriesByKeys(resourceCenterEntries, ['torrent|https://files.example.com/a.torrent']).map(function mapSelectedResource(entry) {
+    return entry.url;
+  }),
+  ['https://files.example.com/a.torrent']
+);
+enhancer.setResourceSelection(resourceCenterEntries.slice(0, 1), selectionState, false);
+assert.deepEqual(
+  enhancer.getSelectedResourceKeys(resourceCenterEntries, selectionState),
+  ['torrent|https://files.example.com/a.torrent']
 );
 assert.deepEqual(
   Object.keys(enhancer.pruneResourceLibrary({

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0 - 2026-07-30
+
+### Added
+
+- 资源中心升级为资源工作台：支持资源勾选、多选批量复制、批量标记待下载 / 已处理 / 失效，以及选中资源备注和标签维护。
+- 新增来源帖分组视图，可按帖子聚合资源，并支持选择分组、复制分组和复制 Markdown 清单。
+- 资源记录新增备注和标签展示，搜索与筛选可覆盖备注 / 标签，下载清单和 Markdown 清单同步输出备注、标签和状态。
+
+### Changed
+
+- 资源工作台顶部统计会显示待下载、已选数量和来源分组状态，便于大批资源整理。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.1.12 - 2026-07-29
 
 ### Changed

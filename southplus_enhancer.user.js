@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.1.12
+// @version      0.2.0
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -948,6 +948,14 @@
       .join('\n');
   }
 
+  function normalizeResourceTags(value) {
+    return normalizeListValue(value, parseTagList);
+  }
+
+  function formatResourceTags(tags) {
+    return formatTags(normalizeResourceTags(tags));
+  }
+
   function getJumpResourceLinks(links) {
     return dedupeResourceLinks(links).filter(function keepJumpResource(item) {
       return item && /^(?:magnet|ed2k|torrent|archive|cloud|external)$/.test(item.type || '');
@@ -970,7 +978,27 @@
         if (item.accessCode) lines.push('提取码：' + item.accessCode);
         if (source) lines.push('来源：' + source);
         if (item.sourceUrl) lines.push('来源链接：' + item.sourceUrl);
+        if (item.note) lines.push('备注：' + item.note);
+        if (formatResourceTags(item.tags)) lines.push('标签：' + formatResourceTags(item.tags));
         if (item.status) lines.push('状态：' + getResourceStatusLabel(item.status));
+        return lines.join('\n');
+      })
+      .join('\n\n');
+  }
+
+  function formatResourceMarkdownList(entries) {
+    return getJumpResourceLinks(entries)
+      .map(function formatResourceMarkdownItem(item, index) {
+        var lines = [
+          (index + 1) + '. **' + (item.label || getResourceDisplayLabel(item)) + '**：' + item.url,
+        ];
+        var source = [item.sourceTitle, item.floorLabel, item.author].filter(Boolean).join(' · ');
+        if (item.accessCode) lines.push('   - 提取码：' + item.accessCode);
+        if (source) lines.push('   - 来源：' + source);
+        if (item.sourceUrl) lines.push('   - 来源链接：' + item.sourceUrl);
+        if (item.note) lines.push('   - 备注：' + item.note);
+        if (formatResourceTags(item.tags)) lines.push('   - 标签：' + formatResourceTags(item.tags));
+        if (item.status) lines.push('   - 状态：' + getResourceStatusLabel(item.status));
         return lines.join('\n');
       })
       .join('\n\n');
@@ -1031,6 +1059,8 @@
       floorLabel: String(source.floorLabel || ''),
       author: String(source.author || ''),
       text: String(source.text || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+      note: String(source.note || source.memo || '').replace(/\s+/g, ' ').trim().slice(0, 160),
+      tags: normalizeResourceTags(source.tags),
       status: normalizeResourceStatus(source.status),
       savedAt: savedAt,
       updatedAt: updatedAt,
@@ -1051,6 +1081,8 @@
       floorLabel: source.floorLabel || context.floorLabel,
       author: source.author || context.author,
       text: source.text,
+      note: source.note || context.note,
+      tags: mergeTagLists(source.tags, context.tags),
       status: source.status || context.status || 'saved',
       savedAt: now,
       updatedAt: now,
@@ -1069,6 +1101,8 @@
       floorLabel: next.floorLabel || previous.floorLabel || '',
       author: next.author || previous.author || '',
       text: next.text || previous.text || '',
+      note: next.note || previous.note || '',
+      tags: mergeTagLists(previous.tags, next.tags),
       updatedAt: Math.max(Number(previous.updatedAt) || 0, Number(next.updatedAt) || 0),
     });
   }
@@ -1119,6 +1153,7 @@
         return Object.assign({}, item, {
           statusLabel: getResourceStatusLabel(item.status),
           sourceText: [item.sourceTitle, item.floorLabel, item.author].filter(Boolean).join(' · '),
+          tagText: formatResourceTags(item.tags),
           providerKey: (item.type === 'cloud' ? item.provider : item.label).toLowerCase(),
         });
       })
@@ -1146,10 +1181,47 @@
       });
   }
 
+  function getResourceSourceGroupKey(entry) {
+    var item = entry || {};
+    return String(item.sourceUrl || item.sourceTitle || 'unknown');
+  }
+
+  function getResourceSourceGroupLabel(entry) {
+    var item = entry || {};
+    return String(item.sourceTitle || item.sourceUrl || '未知来源');
+  }
+
+  function groupResourceCenterEntries(entries) {
+    var groups = {};
+    var order = [];
+    (entries || []).forEach(function collectResourceGroup(entry) {
+      if (!entry) return;
+      var key = getResourceSourceGroupKey(entry);
+      if (!groups[key]) {
+        groups[key] = {
+          key: key,
+          label: getResourceSourceGroupLabel(entry),
+          sourceUrl: entry.sourceUrl || '',
+          entries: [],
+          updatedAt: 0,
+        };
+        order.push(key);
+      }
+      groups[key].entries.push(entry);
+      groups[key].updatedAt = Math.max(groups[key].updatedAt, Number(entry.updatedAt || entry.savedAt) || 0);
+    });
+    return order.map(function mapResourceGroup(key) {
+      return groups[key];
+    }).sort(function sortResourceGroups(left, right) {
+      return right.updatedAt - left.updatedAt;
+    });
+  }
+
   function filterResourceCenterEntries(entries, options) {
     var query = normalizeCenterSearchQuery(options && options.query);
     var status = String((options && options.filter) || 'all');
     var provider = String((options && options.provider) || 'all').toLowerCase();
+    var tag = String((options && options.tag) || 'all').toLowerCase();
     return (entries || []).filter(function matchResourceEntry(entry) {
       if (!matchesCenterSearch(query, [
         entry.url,
@@ -1161,10 +1233,53 @@
         entry.author,
         entry.accessCode,
         entry.text,
+        entry.note,
+        entry.tagText,
       ])) return false;
       if (status !== 'all' && entry.status !== status) return false;
       if (provider !== 'all' && entry.providerKey !== provider) return false;
+      if (tag !== 'all' && normalizeResourceTags(entry.tags).map(function lowerResourceTag(item) {
+        return item.toLowerCase();
+      }).indexOf(tag) === -1) return false;
       return true;
+    });
+  }
+
+  function ensureResourceSelection(panelState) {
+    if (!panelState.selectedResources || typeof panelState.selectedResources !== 'object') {
+      panelState.selectedResources = {};
+    }
+    return panelState.selectedResources;
+  }
+
+  function getSelectedResourceKeys(entries, panelState) {
+    var selection = ensureResourceSelection(panelState || {});
+    var valid = {};
+    (entries || []).forEach(function collectValidResourceKey(entry) {
+      if (entry && entry.key) valid[entry.key] = true;
+    });
+    return Object.keys(selection).filter(function keepSelectedResourceKey(key) {
+      return !!selection[key] && !!valid[key];
+    });
+  }
+
+  function setResourceSelection(entries, panelState, selected) {
+    var selection = ensureResourceSelection(panelState || {});
+    (entries || []).forEach(function setResourceSelected(entry) {
+      if (!entry || !entry.key) return;
+      if (selected) selection[entry.key] = true;
+      else delete selection[entry.key];
+    });
+    return selection;
+  }
+
+  function getResourceEntriesByKeys(entries, keys) {
+    var selected = {};
+    (keys || []).forEach(function keepKey(key) {
+      selected[key] = true;
+    });
+    return (entries || []).filter(function isSelectedResourceEntry(entry) {
+      return entry && selected[entry.key];
     });
   }
 
@@ -2348,6 +2463,9 @@
       '.spx-watch-list{display:flex;flex-direction:column;gap:8px;}',
       '.spx-watch-item{box-sizing:border-box;padding:9px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;}',
       '.spx-watch-title{display:block;margin-bottom:4px;color:#075985!important;font-size:14px;font-weight:800;line-height:1.35;text-decoration:none;}',
+      '.spx-resource-title-row{display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;}',
+      '.spx-resource-title-row .spx-watch-title{min-width:0;margin-bottom:0;word-break:break-all;}',
+      '.spx-resource-select{flex:none;width:16px;height:16px;margin:2px 0 0;accent-color:var(--spx-accent);}',
       '.spx-resource-url{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#075985!important;font-size:12px;line-height:1.35;text-decoration:none;}',
       '.spx-auto-resource-jump{box-sizing:border-box;width:min(1680px,calc(100vw - 64px));margin:10px auto;padding:10px 12px;border:1px solid #99f6e4;border-radius:8px;background:#f0fdfa;color:#0f766e;font:13px/1.45 Arial,Helvetica,sans-serif;}',
       '.spx-auto-resource-jump strong{display:block;margin-bottom:6px;color:#0f766e;font-size:14px;}',
@@ -2360,8 +2478,11 @@
       '.spx-watch-actions button:hover,.spx-watch-actions a:hover,.spx-watch-center-header button:hover{border-color:var(--spx-accent);color:var(--spx-accent);}',
       '.spx-watch-empty{padding:14px 2px;color:var(--spx-sub);font-size:13px;}',
       '.spx-status-badge{display:inline-block;margin-right:6px;padding:1px 6px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:800;}',
+      '.spx-status-badge.spx-status-saved{background:#e0f2fe;color:#075985;}',
+      '.spx-status-badge.spx-status-todo{background:#fef3c7;color:#92400e;}',
       '.spx-status-badge.spx-status-failed{background:#fee2e2;color:#b91c1c;}',
       '.spx-status-badge.spx-status-done{background:#dcfce7;color:#15803d;}',
+      '.spx-status-badge.spx-status-invalid{background:#fee2e2;color:#b91c1c;}',
       '.spx-quick-reply{box-sizing:border-box;margin:10px 0 12px;padding:10px 12px;border:1px solid var(--spx-line);border-radius:8px;background:#f8fafc;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;}',
       '.spx-quick-reply-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;color:var(--spx-sub);}',
       '.spx-quick-reply-header strong{color:var(--spx-text);font-size:14px;}',
@@ -2704,6 +2825,18 @@
       });
       controls.appendChild(providerSelect);
     }
+    if ((config.views || []).length) {
+      var viewSelect = createEl('select');
+      viewSelect.dataset.spxCenterView = '1';
+      (config.views || []).forEach(function appendViewOption(item) {
+        var option = createEl('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        option.selected = String(panelState.view || 'list') === String(item.value);
+        viewSelect.appendChild(option);
+      });
+      controls.appendChild(viewSelect);
+    }
     if ((config.tags || []).length) {
       var tagSelect = createEl('select');
       tagSelect.dataset.spxCenterTag = '1';
@@ -2731,6 +2864,9 @@
     var visibleEntries = typeof options.filterEntries === 'function'
       ? options.filterEntries(entries, panelState)
       : entries.slice();
+    var displayEntries = typeof options.transformVisibleEntries === 'function'
+      ? options.transformVisibleEntries(visibleEntries, entries, panelState)
+      : visibleEntries;
     panel.textContent = '';
     var header = createEl('div', 'spx-watch-center-header');
     var title = createEl('div');
@@ -2762,14 +2898,14 @@
       return;
     }
 
-    if (!visibleEntries.length) {
+    if (!displayEntries.length) {
       panel.appendChild(createEl('div', 'spx-watch-empty', options.emptyFilteredText || '没有匹配结果。'));
       panel.scrollTop = scrollTop;
       return;
     }
 
     var list = createEl('div', 'spx-watch-list');
-    visibleEntries.forEach(function appendEntry(entry) {
+    displayEntries.forEach(function appendEntry(entry) {
       var item = createEl('div', 'spx-watch-item');
       var itemData = options.getItemData ? options.getItemData(entry) : null;
       if (itemData) {
@@ -2852,6 +2988,9 @@
       } else if (target.dataset.spxCenterProvider === '1') {
         if (state.provider === target.value) return;
         state.provider = target.value;
+      } else if (target.dataset.spxCenterView === '1') {
+        if (state.view === target.value) return;
+        state.view = target.value;
       } else {
         return;
       }
@@ -3296,20 +3435,35 @@
     state.resources = pruneResourceLibrary(state.resources || {});
     var entries = getResourceCenterEntries(state.resources);
     renderCenterPanel(panel, {
-      title: '资源中心',
-      stateDefaults: { query: '', filter: 'all', provider: 'all' },
+      title: '资源工作台',
+      stateDefaults: { query: '', filter: 'all', provider: 'all', tag: 'all', view: 'list', selectedResources: {} },
       summary: function summary(visibleEntries, entries, panelState) {
         var queueCount = getResourceDownloadQueueEntries(entries).length;
+        var selectedCount = getSelectedResourceKeys(entries, panelState).length;
         return (
           (isCenterFiltered(panelState) ? (visibleEntries.length + ' / ') : '') +
           entries.length +
           ' 条资源' +
-          (queueCount ? (' · 待下载 ' + queueCount + ' 条') : '')
+          (queueCount ? (' · 待下载 ' + queueCount + ' 条') : '') +
+          (selectedCount ? (' · 已选 ' + selectedCount + ' 条') : '') +
+          (panelState.view === 'source' ? ' · 来源分组' : '')
         );
       },
       headerActions: function headerActions(visibleEntries, entries, panelState) {
         var actions = [];
+        var selectedKeys = getSelectedResourceKeys(entries, panelState);
         var visibleQueue = getResourceDownloadQueueEntries(visibleEntries);
+        if (visibleEntries.length) actions.push({ text: '全选筛选', dataset: { action: 'select-visible-resources' } });
+        if (selectedKeys.length) {
+          actions.push({ text: '取消选择', dataset: { action: 'clear-resource-selection' } });
+          actions.push({ text: '复制选中', dataset: { action: 'copy-selected-resources' } });
+          actions.push({ text: 'Markdown', dataset: { action: 'copy-selected-resource-markdown' } });
+          actions.push({ text: '选中待下载', dataset: { action: 'mark-selected-resources', status: 'todo' } });
+          actions.push({ text: '选中已处理', dataset: { action: 'mark-selected-resources', status: 'done' } });
+          actions.push({ text: '选中失效', dataset: { action: 'mark-selected-resources', status: 'invalid' } });
+          actions.push({ text: '选中标签', dataset: { action: 'tag-selected-resources' } });
+          actions.push({ text: '选中备注', dataset: { action: 'note-selected-resources' } });
+        }
         if (visibleEntries.length) actions.push({ text: '复制筛选', dataset: { action: 'copy-visible-resources' } });
         if (visibleQueue.length) actions.push({ text: '复制待下载', dataset: { action: 'copy-download-queue' } });
         if (visibleEntries.length) actions.push({ text: '导出清单', dataset: { action: 'export-visible-resources' } });
@@ -3321,7 +3475,7 @@
         return actions;
       },
       controls: {
-        searchPlaceholder: '搜索资源、帖子、作者或提取码',
+        searchPlaceholder: '搜索资源、帖子、作者、备注或标签',
         filters: [
           { value: 'all', label: '全部状态' },
           { value: 'saved', label: RESOURCE_STATUSES.saved },
@@ -3331,34 +3485,90 @@
         ],
         providers: getResourceProviderOptions(entries),
         providerAllLabel: '全部类型',
+        tags: getCenterTagOptions(entries),
+        views: [
+          { value: 'list', label: '列表视图' },
+          { value: 'source', label: '按来源帖' },
+        ],
       },
       emptyText: '还没有保存的资源。可在阅读页资源面板或自动购买成功后存入。',
       emptyFilteredText: '没有匹配的资源。',
       entries: entries,
       filterEntries: filterResourceCenterEntries,
+      transformVisibleEntries: function transformVisibleEntries(visibleEntries, entries, panelState) {
+        return panelState.view === 'source' ? groupResourceCenterEntries(visibleEntries) : visibleEntries;
+      },
       getItemData: function getItemData(entry) {
-        return { key: entry.key };
+        return entry.entries ? { resourceGroupKey: entry.key } : { key: entry.key };
       },
       createTitle: function createTitle(entry) {
-        return createCenterTitleElement({
+        if (entry.entries) {
+          return createCenterTitleElement({
+            text: entry.label + ' · ' + entry.entries.length + ' 条资源',
+            href: entry.sourceUrl,
+            badgeText: '来源分组',
+            badgeClass: 'spx-status-saved',
+            title: entry.label,
+          });
+        }
+        var titleRow = createEl('div', 'spx-resource-title-row');
+        var select = createEl('input', 'spx-resource-select');
+        select.type = 'checkbox';
+        select.dataset.action = 'toggle-resource-selection';
+        select.dataset.key = entry.key;
+        select.checked = !!ensureResourceSelection(ensureCenterPanelState(panel, { selectedResources: {} }))[entry.key];
+        select.title = '选择资源';
+        titleRow.appendChild(select);
+        titleRow.appendChild(createCenterTitleElement({
           text: entry.label + ' · ' + entry.url,
           href: entry.url,
           badgeText: entry.statusLabel,
           badgeClass: 'spx-status-' + entry.status,
           title: entry.url,
-        });
+        }));
+        return titleRow;
       },
       createMeta: function createMeta(entry) {
+        if (entry.entries) {
+          var typeCounts = {};
+          entry.entries.forEach(function countGroupResource(item) {
+            var label = item.label || getResourceDisplayLabel(item);
+            typeCounts[label] = (typeCounts[label] || 0) + 1;
+          });
+          var typeText = Object.keys(typeCounts).map(function formatTypeCount(label) {
+            return label + ' ' + typeCounts[label];
+          }).join(' / ');
+          return [
+            typeText,
+            entry.updatedAt ? ('最新 ' + formatShortTime(entry.updatedAt)) : '',
+            entry.sourceUrl ? entry.sourceUrl : '',
+          ].filter(Boolean).join(' · ') || '暂无来源详情';
+        }
         var metaParts = [];
         if (entry.savedAt) metaParts.push('保存 ' + formatShortTime(entry.savedAt));
         if (entry.provider) metaParts.push(entry.provider);
         if (entry.sourceText) metaParts.push(entry.sourceText);
         if (entry.accessCode) metaParts.push('提取码 ' + entry.accessCode);
+        if (entry.tagText) metaParts.push('标签 ' + entry.tagText);
+        if (entry.note) metaParts.push('备注 ' + entry.note);
         return metaParts.join(' · ') || '暂无来源';
       },
       createActions: function createActions(entry) {
+        if (entry.entries) {
+          var groupActions = [
+            { text: '选择分组', dataset: { action: 'select-resource-group', sourceKey: entry.key } },
+            { text: '复制分组', dataset: { action: 'copy-resource-group', sourceKey: entry.key } },
+            { text: '分组 Markdown', dataset: { action: 'copy-resource-group-markdown', sourceKey: entry.key } },
+            { text: '待下载', dataset: { action: 'mark-resource-group', sourceKey: entry.key, status: 'todo' } },
+            { text: '已处理', dataset: { action: 'mark-resource-group', sourceKey: entry.key, status: 'done' } },
+          ];
+          if (entry.sourceUrl) groupActions.push({ text: '来源帖', href: entry.sourceUrl });
+          return groupActions;
+        }
         var actions = [
           { text: '复制', dataset: { action: 'copy-resource', key: entry.key } },
+          { text: '备注', dataset: { action: 'note-resource', key: entry.key } },
+          { text: '标签', dataset: { action: 'tag-resource', key: entry.key } },
           { text: '待下载', dataset: { action: 'mark-resource-todo', key: entry.key } },
           { text: '已处理', dataset: { action: 'mark-resource-done', key: entry.key } },
           { text: '失效', dataset: { action: 'mark-resource-invalid', key: entry.key } },
@@ -3369,6 +3579,62 @@
         return actions;
       },
     });
+  }
+
+  function getVisibleResourceCenterEntries(panel, state) {
+    return filterResourceCenterEntries(
+      getResourceCenterEntries(state.resources),
+      ensureCenterPanelState(panel, { query: '', filter: 'all', provider: 'all', tag: 'all', view: 'list', selectedResources: {} })
+    );
+  }
+
+  function getResourceGroupEntriesFromPanel(panel, state, sourceKey) {
+    var groups = groupResourceCenterEntries(getVisibleResourceCenterEntries(panel, state));
+    var group = groups.filter(function matchResourceGroup(item) {
+      return item.key === sourceKey;
+    })[0];
+    return group ? group.entries : [];
+  }
+
+  function updateResourceRecords(state, keys, updater) {
+    var now = Date.now();
+    (keys || []).forEach(function updateResourceKey(key) {
+      if (!state.resources[key]) return;
+      var record = normalizeResourceRecord(state.resources[key], key);
+      if (!record) return;
+      updater(record);
+      record.updatedAt = now;
+      state.resources[key] = record;
+    });
+  }
+
+  function promptResourceTags(currentTags) {
+    return typeof window.prompt === 'function'
+      ? window.prompt('编辑标签，多个标签用逗号或换行分隔', normalizeResourceTags(currentTags).join('，'))
+      : null;
+  }
+
+  function promptResourceNote(currentNote) {
+    return typeof window.prompt === 'function'
+      ? window.prompt('编辑备注', String(currentNote || ''))
+      : null;
+  }
+
+  function getResourceEntryKeys(entries) {
+    return (entries || []).map(function mapResourceEntryKey(entry) {
+      return entry && entry.key;
+    }).filter(Boolean);
+  }
+
+  function copyResourceEntriesToClipboard(entries, formatter, target, successText, restoreText) {
+    copyTextToClipboard(formatter(entries)).then(
+      function showCopySuccess() {
+        setTemporaryText(target, successText, restoreText);
+      },
+      function showCopyFailure() {
+        setTemporaryText(target, '复制失败', restoreText);
+      }
+    );
   }
 
   function refreshResourceCenter() {
@@ -3384,7 +3650,7 @@
   function createResourceCenterPanel(settings, state) {
     return createCenterPanel({
       id: 'spx-resource-center',
-      stateDefaults: { query: '', filter: 'all', provider: 'all' },
+      stateDefaults: { query: '', filter: 'all', provider: 'all', tag: 'all', view: 'list', selectedResources: {} },
       render: function render(panel) {
         renderResourceCenter(panel, state);
       },
@@ -3394,11 +3660,87 @@
           setCenterPanelHidden(panel, true, '[data-spx-resource-center-button="1"]');
           return;
         }
-        if (action === 'copy-visible-resources') {
-          var visibleForCopy = filterResourceCenterEntries(
-            getResourceCenterEntries(state.resources),
-            ensureCenterPanelState(panel, { query: '', filter: 'all', provider: 'all' })
+        var panelState = ensureCenterPanelState(panel, { query: '', filter: 'all', provider: 'all', tag: 'all', view: 'list', selectedResources: {} });
+        var allEntries = getResourceCenterEntries(state.resources);
+        var visibleEntriesNow = getVisibleResourceCenterEntries(panel, state);
+        var selectedKeys = getSelectedResourceKeys(allEntries, panelState);
+        var selectedEntries = getResourceEntriesByKeys(allEntries, selectedKeys);
+        if (action === 'toggle-resource-selection') {
+          var toggleKey = target.dataset.key;
+          if (!toggleKey) return;
+          var selection = ensureResourceSelection(panelState);
+          if (target.checked) selection[toggleKey] = true;
+          else delete selection[toggleKey];
+          renderResourceCenter(panel, state);
+          return;
+        }
+        if (action === 'select-visible-resources') {
+          setResourceSelection(visibleEntriesNow, panelState, true);
+          renderResourceCenter(panel, state);
+          return;
+        }
+        if (action === 'clear-resource-selection') {
+          panelState.selectedResources = {};
+          renderResourceCenter(panel, state);
+          return;
+        }
+        if (action === 'select-resource-group') {
+          setResourceSelection(getResourceGroupEntriesFromPanel(panel, state, target.dataset.sourceKey), panelState, true);
+          renderResourceCenter(panel, state);
+          return;
+        }
+        if (action === 'copy-selected-resources') {
+          copyResourceEntriesToClipboard(selectedEntries, formatResourceLinks, target, '已复制 ' + selectedEntries.length + ' 条', '复制选中');
+          return;
+        }
+        if (action === 'copy-selected-resource-markdown') {
+          copyResourceEntriesToClipboard(selectedEntries, formatResourceMarkdownList, target, '已复制 Markdown', 'Markdown');
+          return;
+        }
+        if (action === 'copy-resource-group' || action === 'copy-resource-group-markdown') {
+          var groupEntriesForCopy = getResourceGroupEntriesFromPanel(panel, state, target.dataset.sourceKey);
+          copyResourceEntriesToClipboard(
+            groupEntriesForCopy,
+            action === 'copy-resource-group-markdown' ? formatResourceMarkdownList : formatResourceLinks,
+            target,
+            action === 'copy-resource-group-markdown' ? '已复制 Markdown' : ('已复制 ' + groupEntriesForCopy.length + ' 条'),
+            action === 'copy-resource-group-markdown' ? '分组 Markdown' : '复制分组'
           );
+          return;
+        }
+        if (action === 'mark-selected-resources' || action === 'mark-resource-group') {
+          var statusKeys = action === 'mark-resource-group'
+            ? getResourceEntryKeys(getResourceGroupEntriesFromPanel(panel, state, target.dataset.sourceKey))
+            : selectedKeys;
+          updateResourceRecords(state, statusKeys, function markSelectedResource(record) {
+            record.status = normalizeResourceStatus(target.dataset.status);
+          });
+          saveResourceCenterState(state);
+          renderResourceCenter(panel, state);
+          return;
+        }
+        if (action === 'tag-selected-resources') {
+          var selectedTagText = promptResourceTags([]);
+          if (selectedTagText === null) return;
+          updateResourceRecords(state, selectedKeys, function tagSelectedResource(record) {
+            record.tags = parseTagList(selectedTagText);
+          });
+          saveResourceCenterState(state);
+          renderResourceCenter(panel, state);
+          return;
+        }
+        if (action === 'note-selected-resources') {
+          var selectedNoteText = promptResourceNote('');
+          if (selectedNoteText === null) return;
+          updateResourceRecords(state, selectedKeys, function noteSelectedResource(record) {
+            record.note = String(selectedNoteText || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+          });
+          saveResourceCenterState(state);
+          renderResourceCenter(panel, state);
+          return;
+        }
+        if (action === 'copy-visible-resources') {
+          var visibleForCopy = visibleEntriesNow;
           copyTextToClipboard(formatResourceLinks(visibleForCopy)).then(
             function showCopySuccess() {
               setTemporaryText(target, '已复制 ' + visibleForCopy.length + ' 条', '复制筛选');
@@ -3410,10 +3752,7 @@
           return;
         }
         if (action === 'copy-download-queue') {
-          var visibleQueueForCopy = getResourceDownloadQueueEntries(filterResourceCenterEntries(
-            getResourceCenterEntries(state.resources),
-            ensureCenterPanelState(panel, { query: '', filter: 'all', provider: 'all' })
-          ));
+          var visibleQueueForCopy = getResourceDownloadQueueEntries(visibleEntriesNow);
           copyTextToClipboard(formatResourceDownloadList(visibleQueueForCopy)).then(
             function showQueueCopySuccess() {
               setTemporaryText(target, '已复制 ' + visibleQueueForCopy.length + ' 条', '复制待下载');
@@ -3425,10 +3764,7 @@
           return;
         }
         if (action === 'export-visible-resources') {
-          var visibleForExport = filterResourceCenterEntries(
-            getResourceCenterEntries(state.resources),
-            ensureCenterPanelState(panel, { query: '', filter: 'all', provider: 'all' })
-          );
+          var visibleForExport = visibleEntriesNow;
           if (!visibleForExport.length) return;
           if (exportResourceDownloadList(visibleForExport)) {
             setTemporaryText(target, '已导出 ' + visibleForExport.length + ' 条', '导出清单');
@@ -3445,14 +3781,12 @@
           return;
         }
         if (action === 'remove-visible-resources') {
-          var visibleEntries = filterResourceCenterEntries(
-            getResourceCenterEntries(state.resources),
-            ensureCenterPanelState(panel, { query: '', filter: 'all', provider: 'all' })
-          );
+          var visibleEntries = visibleEntriesNow;
           if (!visibleEntries.length) return;
           if (typeof window.confirm === 'function' && !window.confirm('删除当前筛选结果中的资源？')) return;
           visibleEntries.forEach(function removeVisibleResource(entry) {
             delete state.resources[entry.key];
+            delete ensureResourceSelection(panelState)[entry.key];
           });
           saveResourceCenterState(state);
           renderResourceCenter(panel, state);
@@ -3461,6 +3795,7 @@
         if (action === 'clear-resources') {
           if (typeof window.confirm === 'function' && !window.confirm('清空全部资源库记录？')) return;
           state.resources = {};
+          panelState.selectedResources = {};
           saveResourceCenterState(state);
           renderResourceCenter(panel, state);
           return;
@@ -3475,14 +3810,36 @@
         }
         if (action === 'remove-resource') {
           delete state.resources[key];
+          delete ensureResourceSelection(panelState)[key];
+          saveResourceCenterState(state);
+          renderResourceCenter(panel, state);
+          return;
+        }
+        if (action === 'tag-resource' && state.resources[key]) {
+          var tagText = promptResourceTags(state.resources[key].tags);
+          if (tagText === null) return;
+          updateResourceRecords(state, [key], function tagResource(record) {
+            record.tags = parseTagList(tagText);
+          });
+          saveResourceCenterState(state);
+          renderResourceCenter(panel, state);
+          return;
+        }
+        if (action === 'note-resource' && state.resources[key]) {
+          var noteText = promptResourceNote(state.resources[key].note);
+          if (noteText === null) return;
+          updateResourceRecords(state, [key], function noteResource(record) {
+            record.note = String(noteText || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+          });
           saveResourceCenterState(state);
           renderResourceCenter(panel, state);
           return;
         }
         if (/^mark-resource-/.test(action) && state.resources[key]) {
           var status = action.replace('mark-resource-', '');
-          state.resources[key].status = normalizeResourceStatus(status);
-          state.resources[key].updatedAt = Date.now();
+          updateResourceRecords(state, [key], function markResource(record) {
+            record.status = normalizeResourceStatus(status);
+          });
           saveResourceCenterState(state);
           renderResourceCenter(panel, state);
         }
@@ -4895,7 +5252,7 @@
     var actions = createEl('div', 'spx-auto-resource-actions');
     var copyButton = createEl('button', '', '复制全部资源');
     var detailButton = createEl('button', '', '资源面板');
-    var centerButton = createEl('button', '', '资源中心');
+    var centerButton = createEl('button', '', '资源工作台');
 
     panel.id = 'spx-auto-resource-jump';
     copyButton.type = 'button';
@@ -6247,8 +6604,8 @@
         show: true,
         group: '我的中心',
         text: '源',
-        label: '资源中心',
-        title: '打开资源中心',
+        label: '资源工作台',
+        title: '打开资源工作台',
         description: '管理磁力、网盘和种子资源',
         panelId: 'spx-resource-center',
         buttonDataset: 'spxResourceCenterButton',
@@ -6769,12 +7126,19 @@
     getJumpResourceLinks: getJumpResourceLinks,
     getResourceDownloadQueueEntries: getResourceDownloadQueueEntries,
     formatResourceDownloadList: formatResourceDownloadList,
+    formatResourceMarkdownList: formatResourceMarkdownList,
     formatResourceDownloadFileName: formatResourceDownloadFileName,
     formatResourceJumpSummary: formatResourceJumpSummary,
+    normalizeResourceTags: normalizeResourceTags,
+    formatResourceTags: formatResourceTags,
     pruneResourceLibrary: pruneResourceLibrary,
     saveResourceLinksToLibrary: saveResourceLinksToLibrary,
     getResourceCenterEntries: getResourceCenterEntries,
+    groupResourceCenterEntries: groupResourceCenterEntries,
     filterResourceCenterEntries: filterResourceCenterEntries,
+    getSelectedResourceKeys: getSelectedResourceKeys,
+    setResourceSelection: setResourceSelection,
+    getResourceEntriesByKeys: getResourceEntriesByKeys,
     markThreadsRead: markThreadsRead,
     findThreadIdsByAuthor: findThreadIdsByAuthor,
     isStickyCell: isStickyCell,
