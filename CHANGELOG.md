@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.2 - 2026-07-30
+
+### Added
+
+- 预览图面板新增侧栏模式和瀑布流布局，可在正文内展示或固定到右侧并一键收起。
+- 预览图复制能力新增按楼层分组复制和 Markdown 图片清单复制，缩略图标签同步展示楼层和作者。
+- 预览图灯箱新增底部缩略图导航，支持快速跳转到指定图片。
+
+### Changed
+
+- 预览图面板进入帖子时默认以右侧收起状态展示，避免首次打开帖子占用正文阅读区域。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.2.1 - 2026-07-30
 
 ### Added

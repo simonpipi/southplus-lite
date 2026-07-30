@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.2.1
+// @version      0.2.2
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -564,6 +564,53 @@
         return true;
       })
       .join('\n');
+  }
+
+  function getPreviewImageMetaText(image, index) {
+    var item = image || {};
+    return ['图 ' + ((Number(index) || 0) + 1), item.floorLabel, item.author].filter(Boolean).join(' · ');
+  }
+
+  function formatPreviewImageMarkdownLinks(images) {
+    var seen = {};
+    return (images || [])
+      .map(function formatPreviewMarkdownItem(item, index) {
+        var url = getPreviewImageSource(item);
+        if (!url || seen[url]) return '';
+        seen[url] = true;
+        return '- ![' + getPreviewImageMetaText(item, index) + '](' + url + ')';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  function formatPreviewImageLinksByFloor(images) {
+    var groups = {};
+    var order = [];
+    var seen = {};
+    (images || []).forEach(function collectPreviewFloor(item, index) {
+      var url = getPreviewImageSource(item);
+      if (!url || seen[url]) return;
+      seen[url] = true;
+      var label = item && item.floorLabel ? item.floorLabel : '未知楼层';
+      var author = item && item.author ? item.author : '';
+      var key = label + '\n' + author;
+      if (!groups[key]) {
+        groups[key] = {
+          label: label,
+          author: author,
+          urls: [],
+        };
+        order.push(key);
+      }
+      groups[key].urls.push('#' + (index + 1) + ' ' + url);
+    });
+    return order
+      .map(function formatPreviewFloorGroup(key) {
+        var group = groups[key];
+        return '[' + [group.label, group.author].filter(Boolean).join(' · ') + ']\n' + group.urls.join('\n');
+      })
+      .join('\n\n');
   }
 
   function getPreviewGalleryRenderState(total, limit, batchSize) {
@@ -2395,6 +2442,14 @@
       '.spx-reader .spx-preview-load-more:hover,.spx-reader .spx-preview-load-more:focus-visible,.spx-immersive-read .spx-preview-load-more:hover,.spx-immersive-read .spx-preview-load-more:focus-visible{border-color:#38bdf8!important;background:#e0f2fe!important;color:#075985!important;outline:none!important;}',
       '.spx-reader .spx-preview-load-more[hidden],.spx-immersive-read .spx-preview-load-more[hidden]{display:none!important;}',
       '.spx-reader .spx-preview-source,.spx-immersive-read .spx-preview-source{display:none!important;}',
+      '.spx-preview-panel.spx-preview-drawer{position:fixed!important;right:14px!important;top:86px!important;bottom:18px!important;z-index:99970!important;box-sizing:border-box!important;width:min(430px,calc(100vw - 28px))!important;max-width:none!important;max-height:none!important;margin:0!important;padding:10px!important;overflow:auto!important;background:#f8fafc!important;border:1px solid #cbd5e1!important;border-radius:10px!important;box-shadow:0 18px 52px rgba(15,23,42,.24)!important;}',
+      '.spx-preview-panel.spx-preview-drawer .spx-preview-grid,.spx-preview-panel.spx-preview-masonry .spx-preview-grid{display:block!important;column-width:150px!important;column-gap:8px!important;}',
+      '.spx-preview-panel.spx-preview-drawer .spx-preview-item,.spx-preview-panel.spx-preview-masonry .spx-preview-item{display:block!important;break-inside:avoid!important;margin:0 0 8px!important;background:#fff!important;}',
+      '.spx-preview-panel.spx-preview-drawer .spx-preview-item img:not(.spx-preview-hover-image),.spx-preview-panel.spx-preview-masonry .spx-preview-item img:not(.spx-preview-hover-image){width:100%!important;height:auto!important;max-height:none!important;object-fit:contain!important;}',
+      '.spx-preview-panel.spx-preview-drawer .spx-preview-drawer-tab{display:none!important;}',
+      '.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed{top:120px!important;bottom:auto!important;width:48px!important;height:132px!important;padding:0!important;overflow:hidden!important;border-radius:10px 0 0 10px!important;}',
+      '.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-header,.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-grid,.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-load-more{display:none!important;}',
+      '.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-drawer-tab{display:flex!important;align-items:center!important;justify-content:center!important;width:100%!important;height:100%!important;border:0!important;border-radius:0!important;background:#0f766e!important;color:#fff!important;font-weight:900!important;writing-mode:vertical-rl!important;letter-spacing:.08em!important;cursor:pointer!important;}',
       '.spx-preview-lightbox{position:fixed!important;inset:0!important;z-index:100010!important;box-sizing:border-box!important;display:flex!important;padding:18px!important;background:rgba(2,6,23,.9)!important;backdrop-filter:blur(5px)!important;color:#e2e8f0!important;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
       '.spx-preview-lightbox-shell{box-sizing:border-box!important;display:flex!important;flex:1!important;min-width:0!important;min-height:0!important;flex-direction:column!important;overflow:hidden!important;border:1px solid rgba(148,163,184,.34)!important;border-radius:12px!important;background:#020617!important;box-shadow:0 24px 80px rgba(0,0,0,.5)!important;}',
       '.spx-preview-lightbox-toolbar{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;min-height:48px!important;padding:8px 10px 8px 14px!important;border-bottom:1px solid rgba(148,163,184,.22)!important;background:#0f172a!important;}',
@@ -2413,6 +2468,10 @@
       '.spx-preview-lightbox-caption{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;min-height:38px!important;padding:7px 14px!important;border-top:1px solid rgba(148,163,184,.22)!important;background:#0f172a!important;color:#94a3b8!important;}',
       '.spx-preview-lightbox-url{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
       '.spx-preview-lightbox-help{flex:none!important;white-space:nowrap!important;font-size:12px!important;color:#64748b!important;}',
+      '.spx-preview-lightbox-strip{display:flex!important;gap:7px!important;overflow-x:auto!important;padding:8px 10px!important;border-top:1px solid rgba(148,163,184,.18)!important;background:#020617!important;scrollbar-width:thin!important;}',
+      '.spx-preview-lightbox-thumb{box-sizing:border-box!important;flex:none!important;width:58px!important;height:46px!important;padding:0!important;border:2px solid transparent!important;border-radius:7px!important;overflow:hidden!important;background:#111827!important;opacity:.62!important;cursor:pointer!important;}',
+      '.spx-preview-lightbox-thumb.spx-active{border-color:#38bdf8!important;opacity:1!important;}',
+      '.spx-preview-lightbox-thumb img{display:block!important;width:100%!important;height:100%!important;object-fit:cover!important;}',
       '.spx-clean #infobox,.spx-clean #notice,.spx-clean #footer,.spx-clean .footer{display:none!important;}',
       '.spx-clean:not(.spx-site-shell) #wrapA{max-width:1180px!important;margin:0 auto!important;}',
       '.spx-clean #main{margin-top:8px!important;}',
@@ -5521,6 +5580,7 @@
       'spx-preview-lightbox-help',
       '←/→ 切图 · +/- 缩放 · 0 重置 · Esc 关闭'
     );
+    var strip = createEl('div', 'spx-preview-lightbox-strip');
 
     function createActionButton(text, title, className, onClick) {
       var button = createEl('button', className || '', text);
@@ -5629,6 +5689,12 @@
       };
       image.src = images[currentIndex].src;
       if (image.complete && image.naturalWidth) applyImageSize();
+      qsa('.spx-preview-lightbox-thumb', strip).forEach(function syncThumb(button, thumbIndex) {
+        var active = thumbIndex === currentIndex;
+        button.classList.toggle('spx-active', active);
+        button.setAttribute('aria-current', active ? 'true' : 'false');
+        if (active && button.scrollIntoView) button.scrollIntoView({ block: 'nearest', inline: 'center' });
+      });
     }
 
     function handleKeydown(event) {
@@ -5680,6 +5746,22 @@
     shell.appendChild(toolbar);
     shell.appendChild(stage);
     shell.appendChild(caption);
+    images.forEach(function appendLightboxThumb(item, index) {
+      var thumbButton = createEl('button', 'spx-preview-lightbox-thumb');
+      var thumbImage = createEl('img');
+      thumbButton.type = 'button';
+      thumbButton.title = '查看第 ' + (index + 1) + ' 张';
+      thumbImage.src = item.src;
+      thumbImage.loading = 'lazy';
+      thumbImage.decoding = 'async';
+      thumbImage.alt = '预览缩略图 ' + (index + 1);
+      thumbButton.appendChild(thumbImage);
+      thumbButton.addEventListener('click', function showThumbImage() {
+        showImage(index);
+      });
+      strip.appendChild(thumbButton);
+    });
+    if (images.length > 1) shell.appendChild(strip);
     lightbox.appendChild(shell);
     document.body.appendChild(lightbox);
 
@@ -5704,6 +5786,8 @@
     posts.forEach(function collectPostImages(post, postIndex) {
       var postContent = qs('.tpc_content', post);
       if (!postContent) return;
+      var floorLabel = getPostFloorLabel(postIndex);
+      var author = getPostAuthor(post);
       qsa('img', postContent).forEach(function collectImage(img) {
         var item = {
           node: img,
@@ -5715,6 +5799,8 @@
           className: img.className,
           alt: img.alt,
           postIndex: postIndex,
+          floorLabel: floorLabel,
+          author: author,
         };
         if (isPreviewImageCandidate(item)) previewImages.push(item);
       });
@@ -5729,35 +5815,80 @@
 
     if (!previewImages.length) return;
 
-    var panel = createEl('section', 'spx-preview-panel');
+    var panel = createEl('section', 'spx-preview-panel spx-preview-drawer spx-preview-collapsed');
     panel.id = 'spx-preview-panel';
     var header = createEl('div', 'spx-preview-header');
     var title = createEl('strong', '', '预览图');
     var summary = createEl('span', 'spx-preview-summary');
     var actions = createEl('div', 'spx-preview-actions');
     var copyAllButton = createEl('button', '', '复制全部链接');
+    var copyFloorButton = createEl('button', '', '按楼层复制');
+    var copyMarkdownButton = createEl('button', '', '复制Markdown');
     var largeOnlyButton = createEl('button', '', '只看大图');
+    var masonryButton = createEl('button', '', '瀑布流');
+    var drawerButton = createEl('button', '', '侧栏');
+    var collapseDrawerButton = createEl('button', '', '收起');
     var grid = createEl('div', 'spx-preview-grid');
     var loadMoreButton = createEl('button', 'spx-preview-load-more', '加载更多图片');
+    var drawerTab = createEl('button', 'spx-preview-drawer-tab', '预览图');
     var showLargeOnly = false;
     var visiblePreviewImages = previewImages.slice();
     var renderedPreviewLimit = PREVIEW_GALLERY_BATCH_SIZE;
-    var copyAllTimer = null;
 
     copyAllButton.type = 'button';
+    copyFloorButton.type = 'button';
+    copyMarkdownButton.type = 'button';
     largeOnlyButton.type = 'button';
+    masonryButton.type = 'button';
+    drawerButton.type = 'button';
+    collapseDrawerButton.type = 'button';
     loadMoreButton.type = 'button';
+    drawerTab.type = 'button';
     copyAllButton.title = '复制当前筛选范围内的全部原图地址';
+    copyFloorButton.title = '按楼层分组复制当前筛选范围内的原图地址';
+    copyMarkdownButton.title = '复制当前筛选范围内的 Markdown 图片清单';
     largeOnlyButton.title = '只显示尺寸较大的预览图';
+    masonryButton.title = '切换瀑布流缩略图排列';
+    drawerButton.title = '将预览图固定到右侧侧栏';
+    collapseDrawerButton.title = '收起右侧预览图侧栏';
+    drawerTab.title = '展开预览图侧栏';
     loadMoreButton.title = '继续加载下一批预览图';
     largeOnlyButton.setAttribute('aria-pressed', 'false');
+    masonryButton.setAttribute('aria-pressed', 'false');
+    drawerButton.setAttribute('aria-pressed', 'false');
+    collapseDrawerButton.hidden = true;
 
     function setPreviewButtonText(button, text, delay) {
-      clearTimeout(copyAllTimer);
+      clearTimeout(button.spxPreviewTimer);
+      if (!button.dataset.spxOriginalText) button.dataset.spxOriginalText = button.textContent;
       button.textContent = text;
-      copyAllTimer = setTimeout(function restorePreviewButtonText() {
-        if (button.isConnected) button.textContent = '复制全部链接';
+      button.spxPreviewTimer = setTimeout(function restorePreviewButtonText() {
+        if (button.isConnected) button.textContent = button.dataset.spxOriginalText || '复制全部链接';
+        delete button.dataset.spxOriginalText;
       }, delay || 1400);
+    }
+
+    function copyPreviewText(button, text, count) {
+      button.disabled = true;
+      copyTextToClipboard(text).then(
+        function showCopySuccess() {
+          button.disabled = false;
+          setPreviewButtonText(button, '已复制 ' + count + ' 条');
+        },
+        function showCopyFailure() {
+          button.disabled = false;
+          setPreviewButtonText(button, '复制失败');
+        }
+      );
+    }
+
+    function syncPreviewLayoutButtons() {
+      var isDrawer = panel.classList.contains('spx-preview-drawer');
+      var isMasonry = panel.classList.contains('spx-preview-masonry');
+      drawerButton.textContent = isDrawer ? '回正文' : '侧栏';
+      drawerButton.setAttribute('aria-pressed', isDrawer ? 'true' : 'false');
+      masonryButton.setAttribute('aria-pressed', isMasonry ? 'true' : 'false');
+      collapseDrawerButton.hidden = !isDrawer;
     }
 
     function syncPreviewHeader() {
@@ -5772,8 +5903,11 @@
       largeOnlyButton.hidden = largeCount === previewImages.length;
       largeOnlyButton.setAttribute('aria-pressed', showLargeOnly ? 'true' : 'false');
       copyAllButton.disabled = !visiblePreviewImages.length;
+      copyFloorButton.disabled = !visiblePreviewImages.length;
+      copyMarkdownButton.disabled = !visiblePreviewImages.length;
       loadMoreButton.hidden = !renderState.hasMore;
       loadMoreButton.textContent = '加载更多图片（' + renderState.rendered + ' / ' + renderState.total + '）';
+      syncPreviewLayoutButtons();
     }
 
     function renderPreviewGrid() {
@@ -5825,7 +5959,7 @@
         link.addEventListener('mouseenter', loadHoverImage);
         link.addEventListener('focus', loadHoverImage);
 
-        var label = createEl('span', '', '图 ' + (index + 1));
+        var label = createEl('span', '', getPreviewImageMetaText(item, index));
         link.appendChild(thumb);
         link.appendChild(hoverImage);
         link.appendChild(label);
@@ -5846,18 +5980,13 @@
     }
 
     copyAllButton.addEventListener('click', function copyAllPreviewLinks() {
-      var links = formatPreviewImageLinks(visiblePreviewImages);
-      copyAllButton.disabled = true;
-      copyTextToClipboard(links).then(
-        function showCopyAllSuccess() {
-          copyAllButton.disabled = false;
-          setPreviewButtonText(copyAllButton, '已复制 ' + visiblePreviewImages.length + ' 条');
-        },
-        function showCopyAllFailure() {
-          copyAllButton.disabled = false;
-          setPreviewButtonText(copyAllButton, '复制失败');
-        }
-      );
+      copyPreviewText(copyAllButton, formatPreviewImageLinks(visiblePreviewImages), visiblePreviewImages.length);
+    });
+    copyFloorButton.addEventListener('click', function copyPreviewLinksByFloor() {
+      copyPreviewText(copyFloorButton, formatPreviewImageLinksByFloor(visiblePreviewImages), visiblePreviewImages.length);
+    });
+    copyMarkdownButton.addEventListener('click', function copyPreviewMarkdownLinks() {
+      copyPreviewText(copyMarkdownButton, formatPreviewImageMarkdownLinks(visiblePreviewImages), visiblePreviewImages.length);
     });
 
     largeOnlyButton.addEventListener('click', function toggleLargeOnly() {
@@ -5865,17 +5994,39 @@
       renderedPreviewLimit = PREVIEW_GALLERY_BATCH_SIZE;
       renderPreviewGrid();
     });
+    masonryButton.addEventListener('click', function togglePreviewMasonry() {
+      panel.classList.toggle('spx-preview-masonry');
+      syncPreviewLayoutButtons();
+    });
+    drawerButton.addEventListener('click', function togglePreviewDrawer() {
+      var nextDrawer = !panel.classList.contains('spx-preview-drawer');
+      panel.classList.toggle('spx-preview-drawer', nextDrawer);
+      panel.classList.remove('spx-preview-collapsed');
+      syncPreviewLayoutButtons();
+    });
+    collapseDrawerButton.addEventListener('click', function collapsePreviewDrawer() {
+      panel.classList.add('spx-preview-collapsed');
+    });
+    drawerTab.addEventListener('click', function expandPreviewDrawer() {
+      panel.classList.remove('spx-preview-collapsed');
+    });
     loadMoreButton.addEventListener('click', loadNextPreviewBatch);
     panel.addEventListener('scroll', handlePreviewPanelScroll);
 
     actions.appendChild(copyAllButton);
+    actions.appendChild(copyFloorButton);
+    actions.appendChild(copyMarkdownButton);
     actions.appendChild(largeOnlyButton);
+    actions.appendChild(masonryButton);
+    actions.appendChild(drawerButton);
+    actions.appendChild(collapseDrawerButton);
     header.appendChild(title);
     header.appendChild(summary);
     header.appendChild(actions);
     panel.appendChild(header);
     panel.appendChild(grid);
     panel.appendChild(loadMoreButton);
+    panel.appendChild(drawerTab);
     renderPreviewGrid();
 
     mountPreviewPanel(firstPost, content, panel);
@@ -7204,6 +7355,9 @@
     extractPreviewImageUrls: extractPreviewImageUrls,
     isLargePreviewImage: isLargePreviewImage,
     formatPreviewImageLinks: formatPreviewImageLinks,
+    getPreviewImageMetaText: getPreviewImageMetaText,
+    formatPreviewImageMarkdownLinks: formatPreviewImageMarkdownLinks,
+    formatPreviewImageLinksByFloor: formatPreviewImageLinksByFloor,
     getPreviewGalleryRenderState: getPreviewGalleryRenderState,
     formatPreviewGallerySummary: formatPreviewGallerySummary,
     normalizeResourceUrl: normalizeResourceUrl,

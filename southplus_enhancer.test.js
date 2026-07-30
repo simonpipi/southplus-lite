@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.2\.1/);
+assert.match(source, /@version\s+0\.2\.2/);
 assert.match(source, /South Plus 工具箱/);
 assert.match(source, /spx-toolbox-action/);
 assert.match(source, /隐藏广告/);
@@ -15,6 +15,12 @@ assert.match(source, /本地体积/);
 assert.match(source, /\.spx-settings \.spx-row\{display:flex;flex-wrap:wrap/);
 assert.match(source, /加载更多图片/);
 assert.match(source, /spx-preview-load-more/);
+assert.match(source, /spx-preview-drawer/);
+assert.match(source, /spx-preview-panel spx-preview-drawer spx-preview-collapsed/);
+assert.match(source, /spx-preview-masonry/);
+assert.match(source, /spx-preview-lightbox-strip/);
+assert.match(source, /按楼层复制/);
+assert.match(source, /复制Markdown/);
 assert.match(source, /资源工作台/);
 assert.doesNotMatch(source, /资源中心/);
 assert.match(source, /select-visible-resources/);
@@ -65,6 +71,26 @@ assert.equal(
     { src: '' },
   ]),
   'https://south-plus.org/a.jpg\nhttps://south-plus.org/b.jpg'
+);
+assert.equal(
+  enhancer.getPreviewImageMetaText({ floorLabel: 'B2F', author: 'alice' }, 1),
+  '图 2 · B2F · alice'
+);
+assert.equal(
+  enhancer.formatPreviewImageMarkdownLinks([
+    { src: 'https://south-plus.org/a.jpg', floorLabel: '楼主', author: 'bob' },
+    { src: 'https://south-plus.org/a.jpg', floorLabel: '楼主', author: 'bob' },
+    { src: 'https://south-plus.org/b.jpg', floorLabel: 'B2F', author: 'alice' },
+  ]),
+  '- ![图 1 · 楼主 · bob](https://south-plus.org/a.jpg)\n- ![图 3 · B2F · alice](https://south-plus.org/b.jpg)'
+);
+assert.equal(
+  enhancer.formatPreviewImageLinksByFloor([
+    { src: 'https://south-plus.org/a.jpg', floorLabel: '楼主', author: 'bob' },
+    { src: 'https://south-plus.org/b.jpg', floorLabel: 'B2F', author: 'alice' },
+    { src: 'https://south-plus.org/c.jpg', floorLabel: 'B2F', author: 'alice' },
+  ]),
+  '[楼主 · bob]\n#1 https://south-plus.org/a.jpg\n\n[B2F · alice]\n#2 https://south-plus.org/b.jpg\n#3 https://south-plus.org/c.jpg'
 );
 assert.deepEqual(
   enhancer.getPreviewGalleryRenderState(100, 36, 36),
