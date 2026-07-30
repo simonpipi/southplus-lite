@@ -2943,6 +2943,27 @@
     panel.spxRender();
   }
 
+  function commitCenterQueryInput(panel, config, target) {
+    if (!target || !target.dataset || target.dataset.spxCenterQuery !== '1') return;
+    var state = ensureCenterPanelState(panel, config.stateDefaults || { query: '', filter: 'all', tag: 'all', provider: 'all' });
+    if (state.query === target.value) return;
+    state.query = target.value;
+    var selectionStart = typeof target.selectionStart === 'number' ? target.selectionStart : null;
+    var selectionEnd = typeof target.selectionEnd === 'number' ? target.selectionEnd : null;
+    panel.spxRender();
+    var nextInput = qs('input[data-spx-center-query="1"]', panel);
+    if (nextInput) {
+      nextInput.focus();
+      if (
+        selectionStart !== null &&
+        selectionEnd !== null &&
+        typeof nextInput.setSelectionRange === 'function'
+      ) {
+        nextInput.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
+  }
+
   function createCenterPanel(options) {
     var config = options || {};
     var panel = qs('#' + config.id);
@@ -2953,26 +2974,24 @@
     panel.hidden = true;
     document.body.appendChild(panel);
 
+    panel.addEventListener('compositionstart', function handleCenterCompositionStart(event) {
+      var target = event.target;
+      if (!target || !target.dataset || target.dataset.spxCenterQuery !== '1') return;
+      panel.spxCenterQueryComposing = true;
+    });
+
+    panel.addEventListener('compositionend', function handleCenterCompositionEnd(event) {
+      var target = event.target;
+      if (!target || !target.dataset || target.dataset.spxCenterQuery !== '1') return;
+      panel.spxCenterQueryComposing = false;
+      commitCenterQueryInput(panel, config, target);
+    });
+
     panel.addEventListener('input', function handleCenterInput(event) {
       var target = event.target;
       if (!target || !target.dataset || target.dataset.spxCenterQuery !== '1') return;
-      var state = ensureCenterPanelState(panel, config.stateDefaults || { query: '', filter: 'all', tag: 'all', provider: 'all' });
-      if (state.query === target.value) return;
-      state.query = target.value;
-      var selectionStart = typeof target.selectionStart === 'number' ? target.selectionStart : null;
-      var selectionEnd = typeof target.selectionEnd === 'number' ? target.selectionEnd : null;
-      panel.spxRender();
-      var nextInput = qs('input[data-spx-center-query="1"]', panel);
-      if (nextInput) {
-        nextInput.focus();
-        if (
-          selectionStart !== null &&
-          selectionEnd !== null &&
-          typeof nextInput.setSelectionRange === 'function'
-        ) {
-          nextInput.setSelectionRange(selectionStart, selectionEnd);
-        }
-      }
+      if (event.isComposing || panel.spxCenterQueryComposing) return;
+      commitCenterQueryInput(panel, config, target);
     });
 
     panel.addEventListener('change', function handleCenterChange(event) {
