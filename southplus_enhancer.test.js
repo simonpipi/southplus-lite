@@ -3,9 +3,20 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.2\.5/);
+assert.match(source, /@version\s+0\.2\.7/);
 assert.match(source, /South Plus 工具箱/);
 assert.match(source, /spx-toolbox-action/);
+assert.match(source, /--spx-page-max:1680px/);
+assert.match(source, /--spx-reader-line:clamp\(760px,62vw,960px\)/);
+assert.match(source, /spx-thread-list-table/);
+assert.doesNotMatch(source, /\.spx-forum-dashboard #content \.t tr\.tr3\{display:grid/);
+assert.match(source, /\.spx-immersive-read \.tpc_content\{box-sizing:border-box!important;max-width:var\(--spx-reader-line\)!important/);
+assert.match(source, /\.spx-post-body-split \.tpc_content[^}]*max-width:var\(--spx-reader-line\)!important/);
+assert.match(source, /spx-settings-section/);
+assert.match(source, /spx-settings-footer/);
+assert.match(source, /spx-action-primary/);
+assert.match(source, /#spx-resource-center\{width:min\(720px,calc\(100vw - 96px\)\)/);
+assert.match(source, /bottom:calc\(58px \+ env\(safe-area-inset-bottom,0px\)\)!important/);
 assert.match(source, /data-spx-settings-button/);
 assert.match(source, /setSettingsPanelHidden\(settingsPanel, !settingsPanel.hidden, SETTINGS_BUTTON_SELECTOR\)/);
 assert.match(source, /var nextToolboxHidden = !toolbox.hidden/);
@@ -41,6 +52,19 @@ assert.match(source, /compositionstart/);
 assert.match(source, /compositionend/);
 assert.match(source, /event\.isComposing/);
 const emptyRoot = { querySelector: function querySelector() { return null; }, querySelectorAll: function querySelectorAll() { return []; } };
+const threadListRoot = {
+  querySelectorAll: function querySelectorAll(selector) {
+    if (selector !== 'td[id^="td_"]') return [];
+    return [{
+      id: 'td_123',
+      querySelector: function querySelector(innerSelector) {
+        return innerSelector === 'a[id^="a_ajax_"]' ? {} : null;
+      },
+    }];
+  },
+};
+assert.equal(enhancer.shouldUseForumDashboard('https://south-plus.org/thread.php?fid-9.html', emptyRoot), false);
+assert.equal(enhancer.shouldUseForumDashboard('https://south-plus.org/thread.php?fid-9.html', threadListRoot), true);
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('adBlock'), false);
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('homeDashboard'), false);
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/thread.php?fid-9.html').includes('autoBuyPost'));
