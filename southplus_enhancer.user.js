@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.2.8
+// @version      0.2.9
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -1553,7 +1553,7 @@
     if (type === 'read') return shouldUseReaderMode(settings, url) || shouldUseImmersiveRead(settings, url);
     if (type === 'search') return true;
     if (type === 'task') return true;
-    if (shouldUseProfileListNavigation(url)) return true;
+    if (type === 'profile') return true;
     return false;
   }
 
@@ -2875,6 +2875,16 @@
       '.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host>.spx-module-body{grid-column:2!important;width:auto!important;max-width:100%!important;min-width:0!important;}',
       '.spx-module-nav-ready.spx-search-page .spx-module-body>.bdbA,.spx-module-nav-ready.spx-search-page .spx-module-body>.t,.spx-module-nav-ready.spx-search-page .spx-module-body>.t3,.spx-module-nav-ready.spx-search-page .spx-module-body>.t5,.spx-module-nav-ready.spx-profile-page .spx-module-body>.bdbA,.spx-module-nav-ready.spx-profile-page .spx-module-body>.t,.spx-module-nav-ready.spx-profile-page .spx-module-body>.t3,.spx-module-nav-ready.spx-profile-page .spx-module-body>.t5{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;}',
       '.spx-module-nav-ready.spx-search-page .spx-module-body table,.spx-module-nav-ready.spx-profile-page .spx-module-body table{max-width:100%!important;}',
+      '.spx-module-nav-ready.spx-profile-page .spx-module-body>#spx-account-tabs,.spx-module-nav-ready.spx-profile-page .spx-module-body>#u-wrap,.spx-module-nav-ready.spx-profile-page .spx-module-body>#u-wrap2,.spx-module-nav-ready.spx-profile-page .spx-module-body>#set-wrap,.spx-module-nav-ready.spx-profile-page .spx-module-body>#set-side-wrap,.spx-module-nav-ready.spx-profile-page .spx-module-body>#set-content-wrap{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;}',
+      '.spx-module-nav-ready.spx-reader #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-reader #content.spx-module-nav-host>.spx-module-body{grid-column:2!important;width:auto!important;max-width:100%!important;min-width:0!important;overflow:hidden!important;}',
+      '.spx-module-nav-ready.spx-reader .spx-module-body>.bdbA{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 10px!important;overflow:hidden!important;}',
+      '.spx-module-nav-ready.spx-reader .spx-module-body #breadcrumbs{box-sizing:border-box!important;display:flex!important;flex-wrap:wrap!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0!important;overflow:hidden!important;}',
+      '.spx-module-nav-ready.spx-reader .spx-module-body #breadcrumbs .crumbs-item{min-width:0!important;max-width:100%!important;white-space:normal!important;word-break:break-word!important;}',
+      '.spx-module-nav-ready.spx-reader .spx-module-body table.js-post{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:14px 0!important;table-layout:fixed!important;}',
+      '.spx-module-nav-ready.spx-reader .spx-module-body table.js-post>tbody,.spx-module-nav-ready.spx-reader .spx-module-body table.js-post>tbody>tr{max-width:100%!important;}',
+      '.spx-module-nav-ready.spx-reader .spx-module-body table.js-post>tbody>tr>th.r_one{box-sizing:border-box!important;width:auto!important;max-width:100%!important;min-width:0!important;overflow:hidden!important;}',
+      '.spx-module-nav-ready.spx-reader .spx-module-body table.js-post>tbody>tr>th.r_two{box-sizing:border-box!important;max-width:128px!important;min-width:0!important;overflow:hidden!important;}',
+      '.spx-module-nav-ready.spx-reader .spx-module-body .spx-post-tools,.spx-module-nav-ready.spx-reader .spx-module-body .tiptop,.spx-module-nav-ready.spx-reader .spx-module-body .tipad,.spx-module-nav-ready.spx-reader .spx-module-body .readbot,.spx-module-nav-ready.spx-reader .spx-module-body .spx-post-body-split,.spx-module-nav-ready.spx-reader .spx-module-body .tpc_content,.spx-module-nav-ready.spx-reader .spx-module-body .signature,.spx-module-nav-ready.spx-reader .spx-module-body .sigline{box-sizing:border-box!important;max-width:100%!important;min-width:0!important;}',
       '.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host{display:grid!important;grid-template-columns:minmax(196px,var(--spx-module-width)) minmax(0,1fr)!important;gap:14px!important;align-items:start!important;width:calc(100vw - 40px)!important;max-width:1480px!important;margin:14px auto 56px!important;}',
       '.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-nav{grid-column:1!important;width:auto!important;max-width:100%!important;min-width:0!important;}',
       '.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-body{grid-column:2!important;display:block!important;width:auto!important;max-width:100%!important;min-width:0!important;overflow:hidden!important;}',
@@ -5175,26 +5185,23 @@
   }
 
   function getProfilePageNavigationConfigs() {
-    if (!shouldUseProfileListNavigation(location.href)) return [];
+    if (!shouldUseProfilePage(location.href)) return [];
     var uid = extractAccountUserId(document, location.href);
     if (!uid) return [];
     var activeKey = getAccountActiveKey(location.href);
-    return getAccountTabItems(uid, location.origin)
-      .filter(function keepProfileListNav(item) {
-        return item.key === 'topic' || item.key === 'post';
-      })
-      .map(function mapProfileListNav(item) {
-        return {
-          section: '个人导航',
-          label: item.key === 'topic' ? '我的主题' : '我的回复',
-          href: item.href,
-          title: item.key === 'topic' ? '我的主题' : '我的回复',
-          className: 'spx-module-nav-profile',
-          active: item.key === activeKey,
-          alwaysShow: true,
-          navigationOnly: true,
-        };
-      });
+    return getAccountTabItems(uid, location.origin).map(function mapProfileListNav(item) {
+      var label = item.key === 'topic' ? '我的主题' : (item.key === 'post' ? '我的回复' : item.label);
+      return {
+        section: '个人导航',
+        label: label,
+        href: item.href,
+        title: label,
+        className: 'spx-module-nav-profile',
+        active: item.key === activeKey,
+        alwaysShow: true,
+        navigationOnly: true,
+      };
+    });
   }
 
   function getTaskPageNavigationConfigs() {
@@ -6064,8 +6071,8 @@
     var compactAuthor = !!(settings && (settings.compactRead || settings.hideUserProfile));
     var authorWidth = compactAuthor ? '112px' : '128px';
 
-    setImportantStyle(post, 'width', 'min(1680px, calc(100vw - 64px))');
-    setImportantStyle(post, 'max-width', 'none');
+    setImportantStyle(post, 'width', '100%');
+    setImportantStyle(post, 'max-width', '100%');
     setImportantStyle(post, 'table-layout', 'fixed');
 
     setImportantStyle(authorCell, 'width', authorWidth);
