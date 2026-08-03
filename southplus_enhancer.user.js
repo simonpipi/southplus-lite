@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.2.7
+// @version      0.2.8
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -55,15 +55,19 @@
   var RESTORE_PROGRESS_KEY = APP + ':restoreProgressTid:v1';
   var AUTO_BUY_KEY = APP + ':autoBuyAttempts:v1';
   var RESOURCE_KEY = APP + ':resources:v1';
+  var NAVIGATION_KEY = APP + ':navigation:v1';
   var AUTO_BUY_CHECK_TTL = 10 * 60 * 1000;
   var AUTO_BUY_ATTEMPT_LIMIT = 100;
   var RESOURCE_LIMIT = 500;
+  var NAVIGATION_POOL_LIMIT = 160;
   var READ_PROGRESS_LIMIT = 200;
   var STALE_PROGRESS_MAX_AGE = 180 * 24 * 60 * 60 * 1000;
   var LOCAL_STORAGE_WARNING_BYTES = 4 * 1024 * 1024;
   var PREVIEW_GALLERY_BATCH_SIZE = 36;
   var TOOLBOX_BUTTON_SELECTOR = '[data-spx-toolbox-button="1"]';
   var SETTINGS_BUTTON_SELECTOR = '[data-spx-settings-button="1"]';
+  var THREAD_ROW_HIDDEN_CLASSES = ['spx-filter-hidden', 'spx-hidden-rule', 'spx-unread-hidden', 'spx-thread-row-hidden'];
+  var pendingModuleNavigationConfigs = [];
   var RESOURCE_STATUSES = {
     saved: '已保存',
     todo: '待下载',
@@ -111,6 +115,7 @@
     cleanMode: true,
     readerMode: true,
     immersiveRead: true,
+    nightMode: false,
     immersiveFontSize: 16,
     unifiedPreviewGallery: true,
     homeDashboard: true,
@@ -643,10 +648,40 @@
       : '当前页 ' + pageTotal + ' 张，点击进入灯箱';
   }
 
+  function hasThreadRowHiddenClass(row) {
+    if (!row || !row.classList) return false;
+    return THREAD_ROW_HIDDEN_CLASSES.some(function hasHiddenClass(className) {
+      return row.classList.contains(className);
+    });
+  }
+
+  function syncThreadRowDisplay(row) {
+    if (!row || !row.style) return;
+    if (hasThreadRowHiddenClass(row)) {
+      setImportantStyle(row, 'display', 'none');
+      return;
+    }
+    if (row.dataset && row.dataset.spxThreadListRow === '1') {
+      setImportantStyle(row, 'display', 'grid');
+      return;
+    }
+    if (typeof row.style.removeProperty === 'function') {
+      row.style.removeProperty('display');
+    } else {
+      row.style.display = '';
+    }
+  }
+
+  function setThreadRowHiddenClass(row, className, hidden) {
+    if (!row || !row.classList || !className) return;
+    row.classList.toggle(className, !!hidden);
+    syncThreadRowDisplay(row);
+  }
+
   function isVisibleThreadRow(row) {
     if (!row) return false;
+    if (hasThreadRowHiddenClass(row)) return false;
     if (row.offsetParent === null) return false;
-    if (row.classList && row.classList.contains('spx-filter-hidden')) return false;
     return true;
   }
 
@@ -1458,6 +1493,7 @@
     if (/\/thread\.php\?fid[=-]\d+/.test(text)) return 'forum';
     if (/\/search2?\.php(?:[?#].*)?$/.test(text)) return 'search';
     if (/\/(?:u|profile|userpay|message)\.php(?:[?#].*)?$/.test(text)) return 'profile';
+    if (/\/(?:hack|plugin)\.php/i.test(text) && /(?:H_name|h_name)[=-]?tasks|tasks/i.test(text)) return 'task';
     if (/\/(?:index\.php)?(?:[?#].*)?$/.test(text)) return 'home';
     return 'other';
   }
@@ -1498,8 +1534,27 @@
     return detectPageType(url) === 'profile';
   }
 
+  function shouldUseTaskPage(url) {
+    return detectPageType(url) === 'task';
+  }
+
   function shouldUseHomeDashboard(settings, url) {
     return !!(settings && settings.homeDashboard) && detectPageType(url) === 'home';
+  }
+
+  function shouldUseProfileListNavigation(url) {
+    return detectPageType(url) === 'profile' && /action-(?:topic|post)/.test(String(url || ''));
+  }
+
+  function shouldUseModuleNavigation(settings, url, root) {
+    var type = detectPageType(url);
+    if (type === 'home') return shouldUseHomeDashboard(settings, url);
+    if (type === 'forum') return shouldUseForumDashboard(url, root);
+    if (type === 'read') return shouldUseReaderMode(settings, url) || shouldUseImmersiveRead(settings, url);
+    if (type === 'search') return true;
+    if (type === 'task') return true;
+    if (shouldUseProfileListNavigation(url)) return true;
+    return false;
   }
 
   function shouldShowToolbarFeature(feature) {
@@ -1547,6 +1602,7 @@
       'cleanMode',
       'readerMode',
       'immersiveRead',
+      'nightMode',
       'unifiedPreviewGallery',
       'compactRead',
       'foldQuotes',
@@ -1560,6 +1616,7 @@
       if (key === 'cleanMode' && shouldShowToolbarFeature('clean')) keys.push(key);
       if (key === 'readerMode' && shouldShowToolbarAction('reader', url, root)) keys.push(key);
       if (key === 'immersiveRead' && shouldShowToolbarAction('immersiveRead', url, root)) keys.push(key);
+      if (key === 'nightMode') keys.push(key);
       if (key === 'unifiedPreviewGallery' && shouldShowToolbarAction('previewGallery', url, root)) keys.push(key);
       if (key === 'compactRead' && detectPageType(url) === 'read') keys.push(key);
       if (key === 'foldQuotes' && detectPageType(url) === 'read') keys.push(key);
@@ -1650,6 +1707,7 @@
         progress: pruneReadProgress(copyStorageMap(source.progress)),
         autoBuyAttempts: pruneAutoBuyAttempts(copyStorageMap(source.autoBuyAttempts)),
         resources: pruneResourceLibrary(copyStorageMap(source.resources)),
+        navigation: normalizeNavigationPool(source.navigation),
       },
     };
   }
@@ -1665,6 +1723,7 @@
       progress: source.progress,
       autoBuyAttempts: source.autoBuyAttempts || source.autoBuy,
       resources: source.resources,
+      navigation: source.navigation,
     }, payload.exportedAt);
   }
 
@@ -1676,6 +1735,7 @@
       progress: state && state.progress,
       autoBuyAttempts: loadAutoBuyAttempts(),
       resources: state && state.resources,
+      navigation: loadNavigationPool(),
     });
   }
 
@@ -1744,6 +1804,7 @@
       createStorageUsageEntry(PROGRESS_KEY, '阅读进度', source.progress, countMapItems(source.progress), READ_PROGRESS_LIMIT),
       createStorageUsageEntry(AUTO_BUY_KEY, '自动购买记录', source.autoBuyAttempts, countMapItems(source.autoBuyAttempts), AUTO_BUY_ATTEMPT_LIMIT),
       createStorageUsageEntry(RESOURCE_KEY, '资源库', source.resources, countMapItems(source.resources), RESOURCE_LIMIT),
+      createStorageUsageEntry(NAVIGATION_KEY, '导航池', source.navigation, countMapItems(source.navigation), NAVIGATION_POOL_LIMIT),
     ];
     var totalBytes = entries.reduce(function sumBytes(total, entry) {
       return total + entry.bytes;
@@ -1979,6 +2040,7 @@
       progress: progress,
       autoBuyAttempts: autoBuyAttempts,
       resources: resources,
+      navigation: source.navigation,
     }, now);
 
     return {
@@ -2061,6 +2123,81 @@
     storage.setItem(key, JSON.stringify(map || {}));
   }
 
+  function normalizeNavigationHref(href, baseUrl) {
+    var value = String(href || '').trim();
+    if (!value || /^javascript:/i.test(value)) return '';
+    try {
+      return new URL(value, baseUrl || (typeof location !== 'undefined' ? location.href : 'https://south-plus.org/')).href;
+    } catch (error) {
+      return value;
+    }
+  }
+
+  function getNavigationItemKey(section, label, href) {
+    var cleanHref = String(href || '').replace(/#.*$/, '').toLowerCase();
+    return [String(section || '导航'), String(label || '').toLowerCase(), cleanHref].join('|');
+  }
+
+  function shouldKeepNavigationLabel(label) {
+    var normalized = normalizeNavigationLabel(label);
+    if (!normalized) return false;
+    if (/图墙模式/.test(normalized)) return false;
+    return true;
+  }
+
+  function normalizePersistentNavigationConfig(config, baseUrl, fallbackOrder) {
+    if (!config) return null;
+    var label = normalizeNavigationLabel(config.label || config.title);
+    var href = normalizeNavigationHref(config.href, baseUrl);
+    if (!shouldKeepNavigationLabel(label) || !href || config.transient) return null;
+    if (label.length > 32) label = label.slice(0, 31) + '…';
+    return {
+      section: config.persistSection || config.section || '子栏目',
+      parentLabel: normalizeNavigationLabel(config.parentLabel || ''),
+      label: label,
+      href: href,
+      title: normalizeNavigationLabel(config.title || label),
+      className: config.className || '',
+      order: Math.max(0, Number(config.order !== undefined ? config.order : fallbackOrder) || 0),
+      updatedAt: Math.max(0, Number(config.updatedAt) || Date.now()),
+    };
+  }
+
+  function normalizeNavigationPool(value) {
+    var source = value || {};
+    var result = {};
+    var entries = Array.isArray(source)
+      ? source
+      : Object.keys(source).map(function mapNavigationEntry(key) {
+        return source[key];
+      });
+    entries.forEach(function normalizeEntry(item, index) {
+      var normalized = normalizePersistentNavigationConfig(item, item && item.baseUrl, index + 1);
+      if (!normalized) return;
+      var key = getNavigationItemKey(normalized.section, normalized.label, normalized.href);
+      result[key] = normalized;
+    });
+    Object.keys(result)
+      .sort(function sortNavigationPool(left, right) {
+        var leftItem = result[left];
+        var rightItem = result[right];
+        return (rightItem.updatedAt || 0) - (leftItem.updatedAt || 0);
+      })
+      .slice(NAVIGATION_POOL_LIMIT)
+      .forEach(function removeExtraNavigation(key) {
+        delete result[key];
+      });
+    return result;
+  }
+
+  function loadNavigationPool() {
+    return normalizeNavigationPool(loadMap(NAVIGATION_KEY));
+  }
+
+  function saveNavigationPool(pool) {
+    saveMap(NAVIGATION_KEY, normalizeNavigationPool(pool));
+  }
+
   function loadReadProgress() {
     return pruneReadProgress(loadMap(PROGRESS_KEY));
   }
@@ -2115,12 +2252,14 @@
     state.watch = copyStorageMap(data.watch);
     state.progress = pruneReadProgress(copyStorageMap(data.progress));
     state.resources = pruneResourceLibrary(copyStorageMap(data.resources));
+    var navigation = normalizeNavigationPool(data.navigation);
     saveSettings(settings);
     saveMap(READ_KEY, state.read);
     saveMap(WATCH_KEY, state.watch);
     saveReadProgress(state.progress);
     saveAutoBuyAttempts(data.autoBuyAttempts);
     saveResourceLibrary(state.resources);
+    saveNavigationPool(navigation);
     clearReadProgressRestoreRequest(parseThreadId(location.href));
     refreshWatchCenter();
     refreshHistoryCenter();
@@ -2236,32 +2375,34 @@
 
   function getInjectedStyleText() {
     return [
-      ':root{--spx-bg:#f7f8fb;--spx-page-bg:#eef2f5;--spx-panel:#fff;--spx-panel-muted:#f8fafc;--spx-line:#cbd5e1;--spx-line-soft:#e2e8f0;--spx-text:#1f2937;--spx-strong:#0f172a;--spx-sub:#64748b;--spx-muted:#94a3b8;--spx-link:#075985;--spx-accent:#0f766e;--spx-accent-soft:#ccfbf1;--spx-accent-wash:#f0fdfa;--spx-danger:#b91c1c;--spx-danger-soft:#fef2f2;--spx-warn:#b45309;--spx-radius-sm:6px;--spx-radius:8px;--spx-radius-lg:12px;--spx-radius-xl:16px;--spx-shadow-card:0 6px 18px rgba(15,23,42,.06);--spx-shadow-popover:0 18px 48px rgba(15,23,42,.24);--spx-shadow-strong:0 24px 80px rgba(15,23,42,.3);--spx-page-max:1680px;--spx-page-space:clamp(28px,5.2vw,72px);--spx-reader-line:clamp(760px,62vw,960px);--spx-panel-width:min(620px,calc(100vw - 96px));--spx-panel-max-height:min(78vh,760px);--spx-control-height:32px;}',
-      '@media(max-width:900px){:root{--spx-page-max:100vw;--spx-page-space:16px;--spx-reader-line:calc(100vw - 28px);--spx-panel-width:calc(100vw - 16px);--spx-panel-max-height:calc(100vh - 80px);}}',
+      ':root,.spx-theme-clean{--spx-bg:#f7f9fc;--spx-page-bg:#eef2f6;--spx-panel:#fff;--spx-panel-muted:#f7f9fc;--spx-line:#d7dee9;--spx-line-soft:#e5eaf2;--spx-text:#1f2937;--spx-strong:#182230;--spx-sub:#667085;--spx-muted:#98a2b3;--spx-link:#1d4ed8;--spx-accent:#2563eb;--spx-accent-soft:#dbeafe;--spx-accent-wash:#eff6ff;--spx-danger:#b91c1c;--spx-danger-soft:#fef2f2;--spx-warn:#b45309;--spx-nav-bg:#283241;--spx-nav-hover:#334155;--spx-nav-text:#dfe7f0;--spx-nav-current-bg:#fff;--spx-nav-current-text:#182230;--spx-input-bg:#fff;--spx-row-bg:#fff;--spx-row-hover:#f8fbff;--spx-module-width:220px;--spx-radius-sm:6px;--spx-radius:8px;--spx-radius-lg:12px;--spx-radius-xl:16px;--spx-shadow-card:0 6px 18px rgba(15,23,42,.06);--spx-shadow-popover:0 18px 48px rgba(15,23,42,.24);--spx-shadow-strong:0 24px 80px rgba(15,23,42,.3);--spx-page-max:1680px;--spx-page-space:clamp(28px,5.2vw,72px);--spx-reader-line:clamp(760px,62vw,960px);--spx-panel-width:min(620px,calc(100vw - 96px));--spx-panel-max-height:min(78vh,760px);--spx-control-height:32px;}',
+      ':root.spx-theme-night,.spx-theme-night{--spx-bg:#202720;--spx-page-bg:#111412;--spx-panel:#181d1a;--spx-panel-muted:#202720;--spx-line:#303a32;--spx-line-soft:#263029;--spx-text:#edf4ec;--spx-strong:#f8fff5;--spx-sub:#aebbae;--spx-muted:#7c887d;--spx-link:#86efac;--spx-accent:#4ade80;--spx-accent-soft:#173a25;--spx-accent-wash:#102318;--spx-danger:#f87171;--spx-danger-soft:#3a171c;--spx-warn:#fbbf24;--spx-nav-bg:#070908;--spx-nav-hover:#202720;--spx-nav-text:#aebbae;--spx-nav-current-bg:#202720;--spx-nav-current-text:#f8fff5;--spx-input-bg:#151a17;--spx-row-bg:#181d1a;--spx-row-hover:#202720;--spx-shadow-card:0 10px 30px rgba(0,0,0,.28);--spx-shadow-popover:0 18px 48px rgba(0,0,0,.46);--spx-shadow-strong:0 24px 80px rgba(0,0,0,.55);}',
+      '@media(max-width:900px){:root,.spx-theme-clean,.spx-theme-night{--spx-page-max:100vw;--spx-page-space:16px;--spx-reader-line:calc(100vw - 28px);--spx-panel-width:calc(100vw - 16px);--spx-panel-max-height:calc(100vh - 80px);}}',
       '.spx-adblock .spx-ad-hidden{display:none!important;}',
       '.spx-adblock #banner a[href*="taobao"],.spx-adblock #banner a[href*="tmall"],.spx-adblock #banner a[href*="equity"]{display:none!important;}',
       '.spx-adblock a[href*="taobao"],.spx-adblock a[href*="tmall"],.spx-adblock a[href*="alimama"]{display:none!important;}',
       '.spx-adblock img[src*="taobao"],.spx-adblock img[src*="tmall"],.spx-adblock img[src*="alimama"]{display:none!important;}',
       '.spx-adblock #banner{min-height:0!important;}',
-      '.spx-site-shell,.spx-site-shell body{width:100%!important;min-width:0!important;background:var(--spx-page-bg)!important;color:#172033!important;font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
+      '.spx-site-shell,.spx-site-shell body{width:100%!important;min-width:0!important;background:var(--spx-page-bg)!important;color:var(--spx-text)!important;font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
       '.spx-site-shell a{color:var(--spx-link)!important;text-decoration:none!important;}',
       '.spx-site-shell a:hover{text-decoration:underline!important;}',
       '.spx-site-shell #wrapA,.spx-site-shell #main{box-sizing:border-box!important;width:100%!important;max-width:none!important;background:var(--spx-page-bg)!important;}',
       '.spx-site-shell #header,.spx-site-shell #mainNav,.spx-site-shell #infobox,.spx-site-shell #notice,.spx-site-shell #content,.spx-site-shell #main{box-sizing:border-box!important;width:min(var(--spx-page-max),calc(100vw - var(--spx-page-space)))!important;margin-left:auto!important;margin-right:auto!important;}',
-      '.spx-site-shell #mainNav{display:block!important;height:30px!important;border-radius:8px!important;background:#2f343b!important;box-shadow:0 3px 10px rgba(15,23,42,.12)!important;overflow:visible!important;}',
-      '.spx-site-shell #mainNav a{color:#dbe6ef!important;text-decoration:none!important;text-shadow:none!important;font-size:14px!important;line-height:30px!important;}',
+      '.spx-site-shell #mainNav{display:block!important;height:30px!important;border-radius:8px!important;background:var(--spx-nav-bg)!important;box-shadow:0 3px 10px rgba(15,23,42,.12)!important;overflow:visible!important;}',
+      '.spx-site-shell #mainNav a{color:var(--spx-nav-text)!important;text-decoration:none!important;text-shadow:none!important;font-size:14px!important;line-height:30px!important;}',
       '.spx-site-shell #mainNav a:hover{color:#fff!important;text-decoration:none!important;}',
       '.spx-site-shell #mainNav>div[style*="padding-left"]{box-sizing:border-box!important;width:100%!important;max-width:100%!important;height:30px!important;padding-left:250px!important;background:transparent!important;overflow:visible!important;}',
       '.spx-site-shell #mainNav>div[style*="padding-left"] table,.spx-site-shell #mainNav>div[style*="padding-left"] tbody,.spx-site-shell #mainNav>div[style*="padding-left"] tr,.spx-site-shell #mainNav>div[style*="padding-left"] td{display:block!important;box-sizing:border-box!important;width:auto!important;height:30px!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;}',
       '.spx-site-shell #guide{display:flex!important;float:none!important;align-items:center!important;justify-content:flex-start!important;flex-wrap:nowrap!important;width:max-content!important;max-width:100%!important;margin:0!important;padding:0!important;overflow:visible!important;white-space:nowrap!important;}',
       '.spx-site-shell #guide>li{display:block!important;float:none!important;width:auto!important;min-width:max-content!important;margin:0!important;white-space:nowrap!important;}',
       '.spx-site-shell #guide>#h_push,.spx-site-shell #guide>#h_hack{display:none!important;}',
-      '.spx-site-shell #guide>li>a{box-sizing:border-box!important;display:flex!important;float:none!important;align-items:center!important;height:30px!important;line-height:30px!important;padding:0 12px!important;white-space:nowrap!important;color:#dbe6ef!important;font-size:14px!important;font-weight:800!important;letter-spacing:.1px!important;text-shadow:none!important;}',
-      '.spx-site-shell #guide>li>a:hover{background:#3a414a!important;color:#fff!important;text-decoration:none!important;}',
-      '.spx-site-shell #guide>li.current>a,.spx-site-shell #guide>li.spx-nav-current>a,.spx-site-shell #guide>li>a.spx-nav-current{background:#f1f5f9!important;color:#111827!important;text-decoration:none!important;box-shadow:inset 0 -3px 0 #94a3b8!important;}',
-      '.spx-site-shell #guide>li.spx-nav-active>a,.spx-site-shell #guide>li>a.spx-menu-open{background:#3a414a!important;color:#fff!important;text-decoration:none!important;box-shadow:none!important;}',
+      '.spx-site-shell #guide>li>a{box-sizing:border-box!important;display:flex!important;float:none!important;align-items:center!important;height:30px!important;line-height:30px!important;padding:0 12px!important;white-space:nowrap!important;color:var(--spx-nav-text)!important;font-size:14px!important;font-weight:800!important;letter-spacing:.1px!important;text-shadow:none!important;}',
+      '.spx-site-shell #guide>li>a:hover{background:var(--spx-nav-hover)!important;color:#fff!important;text-decoration:none!important;}',
+      '.spx-site-shell #guide>li.current>a,.spx-site-shell #guide>li.spx-nav-current>a,.spx-site-shell #guide>li>a.spx-nav-current{background:var(--spx-nav-current-bg)!important;color:var(--spx-nav-current-text)!important;text-decoration:none!important;box-shadow:inset 0 -3px 0 var(--spx-accent)!important;}',
+      '.spx-site-shell #guide>li.spx-nav-active>a,.spx-site-shell #guide>li>a.spx-menu-open{background:var(--spx-nav-hover)!important;color:#fff!important;text-decoration:none!important;box-shadow:none!important;}',
+      '.spx-site-shell #spx-nav-brand{display:inline-flex!important;flex:none!important;align-items:center!important;height:28px!important;padding:0 12px!important;color:#fff!important;font-size:13px!important;font-weight:900!important;line-height:28px!important;letter-spacing:.02em!important;white-space:nowrap!important;}',
       '.spx-site-shell #guide .spx-peacemaker-nav{position:relative!important;width:auto!important;min-width:max-content!important;overflow:visible!important;}',
-      '.spx-site-shell #peacemakerconfig{position:relative!important;overflow:visible!important;color:#dbe6ef!important;}',
+      '.spx-site-shell #peacemakerconfig{position:relative!important;overflow:visible!important;color:var(--spx-nav-text)!important;}',
       '.spx-site-shell #peacemakerconfig.spx-menu-open{color:#fff!important;}',
       '.spx-site-shell #peacemakerconfig>div[hidden]{display:none!important;}',
       '.spx-site-shell #peacemakerconfig>div:not([hidden]){box-sizing:border-box!important;display:block!important;position:absolute!important;top:30px!important;right:0!important;left:auto!important;z-index:10000!important;width:148px!important;min-width:148px!important;margin:0!important;padding:5px!important;border:1px solid #334155!important;border-radius:8px!important;background:#f8fafc!important;color:#0f172a!important;box-shadow:0 12px 28px rgba(15,23,42,.22)!important;font:700 13px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
@@ -2302,6 +2443,12 @@
       '.spx-site-shell:not(.spx-reader) .t,.spx-site-shell:not(.spx-reader) .t3,.spx-site-shell:not(.spx-reader) .t5{display:block!important;}',
       '.spx-site-shell:not(.spx-reader) .tr1,.spx-site-shell:not(.spx-reader) .tr2,.spx-site-shell:not(.spx-reader) .tr3{font-size:14px!important;line-height:1.6!important;}',
       '.spx-site-shell:not(.spx-reader) .tr3 td,.spx-site-shell:not(.spx-reader) .tr1 td,.spx-site-shell:not(.spx-reader) th,.spx-site-shell:not(.spx-reader) td{padding:8px 10px!important;}',
+      '.spx-task-page #wrapA,.spx-task-page #main{box-sizing:border-box!important;max-width:none!important;background:var(--spx-page-bg)!important;}',
+      '.spx-task-page #main{display:block!important;width:calc(100vw - 40px)!important;max-width:1480px!important;margin:16px auto 42px!important;padding:0!important;overflow:hidden!important;}',
+      '.spx-task-page #main>.bdbA{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;}',
+      '.spx-task-page #main>.t,.spx-task-page #main>.t3,.spx-task-page #main>.t5{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;}',
+      '.spx-task-page #main>.t table,.spx-task-page #main>.t3 table,.spx-task-page #main>.t5 table{max-width:100%!important;}',
+      '@media(max-width:900px){.spx-task-page #main{width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}}',
       '.spx-site-shell #set-wrap{display:grid!important;grid-template-columns:minmax(190px,240px) minmax(0,1fr)!important;gap:16px!important;box-sizing:border-box!important;width:100%!important;max-width:none!important;margin:16px auto 42px!important;padding:0!important;background:transparent!important;line-height:1.6!important;}',
       '.spx-site-shell #set-side,.spx-site-shell #set-content{box-sizing:border-box!important;float:none!important;width:auto!important;min-width:0!important;margin:0!important;padding:0!important;background:transparent!important;}',
       '.spx-site-shell #set-side-wrap,.spx-site-shell #set-content-wrap{box-sizing:border-box!important;width:100%!important;min-width:0!important;margin:0!important;padding:14px!important;background:#fff!important;border:1px solid #d7e1eb!important;border-radius:8px!important;box-shadow:0 6px 18px rgba(15,23,42,.06)!important;overflow:visible!important;}',
@@ -2316,7 +2463,12 @@
       '.spx-site-shell #set-content table{box-sizing:border-box!important;width:100%!important;max-width:100%!important;}',
       '.spx-site-shell #set-content .set-tab-table{box-sizing:border-box!important;width:100%!important;margin:0 0 12px!important;overflow:auto!important;}',
       '.spx-site-shell #set-content .set-tab-box{box-sizing:border-box!important;width:100%!important;overflow:visible!important;}',
-    ].concat(getInjectedContentLayoutStyleRules(), getInjectedWidgetStyleRules()).join('\n');
+    ].concat(
+      getInjectedContentLayoutStyleRules(),
+      getInjectedWidgetStyleRules(),
+      getInjectedThemeOverrideStyleRules(),
+      getInjectedPreviewParityStyleRules()
+    ).join('\n');
   }
 
   function getInjectedContentLayoutStyleRules() {
@@ -2354,7 +2506,7 @@
       '.spx-home-dashboard,.spx-home-dashboard body{width:100%!important;min-width:0!important;overflow-x:hidden!important;background:var(--spx-page-bg)!important;color:#172033!important;}',
       '.spx-home-dashboard #wrapA,.spx-home-dashboard #main{box-sizing:border-box!important;width:100vw!important;max-width:none!important;margin:0!important;padding:0!important;background:var(--spx-page-bg)!important;border:0!important;}',
       '.spx-home-dashboard #content{box-sizing:border-box!important;width:min(var(--spx-page-max),calc(100vw - var(--spx-page-space)))!important;margin:16px auto 42px!important;display:block!important;background:transparent!important;}',
-      '.spx-home-dashboard #spx-home-grid{display:grid!important;grid-template-columns:repeat(12,minmax(0,1fr))!important;gap:14px!important;}',
+      '.spx-home-dashboard #spx-home-grid{display:grid!important;grid-template-columns:repeat(12,minmax(0,1fr))!important;gap:14px!important;min-width:0!important;}',
       '.spx-home-dashboard #toptool,.spx-home-dashboard #footer,.spx-home-dashboard .footer,.spx-home-dashboard #cate_info{display:none!important;}',
       '.spx-home-dashboard #header,.spx-home-dashboard #mainNav,.spx-home-dashboard #infobox,.spx-home-dashboard #notice{box-sizing:border-box!important;width:min(var(--spx-page-max),calc(100vw - var(--spx-page-space)))!important;margin-left:auto!important;margin-right:auto!important;}',
       '.spx-home-dashboard #header{margin-top:10px!important;}',
@@ -2362,10 +2514,10 @@
       '.spx-home-dashboard #notice{display:block!important;background:#fff!important;border:1px solid #d7e1eb!important;border-radius:8px!important;padding:10px 14px!important;box-shadow:0 4px 14px rgba(15,23,42,.05)!important;}',
       '.spx-home-dashboard #notice table,.spx-home-dashboard #notice tbody,.spx-home-dashboard #notice tr{display:block!important;width:100%!important;}',
       '.spx-home-dashboard #notice td{display:block!important;width:auto!important;padding:4px 0!important;}',
-      '.spx-home-dashboard .spx-home-quick{box-sizing:border-box!important;width:min(var(--spx-page-max),calc(100vw - var(--spx-page-space)))!important;margin:14px auto 0!important;display:grid!important;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))!important;gap:10px!important;}',
+      '.spx-home-dashboard .spx-home-quick{display:none!important;}',
       '.spx-home-dashboard .spx-home-quick a{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;min-height:42px!important;padding:0 12px!important;background:#fff!important;border:1px solid #d7e1eb!important;border-radius:8px!important;color:#0f172a!important;text-decoration:none!important;font-weight:700!important;box-shadow:0 3px 12px rgba(15,23,42,.05)!important;}',
       '.spx-home-dashboard .spx-home-quick a span{font-size:12px!important;color:#64748b!important;font-weight:500!important;}',
-      '.spx-home-dashboard .spx-home-module{grid-column:span 6!important;box-sizing:border-box!important;margin:0!important;background:#fff!important;border:1px solid #d7e1eb!important;border-radius:8px!important;box-shadow:0 6px 18px rgba(15,23,42,.06)!important;overflow:hidden!important;}',
+      '.spx-home-dashboard .spx-home-module{grid-column:span 6!important;box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0!important;background:#fff!important;border:1px solid #d7e1eb!important;border-radius:8px!important;box-shadow:0 6px 18px rgba(15,23,42,.06)!important;overflow:hidden!important;}',
       '.spx-home-dashboard .spx-home-module[data-spx-large="1"]{grid-column:span 12!important;}',
       '.spx-home-dashboard .spx-home-module>h2,.spx-home-dashboard .spx-home-module .h{display:flex!important;align-items:center!important;justify-content:space-between!important;min-height:38px!important;padding:0 14px!important;margin:0!important;background:#f8fafc!important;border-bottom:1px solid #e2e8f0!important;color:#0f172a!important;font-size:15px!important;font-weight:800!important;}',
       '.spx-home-dashboard .spx-home-module table,.spx-home-dashboard .spx-home-module tbody{display:block!important;width:100%!important;border:0!important;background:transparent!important;}',
@@ -2383,7 +2535,7 @@
       '.spx-forum-dashboard,.spx-forum-dashboard body{width:100%!important;min-width:0!important;overflow-x:hidden!important;background:var(--spx-page-bg)!important;color:#172033!important;}',
       '.spx-forum-dashboard #wrapA,.spx-forum-dashboard #main{box-sizing:border-box!important;width:100vw!important;max-width:none!important;margin:0!important;padding:0!important;background:var(--spx-page-bg)!important;border:0!important;}',
       '.spx-forum-dashboard #content{box-sizing:border-box!important;width:min(var(--spx-page-max),calc(100vw - var(--spx-page-space)))!important;margin:16px auto 42px!important;display:block!important;background:transparent!important;}',
-      '.spx-forum-dashboard #content .t{box-sizing:border-box!important;width:100%!important;margin:0 0 14px!important;background:#fff!important;border:1px solid #d7e1eb!important;border-radius:8px!important;box-shadow:0 6px 18px rgba(15,23,42,.06)!important;overflow:hidden!important;}',
+      '.spx-forum-dashboard #content .t{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;background:#fff!important;border:1px solid #d7e1eb!important;border-radius:8px!important;box-shadow:0 6px 18px rgba(15,23,42,.06)!important;overflow:hidden!important;}',
       '.spx-forum-dashboard #content .t.spx-thread-list-table table,.spx-forum-dashboard #content .t.spx-thread-list-table tbody{display:block!important;width:100%!important;border:0!important;background:transparent!important;}',
       '.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2{display:none!important;}',
       '.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3{display:grid!important;grid-template-columns:minmax(0,1fr) 96px 96px minmax(220px,.8fr)!important;gap:10px!important;align-items:center!important;margin:0!important;padding:10px 14px!important;border-bottom:1px solid #edf2f7!important;background:#fff!important;}',
@@ -2619,7 +2771,33 @@
       '.spx-forum-tools input{box-sizing:border-box;flex:1;min-width:180px;height:30px;border:1px solid var(--spx-line);border-radius:6px;padding:0 9px;font-size:13px;}',
       '.spx-forum-tools button{height:30px;border:1px solid var(--spx-line);border-radius:6px;background:#fff;color:var(--spx-text);padding:0 9px;cursor:pointer;font-size:12px;}',
       '.spx-forum-tools button:hover{border-color:var(--spx-accent);color:var(--spx-accent);}',
+      '.spx-module-nav-ready.spx-home-dashboard #content,.spx-module-nav-ready.spx-forum-dashboard #content{display:grid!important;grid-template-columns:minmax(196px,var(--spx-module-width)) minmax(0,1fr)!important;gap:14px!important;align-items:start!important;}',
+      '.spx-module-body{grid-column:2!important;min-width:0!important;display:block!important;}',
+      '.spx-module-nav-ready.spx-home-dashboard #content>*:not(.spx-module-nav):not(.spx-module-body),.spx-module-nav-ready.spx-forum-dashboard #content>*:not(.spx-module-nav):not(.spx-module-body){grid-column:2!important;min-width:0!important;}',
+      '.spx-module-nav-ready .spx-forum-tools{width:100%!important;margin:0 0 10px!important;}',
+      '.spx-module-nav{grid-column:1!important;position:sticky!important;top:46px!important;z-index:20!important;box-sizing:border-box!important;display:flex!important;flex-direction:column!important;align-self:start!important;gap:8px!important;max-height:calc(100vh - 76px)!important;padding:12px!important;overflow:auto!important;border:1px solid var(--spx-line)!important;border-radius:var(--spx-radius-lg)!important;background:var(--spx-panel)!important;box-shadow:var(--spx-shadow-card)!important;color:var(--spx-text)!important;scrollbar-width:thin!important;}',
+      '.spx-module-nav-title{padding:0 2px 8px!important;border-bottom:1px solid var(--spx-line-soft)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;line-height:1.25!important;white-space:nowrap!important;}',
+      '.spx-module-nav-group{display:flex!important;flex-direction:column!important;gap:5px!important;}',
+      '.spx-module-nav-section{box-sizing:border-box!important;display:flex!important;align-items:center!important;gap:7px!important;min-height:28px!important;margin:5px 0 1px!important;padding:0 9px!important;border-radius:8px!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;font-size:11px!important;font-weight:900!important;line-height:1.2!important;white-space:nowrap!important;}',
+      '.spx-module-nav-section:before{content:"▸";font-size:10px!important;color:var(--spx-accent)!important;}',
+      '.spx-module-nav-section:after{content:"";height:1px!important;flex:1!important;background:rgba(37,99,235,.18)!important;}',
+      '.spx-module-nav-node{display:flex!important;flex-direction:column!important;gap:4px!important;}',
+      '.spx-module-nav-children{display:flex!important;flex-direction:column!important;gap:4px!important;margin:2px 0 3px 11px!important;padding-left:9px!important;border-left:2px solid var(--spx-line-soft)!important;}',
+      '.spx-module-nav-parent-title{box-sizing:border-box!important;min-height:30px!important;padding:7px 10px!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;color:var(--spx-strong)!important;font-size:12px!important;font-weight:900!important;line-height:1.25!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
+      '.spx-module-nav-item{box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;min-height:34px!important;width:100%!important;padding:0 10px!important;border:1px solid transparent!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;color:var(--spx-text)!important;text-decoration:none!important;font-size:12px!important;font-weight:900!important;line-height:1.2!important;white-space:nowrap!important;cursor:pointer!important;}',
+      '.spx-module-nav-item.spx-module-nav-level-3{min-height:30px!important;padding:0 9px!important;border-radius:8px!important;background:transparent!important;color:var(--spx-link)!important;font-size:11px!important;font-weight:800!important;}',
+      '.spx-module-nav-label{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
+      '.spx-module-nav-item:hover,.spx-module-nav-item:focus-visible{border-color:var(--spx-accent)!important;color:var(--spx-accent)!important;text-decoration:none!important;outline:none!important;}',
+      '.spx-module-nav-item.spx-active{border-color:var(--spx-accent)!important;background:var(--spx-accent)!important;color:#fff!important;box-shadow:0 7px 16px rgba(37,99,235,.2)!important;}',
+      '.spx-module-nav-count{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-width:22px!important;height:20px!important;padding:0 6px!important;border-radius:999px!important;background:var(--spx-panel)!important;color:var(--spx-sub)!important;font-size:11px!important;font-weight:900!important;font-variant-numeric:tabular-nums!important;}',
+      '.spx-module-nav-item.spx-active .spx-module-nav-count{background:rgba(255,255,255,.22)!important;color:#fff!important;}',
       '.spx-filter-hidden{display:none!important;}',
+      '.spx-module-filter-hidden{display:none!important;}',
+      '.spx-forum-prelude-hidden{display:none!important;}',
+      '.spx-thread-row-hidden{display:none!important;}',
+      '.spx-forum-section-title{box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;min-height:38px!important;margin:0 0 10px!important;color:var(--spx-strong)!important;}',
+      '.spx-forum-section-title strong{display:block!important;min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:16px!important;font-weight:900!important;}',
+      '.spx-forum-section-title span{flex:none!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:800!important;}',
       '.spx-post-tools{display:flex;gap:6px;justify-content:flex-end;margin:4px 0;}',
       '.spx-post-tools button{border:1px solid var(--spx-line);background:#fff;border-radius:5px;padding:2px 8px;cursor:pointer;color:var(--spx-sub);}',
       '.spx-auto-buy-status{box-sizing:border-box;margin:8px 0;padding:8px 10px;border:1px solid #99f6e4;border-radius:6px;background:#f0fdfa;color:#0f766e;font-size:13px;line-height:1.45;}',
@@ -2638,8 +2816,131 @@
       '.spx-compact-read:not(.spx-reader) .tpc_content{font-size:15px;line-height:1.7;max-width:var(--spx-reader-line);}',
       '.spx-folded-quote{max-height:110px;overflow:hidden;position:relative;border-bottom:1px dashed var(--spx-line);}',
       '.spx-folded-quote:after{content:"";position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(transparent,var(--spx-panel));}',
-      '@media(max-width:900px){.spx-home-dashboard #content,.spx-forum-dashboard #content{width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-home-dashboard #spx-home-grid{grid-template-columns:1fr!important}.spx-home-dashboard .spx-home-module,.spx-home-dashboard .spx-home-module[data-spx-large="1"]{grid-column:1!important}.spx-home-dashboard #header,.spx-home-dashboard #mainNav,.spx-home-dashboard #infobox,.spx-home-dashboard #notice,.spx-home-dashboard .spx-home-quick,.spx-forum-dashboard #header,.spx-forum-dashboard #mainNav,.spx-forum-dashboard #infobox,.spx-forum-dashboard #notice{width:calc(100vw - 16px)!important}.spx-home-dashboard .spx-home-module tr.tr3,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3{grid-template-columns:1fr!important;gap:4px!important}.spx-home-dashboard .spx-home-module tr.tr3>td:first-child,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3>td:first-child:not([id^="td_"]){display:none!important}.spx-forum-tools{width:calc(100vw - 16px)!important;flex-wrap:wrap}.spx-forum-tools input{flex-basis:100%!important}}',
+      '@media(max-width:900px){.spx-home-dashboard #content,.spx-forum-dashboard #content{width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready.spx-home-dashboard #content,.spx-module-nav-ready.spx-forum-dashboard #content{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:10px!important}.spx-module-nav-ready.spx-home-dashboard #content>*:not(.spx-module-nav),.spx-module-nav-ready.spx-forum-dashboard #content>*:not(.spx-module-nav),.spx-module-nav{grid-column:1!important}.spx-module-nav{position:static!important;display:flex!important;flex-direction:row!important;align-items:center!important;max-height:none!important;overflow-x:auto!important;overflow-y:hidden!important;padding:7px!important}.spx-module-nav-title{flex:none!important;padding:0 8px!important;border-bottom:0!important}.spx-module-nav-group,.spx-module-nav-node,.spx-module-nav-children{flex:none!important;display:flex!important;flex-direction:row!important;align-items:center!important;gap:6px!important;margin:0!important;padding:0!important;border-left:0!important}.spx-module-nav-section,.spx-module-nav-parent-title{flex:none!important}.spx-module-nav-parent-title{min-height:30px!important;border-radius:999px!important}.spx-module-nav-item{flex:none!important;width:auto!important;min-height:30px!important;border-radius:999px!important}.spx-home-dashboard #spx-home-grid{grid-template-columns:1fr!important}.spx-home-dashboard .spx-home-module,.spx-home-dashboard .spx-home-module[data-spx-large="1"]{grid-column:1!important}.spx-home-dashboard #header,.spx-home-dashboard #mainNav,.spx-home-dashboard #infobox,.spx-home-dashboard #notice,.spx-home-dashboard .spx-home-quick,.spx-forum-dashboard #header,.spx-forum-dashboard #mainNav,.spx-forum-dashboard #infobox,.spx-forum-dashboard #notice{width:calc(100vw - 16px)!important}.spx-home-dashboard .spx-home-module tr.tr3,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3{grid-template-columns:1fr!important;gap:4px!important}.spx-home-dashboard .spx-home-module tr.tr3>td:first-child,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3>td:first-child:not([id^="td_"]){display:none!important}.spx-forum-tools{width:100%!important;flex-wrap:wrap}.spx-forum-tools input{flex-basis:100%!important}}',
       '@media(max-width:760px){.spx-preview-lightbox{padding:0!important}.spx-preview-lightbox-shell{border:0!important;border-radius:0!important}.spx-preview-lightbox-toolbar{align-items:flex-start!important;min-height:0!important;padding:8px!important}.spx-preview-lightbox-actions{gap:4px!important}.spx-preview-lightbox button{height:30px!important;padding:0 8px!important}.spx-preview-lightbox-canvas{padding:22px 50px!important}.spx-preview-lightbox-nav{width:38px!important;height:54px!important;font-size:26px!important}.spx-preview-lightbox-prev{left:6px!important}.spx-preview-lightbox-next{right:6px!important}.spx-preview-lightbox-caption{padding:6px 9px!important}.spx-preview-lightbox-help{display:none!important}.spx-reader body{font-size:16px!important}.spx-reader #wrapA{width:calc(100vw - 14px)!important;margin:0 7px!important}.spx-reader .tpc_content{font-size:16px!important;line-height:1.76!important;padding:12px!important}.spx-reader .tpc_content #read_tpc,.spx-reader .tpc_content>.f14{font-size:16px!important;line-height:1.76!important}.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{display:flex!important;flex-direction:column!important;gap:12px!important;padding:14px!important}.spx-reader .spx-post-body-split .tpc_content,.spx-immersive-read .spx-post-body-split .tpc_content{padding:0!important}.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{width:auto!important;max-height:360px!important;margin:0!important;padding:10px!important}.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{height:132px!important}.spx-preview-panel.spx-preview-drawer{left:8px!important;right:8px!important;top:auto!important;bottom:calc(62px + env(safe-area-inset-bottom,0px))!important;width:auto!important;max-height:58vh!important;border-radius:16px!important}.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed{left:auto!important;right:8px!important;bottom:calc(62px + env(safe-area-inset-bottom,0px))!important;top:auto!important;width:46px!important;height:126px!important}.spx-immersive-read #wrapA,.spx-immersive-read #main,.spx-immersive-read #content{width:100vw!important;margin:0!important}.spx-immersive-read table.js-post{width:calc(100vw - 14px)!important;margin:10px 7px!important}.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{font-size:19px!important;padding:16px 14px 6px!important}.spx-immersive-read .tpc_content{font-size:16px!important;line-height:1.76!important;padding:14px!important}.spx-immersive-read .tpc_content #read_tpc,.spx-immersive-read .tpc_content>.f14{font-size:16px!important;line-height:1.76!important}.spx-toolbar{left:8px!important;right:8px!important;bottom:calc(8px + env(safe-area-inset-bottom,0px))!important;width:auto!important;flex-direction:row!important;justify-content:space-between!important;padding:6px!important;border-radius:16px!important}.spx-toolbar button,.spx-toolbar a{flex:1 1 0!important;width:auto!important;height:34px!important;font-size:12px}.spx-settings,.spx-watch-center,.spx-toolbox{left:8px!important;right:8px!important;bottom:calc(58px + env(safe-area-inset-bottom,0px))!important;width:auto!important;max-height:calc(100vh - 92px - env(safe-area-inset-bottom,0px))!important;border-radius:18px!important}.spx-settings-grid,.spx-toolbox-grid{grid-template-columns:1fr!important}.spx-toolbox-body{max-height:calc(100vh - 150px - env(safe-area-inset-bottom,0px));padding:11px}.spx-toolbox-action{min-height:54px!important}.spx-watch-controls input,.spx-watch-controls select{flex:1 1 100%!important;max-width:none!important}.spx-resource-panel,#spx-resource-center{width:auto!important}.spx-watch-center-header{top:-14px}.spx-toolbox-desc{-webkit-line-clamp:1}}',
+    ];
+  }
+
+  function getInjectedThemeOverrideStyleRules() {
+    return [
+      '.spx-theme-night,.spx-theme-night body{background:var(--spx-page-bg)!important;color:var(--spx-text)!important;}',
+      '.spx-theme-night #wrapA,.spx-theme-night #main,.spx-theme-night #content,.spx-theme-night.spx-reader #wrapA,.spx-theme-night.spx-reader #main,.spx-theme-night.spx-reader #content,.spx-theme-night.spx-immersive-read #wrapA,.spx-theme-night.spx-immersive-read #main,.spx-theme-night.spx-immersive-read #content{background:var(--spx-page-bg)!important;background-image:none!important;color:var(--spx-text)!important;}',
+      '.spx-theme-night a{color:var(--spx-link)!important;}',
+      '.spx-theme-night input,.spx-theme-night textarea,.spx-theme-night select{background:var(--spx-input-bg)!important;color:var(--spx-text)!important;border-color:var(--spx-line)!important;}',
+      '.spx-theme-night .t,.spx-theme-night .t3,.spx-theme-night .t5,.spx-theme-night .bdbA,.spx-theme-night table.js-post,.spx-theme-night .spx-home-module,.spx-theme-night .spx-watch-center,.spx-theme-night .spx-settings,.spx-theme-night .spx-toolbox,.spx-theme-night .spx-preview-panel,.spx-theme-night .spx-preview-popover,.spx-theme-night .spx-author-popover,.spx-theme-night .spx-quick-reply,.spx-theme-night .spx-forum-tools,.spx-theme-night .spx-data-health,.spx-theme-night .spx-storage-usage-row,.spx-theme-night .spx-storage-suggestions{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;}',
+      '.spx-theme-night .tr1,.spx-theme-night .tr2,.spx-theme-night .tr3,.spx-theme-night td,.spx-theme-night th,.spx-theme-night .spx-home-module tr.tr3,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3{background:var(--spx-row-bg)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-text)!important;}',
+      '.spx-theme-night .spx-home-module tr.tr3:hover,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3:hover{background:var(--spx-row-hover)!important;}',
+      '.spx-theme-night .spx-home-module>h2,.spx-theme-night .spx-home-module .h,.spx-theme-night .spx-settings-header,.spx-theme-night .spx-settings-footer,.spx-theme-night .spx-toolbox-header,.spx-theme-night .spx-watch-center-header,.spx-theme-night .spx-preview-lightbox-toolbar,.spx-theme-night .spx-preview-lightbox-caption{background:var(--spx-panel-muted)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-strong)!important;}',
+      '.spx-theme-night .spx-toolbox-action,.spx-theme-night .spx-watch-item,.spx-theme-night .spx-watch-controls,.spx-theme-night .spx-settings-section,.spx-theme-night .spx-preview-item,.spx-theme-night .spx-preview-images a,.spx-theme-night .spx-fold-box,.spx-theme-night .spx-auto-resource-actions a,.spx-theme-night .spx-auto-resource-actions button{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
+      '.spx-theme-night button,.spx-theme-night .spx-toolbar button,.spx-theme-night .spx-toolbar a,.spx-theme-night .spx-thread-tools button,.spx-theme-night .spx-post-tools button,.spx-theme-night .spx-watch-actions button,.spx-theme-night .spx-watch-actions a{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
+      '.spx-theme-night .spx-toolbox-action:hover,.spx-theme-night .spx-toolbox-action:focus-visible,.spx-theme-night button:hover,.spx-theme-night .spx-toolbar button:hover,.spx-theme-night .spx-toolbar a:hover{border-color:var(--spx-accent)!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;}',
+      '.spx-theme-night .spx-toolbox-action.spx-active,.spx-theme-night .spx-toolbar .spx-active,.spx-theme-night .spx-settings .spx-primary{border-color:var(--spx-accent)!important;background:var(--spx-accent-soft)!important;color:var(--spx-accent)!important;}',
+      '.spx-theme-night .spx-toolbox-key,.spx-theme-night .spx-status-badge,.spx-theme-night .spx-home-badge{background:var(--spx-accent-soft)!important;border-color:var(--spx-line)!important;color:var(--spx-accent)!important;}',
+      '.spx-theme-night .spx-preview-lightbox{background:rgba(0,0,0,.92)!important;color:var(--spx-text)!important;}',
+      '.spx-theme-night .spx-preview-lightbox-shell,.spx-theme-night .spx-preview-lightbox-stage,.spx-theme-night .spx-preview-lightbox-strip{background:#070908!important;border-color:var(--spx-line)!important;}',
+      '.spx-theme-night .spx-preview-lightbox-image{background:#0b0f0c!important;}',
+      '.spx-theme-night .spx-danger,.spx-theme-night .spx-watch-actions .spx-danger,.spx-theme-night .spx-settings .spx-danger{border-color:var(--spx-danger)!important;background:var(--spx-danger-soft)!important;color:var(--spx-danger)!important;}',
+      '.spx-theme-night #peacemakerconfig>div:not([hidden]),.spx-theme-night #peacemakerconfig>div:not([hidden])>div,.spx-theme-night.spx-home-dashboard #notice,.spx-theme-night.spx-home-dashboard .spx-home-quick a,.spx-theme-night.spx-search-page .t,.spx-theme-night.spx-profile-page .spx-account-tabs,.spx-theme-night.spx-profile-page #u-wrap,.spx-theme-night.spx-profile-page #u-wrap2,.spx-theme-night.spx-profile-page #set-side-wrap,.spx-theme-night.spx-profile-page #set-content-wrap{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;}',
+      '.spx-theme-night.spx-home-dashboard #notice td,.spx-theme-night.spx-home-dashboard .spx-home-quick a span,.spx-theme-night.spx-home-dashboard .spx-home-module tr.tr3>td,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3>td,.spx-theme-night.spx-forum-dashboard td[id^="td_"],.spx-theme-night.spx-search-page .tr1,.spx-theme-night.spx-search-page .tr2,.spx-theme-night.spx-search-page .tr3,.spx-theme-night.spx-profile-page #set-side .set-h2{background:transparent!important;border-color:var(--spx-line-soft)!important;color:var(--spx-sub)!important;}',
+      '.spx-theme-night.spx-home-dashboard .spx-home-module [id^="fn_"],.spx-theme-night.spx-home-dashboard .spx-home-module [id^="fn_"] a,.spx-theme-night.spx-forum-dashboard td[id^="td_"] a[id^="a_ajax_"],.spx-theme-night.spx-forum-dashboard [id^="td_"] a[href*="read.php"],.spx-theme-night.spx-profile-page #set-menu>li>a,.spx-theme-night.spx-profile-page #u-top-nav .b>li>a,.spx-theme-night.spx-profile-page .spx-account-tabs a{color:var(--spx-link)!important;}',
+      '.spx-theme-night.spx-profile-page #set-menu>li>a,.spx-theme-night.spx-profile-page #u-top-nav .b>li>a,.spx-theme-night.spx-profile-page .spx-account-tabs a,.spx-theme-night.spx-search-page input[type="text"],.spx-theme-night.spx-search-page input[type="search"],.spx-theme-night.spx-search-page input[name="keyword"],.spx-theme-night.spx-search-page input[name="username"]{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
+      '.spx-theme-night .spx-preview-popover h4{color:var(--spx-strong)!important;}',
+      '.spx-theme-night .spx-preview-popover .spx-preview-meta,.spx-theme-night .spx-preview-popover .spx-preview-status{color:var(--spx-muted)!important;}',
+      '.spx-theme-night .spx-preview-popover .spx-preview-text{color:var(--spx-text)!important;}',
+      '.spx-theme-night .spx-preview-popover .spx-preview-images a{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;}',
+    ];
+  }
+
+  function getInjectedPreviewParityStyleRules() {
+    return [
+      ':root,.spx-theme-clean{--spx-page-max:1480px;--spx-page-space:40px;--spx-radius:10px;--spx-radius-lg:12px;--spx-shadow-card:0 8px 18px rgba(15,23,42,.07);}',
+      ':root.spx-theme-night,.spx-theme-night{--spx-page-max:1480px;}',
+      '.spx-site-shell #mainNav,.spx-home-dashboard #mainNav,.spx-forum-dashboard #mainNav,.spx-immersive-read #mainNav{height:38px!important;padding:0 8px!important;border-radius:10px!important;box-shadow:0 6px 18px rgba(15,23,42,.12)!important;}',
+      '.spx-site-shell #mainNav>div:not([style*="padding-left"]){display:none!important;}',
+      '.spx-site-shell #mainNav>div[style*="padding-left"]{display:flex!important;align-items:center!important;gap:6px!important;height:38px!important;padding-left:8px!important;}',
+      '.spx-site-shell #mainNav>div[style*="padding-left"] table,.spx-site-shell #mainNav>div[style*="padding-left"] tbody,.spx-site-shell #mainNav>div[style*="padding-left"] tr,.spx-site-shell #mainNav>div[style*="padding-left"] td{flex:none!important;height:38px!important;}',
+      '.spx-site-shell #guide{height:38px!important;align-items:center!important;gap:6px!important;}',
+      '.spx-site-shell #guide>li>a{height:28px!important;line-height:28px!important;padding:0 10px!important;border-radius:8px!important;font-size:12px!important;font-weight:800!important;}',
+      '.spx-site-shell #guide>li.current>a,.spx-site-shell #guide>li.spx-nav-current>a,.spx-site-shell #guide>li>a.spx-nav-current{box-shadow:inset 0 -2px 0 var(--spx-accent)!important;}',
+      '.spx-site-shell #peacemakerconfig>div:not([hidden]){top:38px!important;border-radius:10px!important;}',
+      '.spx-site-shell #header,.spx-site-shell #mainNav,.spx-site-shell #infobox,.spx-site-shell #notice,.spx-site-shell #content,.spx-home-dashboard #header,.spx-home-dashboard #mainNav,.spx-home-dashboard #infobox,.spx-home-dashboard #notice,.spx-home-dashboard #content,.spx-forum-dashboard #header,.spx-forum-dashboard #mainNav,.spx-forum-dashboard #infobox,.spx-forum-dashboard #notice,.spx-forum-dashboard #content,.spx-immersive-read #header,.spx-immersive-read #mainNav,.spx-immersive-read #breadcrumbs{width:calc(100vw - 40px)!important;max-width:1480px!important;margin-left:auto!important;margin-right:auto!important;}',
+      '.spx-home-dashboard #header,.spx-forum-dashboard #header,.spx-immersive-read #header{margin-top:18px!important;}',
+      '.spx-home-dashboard #content,.spx-forum-dashboard #content{margin:14px auto 56px!important;}',
+      '.spx-module-nav-ready.spx-home-dashboard #content,.spx-module-nav-ready.spx-forum-dashboard #content{grid-template-columns:minmax(196px,var(--spx-module-width)) minmax(0,1fr)!important;gap:14px!important;}',
+      '.spx-module-nav-ready .spx-module-nav-host{display:grid!important;grid-template-columns:minmax(196px,var(--spx-module-width)) minmax(0,1fr)!important;gap:14px!important;align-items:start!important;width:calc(100vw - 40px)!important;max-width:1480px!important;margin:14px auto 56px!important;}',
+      '.spx-module-nav-ready .spx-module-body{grid-column:2!important;min-width:0!important;display:block!important;}',
+      '.spx-module-nav-ready .spx-module-nav-host>*:not(.spx-module-nav):not(.spx-module-body){grid-column:2!important;min-width:0!important;}',
+      '.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host{display:grid!important;grid-template-columns:minmax(196px,var(--spx-module-width)) minmax(0,1fr)!important;gap:14px!important;align-items:start!important;width:calc(100vw - 40px)!important;max-width:1480px!important;margin:14px auto 56px!important;}',
+      '.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host>.spx-module-nav{grid-column:1!important;width:auto!important;max-width:100%!important;min-width:0!important;}',
+      '.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host>.spx-module-body{grid-column:2!important;width:auto!important;max-width:100%!important;min-width:0!important;}',
+      '.spx-module-nav-ready.spx-search-page .spx-module-body>.bdbA,.spx-module-nav-ready.spx-search-page .spx-module-body>.t,.spx-module-nav-ready.spx-search-page .spx-module-body>.t3,.spx-module-nav-ready.spx-search-page .spx-module-body>.t5,.spx-module-nav-ready.spx-profile-page .spx-module-body>.bdbA,.spx-module-nav-ready.spx-profile-page .spx-module-body>.t,.spx-module-nav-ready.spx-profile-page .spx-module-body>.t3,.spx-module-nav-ready.spx-profile-page .spx-module-body>.t5{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;}',
+      '.spx-module-nav-ready.spx-search-page .spx-module-body table,.spx-module-nav-ready.spx-profile-page .spx-module-body table{max-width:100%!important;}',
+      '.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host{display:grid!important;grid-template-columns:minmax(196px,var(--spx-module-width)) minmax(0,1fr)!important;gap:14px!important;align-items:start!important;width:calc(100vw - 40px)!important;max-width:1480px!important;margin:14px auto 56px!important;}',
+      '.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-nav{grid-column:1!important;width:auto!important;max-width:100%!important;min-width:0!important;}',
+      '.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-body{grid-column:2!important;display:block!important;width:auto!important;max-width:100%!important;min-width:0!important;overflow:hidden!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-module-body>.bdbA{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-module-body>.t,.spx-module-nav-ready.spx-task-page .spx-module-body>.t3,.spx-module-nav-ready.spx-task-page .spx-module-body>.t5{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;overflow:hidden!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-module-body table{box-sizing:border-box!important;width:100%!important;max-width:100%!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-module-body td,.spx-module-nav-ready.spx-task-page .spx-module-body th{max-width:100%!important;word-break:break-word!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-module-body img{max-width:100%!important;height:auto!important;}',
+      '.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-body.spx-task-layout-body,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-body.spx-task-layout-body{display:grid!important;grid-template-columns:minmax(240px,320px) minmax(0,1fr)!important;gap:18px!important;align-items:start!important;overflow:visible!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-task-layout-body>.bdbA{grid-column:1/-1!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-task-side-stack{grid-column:1!important;display:flex!important;flex-direction:column!important;gap:14px!important;min-width:0!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-task-side-stack:empty{display:none!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-task-main-stack{grid-column:2!important;min-width:0!important;max-width:100%!important;overflow:hidden!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-task-side-stack>.t,.spx-module-nav-ready.spx-task-page .spx-task-side-stack>.t3,.spx-module-nav-ready.spx-task-page .spx-task-side-stack>.t5,.spx-module-nav-ready.spx-task-page .spx-task-main-stack>.t,.spx-module-nav-ready.spx-task-page .spx-task-main-stack>.t3,.spx-module-nav-ready.spx-task-page .spx-task-main-stack>.t5{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-task-side-stack>.spx-task-side-block,.spx-module-nav-ready.spx-task-page .spx-task-main-stack>.spx-task-main-block{float:none!important;clear:none!important;box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-task-main-stack table,.spx-module-nav-ready.spx-task-page .spx-task-side-stack table{box-sizing:border-box!important;width:100%!important;max-width:100%!important;}',
+      '.spx-module-nav-ready.spx-home-dashboard .spx-module-body #spx-home-grid{grid-template-columns:minmax(0,1fr)!important;width:100%!important;max-width:100%!important;min-width:0!important;}',
+      '.spx-module-nav-ready.spx-home-dashboard .spx-module-body .spx-home-module,.spx-module-nav-ready.spx-home-dashboard .spx-module-body .spx-home-module[data-spx-large="1"]{grid-column:1!important;width:100%!important;max-width:100%!important;min-width:0!important;}',
+      '.spx-module-nav{top:52px!important;gap:9px!important;padding:12px!important;border-radius:12px!important;box-shadow:0 5px 14px rgba(15,23,42,.05)!important;}',
+      '.spx-module-nav-title{padding:0 2px 9px!important;border-bottom:1px solid var(--spx-line)!important;}',
+      '.spx-module-nav-section{margin:6px 0 1px!important;}',
+      '.spx-module-nav-item{min-height:34px!important;padding:0 10px!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;}',
+      '.spx-module-nav-count{min-width:22px!important;height:20px!important;}',
+      '.spx-home-dashboard .spx-home-quick{display:none!important;}',
+      '.spx-home-dashboard #notice,.spx-home-dashboard .spx-home-module,.spx-forum-dashboard #content .t,.spx-forum-dashboard .spx-module-nav-host .t{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;border-radius:12px!important;background:var(--spx-panel)!important;border-color:var(--spx-line)!important;box-shadow:0 8px 18px rgba(15,23,42,.06)!important;}',
+      '.spx-home-dashboard .spx-home-module>h2,.spx-home-dashboard .spx-home-module .h{min-height:38px!important;padding:0 12px!important;background:var(--spx-panel)!important;border:0!important;border-bottom:1px solid var(--spx-line)!important;color:var(--spx-strong)!important;font-size:13px!important;font-weight:900!important;}',
+      '.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table table,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tbody{display:block!important;width:100%!important;border:0!important;background:transparent!important;}',
+      '.spx-home-dashboard .spx-home-module tr.tr2,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2{display:grid!important;gap:8px!important;padding:10px 12px!important;border-bottom:1px solid var(--spx-line)!important;background:var(--spx-panel-muted)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;}',
+      '.spx-home-dashboard .spx-home-module tr.tr2{grid-template-columns:1fr 92px 82px!important;}',
+      '.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2{grid-template-columns:minmax(0,1fr) 92px 82px minmax(160px,.7fr)!important;}',
+      '.spx-home-dashboard .spx-home-module tr.tr2>td,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2>td,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2>td{display:block!important;width:auto!important;padding:0!important;border:0!important;background:transparent!important;color:var(--spx-sub)!important;}',
+      '.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2>td:first-child{display:none!important;}',
+      '.spx-home-dashboard .spx-home-module tr.tr3,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3{min-height:44px!important;padding:9px 12px!important;border-bottom:1px solid var(--spx-line)!important;background:var(--spx-panel)!important;}',
+      '.spx-home-dashboard .spx-home-module tr.tr3{grid-template-columns:minmax(0,1fr) 92px 82px!important;}',
+      '.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3{grid-template-columns:minmax(0,1fr) 92px 82px minmax(160px,.7fr)!important;}',
+      '.spx-home-dashboard .spx-home-module tr.tr3>td,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3>td,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3>td,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3>th{display:block!important;width:auto!important;padding:0!important;border:0!important;background:transparent!important;font-size:12px!important;line-height:1.45!important;color:var(--spx-sub)!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
+      '.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3>td:first-child:not([id^="td_"]){display:none!important;}',
+      '.spx-home-dashboard .spx-home-module [id^="fn_"] a,.spx-home-dashboard .spx-home-module [id^="fn_"],.spx-forum-dashboard td[id^="td_"] a[id^="a_ajax_"],.spx-forum-dashboard [id^="td_"] a[href*="read.php"]{color:var(--spx-strong)!important;font-size:14px!important;font-weight:800!important;}',
+      '.spx-home-dashboard .spx-home-hot [id^="fn_"] a,.spx-home-dashboard .spx-home-hot [id^="fn_"]{color:var(--spx-accent)!important;}',
+      '.spx-home-dashboard .spx-home-badge,.spx-toolbox-count,.spx-status-badge,.spx-toolbox-key{background:var(--spx-accent-soft)!important;color:var(--spx-accent)!important;}',
+      '.spx-forum-tools{min-height:42px!important;padding:8px 10px!important;border-radius:12px!important;background:var(--spx-panel)!important;border-color:var(--spx-line)!important;box-shadow:0 8px 18px rgba(15,23,42,.06)!important;}',
+      '.spx-forum-tools input{height:30px!important;border-radius:8px!important;background:var(--spx-panel-muted)!important;}',
+      '.spx-forum-tools button,.spx-thread-tools button,.spx-post-tools button{border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;}',
+      '.spx-forum-dashboard .spx-thread-list-table tr:not(.tr2):not(.tr3){display:none!important;}',
+      '.spx-forum-dashboard .spx-thread-list-table tr.spx-filter-hidden,.spx-forum-dashboard .spx-thread-list-table tr.spx-hidden-rule,.spx-forum-dashboard .spx-thread-list-table tr.spx-unread-hidden,.spx-forum-dashboard .spx-thread-list-table tr.spx-thread-row-hidden{display:none!important;}',
+      '.spx-forum-dashboard .spx-thread-list-table tr.tr3:not(:hover) .spx-thread-tools{display:none!important;}',
+      '.spx-toolbar{right:16px!important;bottom:18px!important;display:flex!important;flex-direction:row!important;gap:7px!important;padding:6px!important;border-radius:16px!important;background:rgba(255,255,255,.92)!important;box-shadow:0 18px 46px rgba(15,23,42,.18)!important;}',
+      '.spx-toolbar button,.spx-toolbar a{width:52px!important;height:36px!important;border-radius:12px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;}',
+      '.spx-toolbar button:hover,.spx-toolbar a:hover,.spx-toolbar button:focus-visible,.spx-toolbar a:focus-visible{border-color:var(--spx-accent)!important;color:var(--spx-accent)!important;box-shadow:0 7px 18px rgba(37,99,235,.16)!important;}',
+      '.spx-toolbar .spx-active{border-color:var(--spx-accent)!important;background:var(--spx-accent-soft)!important;color:var(--spx-accent)!important;box-shadow:inset 0 0 0 1px rgba(37,99,235,.12),0 6px 16px rgba(37,99,235,.14)!important;}',
+      '.spx-toolbox,.spx-settings,.spx-watch-center{right:16px!important;bottom:72px!important;border-radius:12px!important;}',
+      '.spx-toolbox{width:min(460px,calc(100vw - 32px))!important;}',
+      '.spx-toolbox-header,.spx-settings-header,.spx-watch-center-header{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;}',
+      '.spx-toolbox-eyebrow{color:var(--spx-accent)!important;}',
+      '.spx-toolbox-action{min-height:42px!important;border-radius:10px!important;background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;box-shadow:none!important;}',
+      '.spx-toolbox-action:hover,.spx-toolbox-action:focus-visible{border-color:var(--spx-accent)!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;box-shadow:0 10px 24px rgba(37,99,235,.15)!important;}',
+      '.spx-toolbox-action.spx-active{border-color:var(--spx-accent)!important;background:var(--spx-accent-soft)!important;color:var(--spx-accent)!important;box-shadow:0 8px 22px rgba(37,99,235,.18)!important;}',
+      '.spx-toolbox-action.spx-active:before{background:var(--spx-accent)!important;}',
+      '.spx-theme-night .spx-toolbar{background:rgba(24,29,26,.92)!important;box-shadow:0 18px 46px rgba(0,0,0,.42)!important;}',
+      '.spx-theme-night.spx-home-dashboard .spx-home-module,.spx-theme-night.spx-home-dashboard #notice,.spx-theme-night.spx-home-dashboard .spx-home-quick a,.spx-theme-night.spx-forum-dashboard #content .t,.spx-theme-night.spx-forum-dashboard .spx-module-nav-host .t{background:#181d1a!important;border-color:#303a32!important;color:#edf4ec!important;box-shadow:0 10px 30px rgba(0,0,0,.28)!important;}',
+      '.spx-theme-night.spx-home-dashboard .spx-home-module tr.tr2,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2,.spx-theme-night.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2{background:#202720!important;border-color:#303a32!important;color:#b7c8b7!important;}',
+      '.spx-theme-night.spx-home-dashboard .spx-home-module tr.tr3,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3,.spx-theme-night.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3{background:#181d1a!important;border-color:#303a32!important;}',
+      '.spx-theme-night.spx-home-dashboard .spx-home-module>h2,.spx-theme-night.spx-home-dashboard .spx-home-module .h,.spx-theme-night .spx-toolbox-header,.spx-theme-night .spx-settings-header,.spx-theme-night .spx-watch-center-header{background:var(--spx-panel)!important;}',
+      '@media(max-width:900px){:root,.spx-theme-clean,.spx-theme-night{--spx-page-space:16px}.spx-site-shell #mainNav,.spx-home-dashboard #mainNav,.spx-forum-dashboard #mainNav,.spx-immersive-read #mainNav{height:34px!important}.spx-site-shell #guide{height:34px!important;overflow-x:auto!important}.spx-site-shell #guide>li>a{height:26px!important}.spx-site-shell #spx-nav-brand{height:26px!important;line-height:26px!important}.spx-module-nav-ready .spx-module-nav-host{grid-template-columns:minmax(0,1fr)!important;gap:10px!important;width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready .spx-module-nav-host>*:not(.spx-module-nav),.spx-module-nav-ready .spx-module-body,.spx-module-nav{grid-column:1!important}.spx-module-nav{top:auto!important;position:static!important}.spx-module-nav-section{flex:none!important;margin:0 2px!important}.spx-home-dashboard .spx-home-module tr.tr2,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2{display:none!important}.spx-home-dashboard .spx-home-module tr.tr3,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3{grid-template-columns:1fr!important}}',
+      '@media(max-width:900px){.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host{grid-template-columns:minmax(0,1fr)!important;width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host>.spx-module-body{grid-column:1!important;width:auto!important;max-width:100%!important}}',
+      '@media(max-width:900px){.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host{grid-template-columns:minmax(0,1fr)!important;width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-body{grid-column:1!important;width:auto!important;max-width:100%!important}.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-body.spx-task-layout-body,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-body.spx-task-layout-body{grid-template-columns:minmax(0,1fr)!important}.spx-module-nav-ready.spx-task-page .spx-task-side-stack,.spx-module-nav-ready.spx-task-page .spx-task-main-stack{grid-column:1!important}}',
     ];
   }
 
@@ -2652,6 +2953,8 @@
   }
 
   function setBodyClasses(settings) {
+    document.documentElement.classList.toggle('spx-theme-clean', !settings.nightMode);
+    document.documentElement.classList.toggle('spx-theme-night', !!settings.nightMode);
     document.documentElement.classList.toggle('spx-site-shell', shouldUseSiteShell(location.href));
     document.documentElement.classList.toggle('spx-adblock', !!settings.adBlock);
     document.documentElement.classList.toggle('spx-clean', !!settings.cleanMode);
@@ -2661,6 +2964,7 @@
     document.documentElement.classList.toggle('spx-forum-dashboard', shouldUseForumDashboard(location.href, document));
     document.documentElement.classList.toggle('spx-search-page', shouldUseSearchPage(location.href));
     document.documentElement.classList.toggle('spx-profile-page', shouldUseProfilePage(location.href));
+    document.documentElement.classList.toggle('spx-task-page', shouldUseTaskPage(location.href));
     document.documentElement.classList.toggle('spx-compact-read', !!settings.compactRead);
     document.documentElement.classList.toggle('spx-hide-profile', !!settings.hideUserProfile);
     document.documentElement.style.setProperty('--spx-immersive-font-size', '16px');
@@ -4006,7 +4310,7 @@
       var parsed = parseForumFilterQuery(input.value);
       items.forEach(function toggleItem(item) {
         var hidden = !!input.value.trim() && !matchesForumFilter(item, parsed);
-        if (item.row && item.row.classList) item.row.classList.toggle('spx-filter-hidden', hidden);
+        setThreadRowHiddenClass(item.row, 'spx-filter-hidden', hidden);
       });
     }
 
@@ -4078,6 +4382,851 @@
     });
 
     content.insertBefore(tools, content.firstChild);
+  }
+
+  function restoreModuleNavigation() {
+    var nav = qs('#spx-module-nav');
+    if (nav) nav.remove();
+    document.documentElement.classList.remove('spx-module-nav-ready');
+    qsa('.spx-module-body').forEach(function unwrapModuleBody(body) {
+      var parent = body.parentNode;
+      if (!parent) return;
+      while (body.firstChild) {
+        parent.insertBefore(body.firstChild, body);
+      }
+      body.remove();
+    });
+    qsa('.spx-module-nav-host').forEach(function restoreNavHost(host) {
+      host.classList.remove('spx-module-nav-host');
+    });
+    qsa('.spx-module-filter-hidden').forEach(function restoreFilteredRow(row) {
+      row.classList.remove('spx-module-filter-hidden');
+    });
+  }
+
+  function getCompactNodeText(node, fallback) {
+    if (!node) return fallback || '';
+    var clone = node.cloneNode(true);
+    qsa('button,input,select,textarea', clone).forEach(function removeControl(control) {
+      control.remove();
+    });
+    return (clone.textContent || '').replace(/\s+/g, ' ').trim() || fallback || '';
+  }
+
+  function ensureModuleTargetId(node, prefix, index) {
+    if (!node) return '';
+    if (!node.id) node.id = 'spx-module-target-' + prefix + '-' + (index + 1);
+    return node.id;
+  }
+
+  function setModuleNavActive(nav, activeItem) {
+    qsa('.spx-module-nav-item', nav).forEach(function toggleActive(item) {
+      item.classList.toggle('spx-active', item === activeItem);
+    });
+  }
+
+  function appendModuleNavigationItem(container, config, active, level) {
+    var item = createEl(config.href ? 'a' : 'button', 'spx-module-nav-item');
+    item.classList.add('spx-module-nav-level-' + (level || 2));
+    if (config.className) item.classList.add(config.className);
+    if (config.href) {
+      item.href = config.href;
+    } else {
+      item.type = 'button';
+    }
+    item.title = config.title || config.label || '';
+    item.appendChild(createEl('span', 'spx-module-nav-label', config.label));
+    if (!config.navigationOnly && (config.countText !== undefined || config.count !== undefined)) {
+      item.appendChild(createEl('span', 'spx-module-nav-count', String(config.countText !== undefined ? config.countText : config.count)));
+    }
+    item.classList.toggle('spx-active', !!active);
+    item.addEventListener('click', function activateModuleNav(event) {
+      var nav = item.closest ? item.closest('.spx-module-nav') : null;
+      if (typeof config.onClick === 'function') {
+        event.preventDefault();
+        config.onClick(event);
+      }
+      if (nav) setModuleNavActive(nav, item);
+      if (config.target && config.target.scrollIntoView) {
+        config.target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+    container.appendChild(item);
+  }
+
+  function getModuleNavigationHost() {
+    return qs('#content') || qs('#main') || qs('#wrapA');
+  }
+
+  function createModuleNavigationNode(config) {
+    return {
+      key: getNavigationItemKey(config.section, config.label, config.href || config.parentLabel || ''),
+      label: config.label,
+      config: config,
+      children: [],
+      childKeys: {},
+    };
+  }
+
+  function dedupeModuleNavigationTree(groups) {
+    var topLevelLabels = {};
+    var childLabels = {};
+    (groups || []).forEach(function collectTopLevelLabels(group) {
+      (group.nodes || []).forEach(function collectNodeLabel(node) {
+        var label = normalizeNavigationLabel(node && node.label).toLowerCase();
+        if (label) topLevelLabels[label] = true;
+      });
+    });
+    (groups || []).forEach(function pruneGroupChildren(group) {
+      (group.nodes || []).forEach(function pruneNodeChildren(node) {
+        node.children = (node.children || []).filter(function keepUniqueChild(child) {
+          var label = normalizeNavigationLabel(child && child.label).toLowerCase();
+          if (!label || topLevelLabels[label] || childLabels[label]) return false;
+          childLabels[label] = true;
+          return true;
+        });
+      });
+    });
+    return groups;
+  }
+
+  function buildModuleNavigationTree(configs) {
+    var groups = [];
+    var groupMap = {};
+    (configs || []).forEach(function appendTreeConfig(config) {
+      var section = config.section || '导航';
+      if (!groupMap[section]) {
+        groupMap[section] = {
+          label: section,
+          nodes: [],
+          nodeMap: {},
+          parentMap: {},
+        };
+        groups.push(groupMap[section]);
+      }
+      var group = groupMap[section];
+      var parentLabel = normalizeNavigationLabel(config.parentLabel);
+      var label = normalizeNavigationLabel(config.label);
+      var labelKey = label.toLowerCase();
+      if (parentLabel && parentLabel !== label) {
+        var parentMapKey = parentLabel.toLowerCase();
+        var parentKey = 'parent|' + parentMapKey;
+        var parentNode = group.parentMap[parentMapKey] || group.nodeMap[parentKey];
+        if (!parentNode) {
+          parentNode = {
+            key: parentKey,
+            label: parentLabel,
+            config: null,
+            children: [],
+            childKeys: {},
+          };
+          group.nodeMap[parentKey] = parentNode;
+          group.parentMap[parentMapKey] = parentNode;
+          group.nodes.push(parentNode);
+        }
+        var childKey = label.toLowerCase();
+        if (parentNode.childKeys[childKey] === undefined) {
+          parentNode.childKeys[childKey] = parentNode.children.length;
+          parentNode.children.push(createModuleNavigationNode(config));
+        } else {
+          var childIndex = parentNode.childKeys[childKey];
+          parentNode.children[childIndex] = createModuleNavigationNode(
+            Object.assign({}, parentNode.children[childIndex].config || {}, config)
+          );
+        }
+        return;
+      }
+
+      var key = getNavigationItemKey(section, label, config.href || label);
+      var existingParentNode = group.parentMap[labelKey];
+      if (existingParentNode) {
+        existingParentNode.config = Object.assign({}, existingParentNode.config || {}, config);
+        existingParentNode.label = label;
+        group.nodeMap[key] = existingParentNode;
+        return;
+      }
+      if (group.nodeMap[key]) {
+        group.nodeMap[key].config = Object.assign({}, group.nodeMap[key].config || {}, config);
+        if (!group.parentMap[labelKey]) group.parentMap[labelKey] = group.nodeMap[key];
+        return;
+      }
+      group.nodeMap[key] = createModuleNavigationNode(config);
+      group.parentMap[labelKey] = group.nodeMap[key];
+      group.nodes.push(group.nodeMap[key]);
+    });
+    return dedupeModuleNavigationTree(groups);
+  }
+
+  function appendModuleNavigationNode(nav, parent, node, hasActive, state) {
+    var wrapper = createEl('div', 'spx-module-nav-node');
+    var active = !!(node.config && node.config.active);
+    if (node.config) {
+      appendModuleNavigationItem(wrapper, node.config, active || (!hasActive && state.index === 0), node.children.length ? 2 : 2);
+      state.index += 1;
+    } else {
+      wrapper.appendChild(createEl('div', 'spx-module-nav-parent-title', node.label));
+    }
+    if (node.children.length) {
+      var children = createEl('div', 'spx-module-nav-children');
+      node.children.forEach(function appendChildNavigation(childNode) {
+        appendModuleNavigationItem(children, childNode.config, !!childNode.config.active, 3);
+        state.index += 1;
+      });
+      wrapper.appendChild(children);
+    }
+    parent.appendChild(wrapper);
+  }
+
+  function mountModuleNavigation(title, configs) {
+    restoreModuleNavigation();
+    var content = getModuleNavigationHost();
+    var visibleConfigs = (configs || []).filter(function keepModuleConfig(config) {
+      return config && config.label && (
+        config.count ||
+        config.count === 0 ||
+        config.countText !== undefined ||
+        config.alwaysShow ||
+        config.href ||
+        config.onClick ||
+        config.target
+      );
+    });
+    if (!content || !visibleConfigs.length) return null;
+
+    var nav = createEl('nav', 'spx-module-nav');
+    nav.id = 'spx-module-nav';
+    nav.setAttribute('aria-label', title || '导航中心');
+    nav.appendChild(createEl('div', 'spx-module-nav-title', title || '导航中心'));
+    var hasActive = visibleConfigs.some(function hasActiveConfig(config) {
+      return !!config.active;
+    });
+    var state = { index: 0 };
+    buildModuleNavigationTree(visibleConfigs).forEach(function appendGroup(group) {
+      var groupNode = createEl('div', 'spx-module-nav-group');
+      groupNode.appendChild(createEl('div', 'spx-module-nav-section', group.label));
+      group.nodes.forEach(function appendNode(node) {
+        appendModuleNavigationNode(nav, groupNode, node, hasActive, state);
+      });
+      nav.appendChild(groupNode);
+    });
+    var body = createEl('div', 'spx-module-body');
+    while (content.firstChild) {
+      body.appendChild(content.firstChild);
+    }
+    content.classList.add('spx-module-nav-host');
+    content.appendChild(nav);
+    content.appendChild(body);
+    document.documentElement.classList.add('spx-module-nav-ready');
+    return nav;
+  }
+
+  function queueModuleNavigationConfigs(configs) {
+    var nextConfigs = configs || [];
+    pendingModuleNavigationConfigs = pendingModuleNavigationConfigs.concat(nextConfigs);
+    rememberModuleNavigationConfigs(nextConfigs);
+  }
+
+  function getHomeNavigationBaseUrl(origin) {
+    return String(origin || location.origin || '') + '/index.php';
+  }
+
+  function getSeedModuleNavigationConfigs(origin) {
+    var homeUrl = getHomeNavigationBaseUrl(origin);
+    return [
+      { label: '漫区特设', href: homeUrl + '#spx-module-target-home-1', order: 10 },
+      { label: '蜜柑计划', href: homeUrl + '#spx-module-target-home-2', order: 20 },
+      { label: '综合交流', href: homeUrl + '#spx-module-target-home-3', order: 30 },
+      { label: '人民囧府', href: homeUrl + '#spx-module-target-home-4', order: 40 },
+    ].map(function mapSeedNavigation(item) {
+      return {
+        section: '子栏目',
+        label: item.label,
+        href: item.href,
+        title: item.label,
+        alwaysShow: true,
+        navigationOnly: true,
+        order: item.order,
+      };
+    });
+  }
+
+  function rememberModuleNavigationConfigs(configs) {
+    var source = configs || [];
+    if (!source.length) return false;
+    var pool = loadNavigationPool();
+    var changed = false;
+    var now = Date.now();
+    var baseUrl = typeof location !== 'undefined' ? location.href : '';
+    var maxOrder = Object.keys(pool).reduce(function getMaxOrder(max, key) {
+      return Math.max(max, Number(pool[key] && pool[key].order) || 0);
+    }, 0);
+    source.forEach(function rememberConfig(config, index) {
+      var normalized = normalizePersistentNavigationConfig(config, baseUrl, maxOrder + index + 1);
+      if (!normalized) return;
+      if (/^(当前位置|主题导航)$/.test(normalized.section)) return;
+      normalized.updatedAt = now;
+      var key = getNavigationItemKey(normalized.section, normalized.label, normalized.href);
+      var existing = pool[key];
+      if (existing) {
+        normalized.order = existing.order || normalized.order;
+      }
+      if (!existing || JSON.stringify(existing) !== JSON.stringify(normalized)) {
+        pool[key] = normalized;
+        changed = true;
+      }
+    });
+    if (changed) saveNavigationPool(pool);
+    return changed;
+  }
+
+  function getPersistentModuleNavigationConfigs() {
+    var sectionOrder = {
+      子栏目: 1,
+      版块导航: 2,
+    };
+    var pool = loadNavigationPool();
+    var poolItems = Object.keys(pool).map(function mapPoolItem(key) {
+      return pool[key];
+    });
+    return getSeedModuleNavigationConfigs(location.origin)
+      .concat(poolItems)
+      .map(function mapPersistentNavigation(item) {
+        return {
+          section: item.section || '子栏目',
+          parentLabel: item.parentLabel || '',
+          label: item.label,
+          href: item.href,
+          title: item.title || item.label,
+          className: item.className || 'spx-module-nav-persisted',
+          active: isModuleNavigationConfigActive(item, location.href),
+          alwaysShow: true,
+          navigationOnly: true,
+          order: Number(item.order) || 0,
+          updatedAt: Number(item.updatedAt) || 0,
+        };
+      })
+      .sort(function sortPersistentNavigation(left, right) {
+        var leftSection = sectionOrder[left.section] || 99;
+        var rightSection = sectionOrder[right.section] || 99;
+        if (leftSection !== rightSection) return leftSection - rightSection;
+        return (left.order || 0) - (right.order || 0) || String(left.label).localeCompare(String(right.label));
+      });
+  }
+
+  function mergeModuleNavigationConfigs(configs) {
+    var result = [];
+    var positions = {};
+    (configs || []).forEach(function mergeNavigationConfig(config) {
+      if (!config || !config.label) return;
+      var label = normalizeNavigationLabel(config.label);
+      if (!shouldKeepNavigationLabel(label)) return;
+      var href = normalizeNavigationHref(config.href || '', location.href);
+      var section = config.section || '';
+      var parentLabel = normalizeNavigationLabel(config.parentLabel || '');
+      var key = [section, parentLabel, label, (href || '').replace(/#.*$/, '') || config.target || config.onClick || result.length].join('|');
+      var nextConfig = Object.assign({}, config, {
+        parentLabel: parentLabel,
+        label: label,
+        href: href || config.href,
+        active: !!config.active || isModuleNavigationConfigActive(Object.assign({}, config, { href: href || config.href }), location.href),
+        alwaysShow: config.alwaysShow !== false,
+        navigationOnly: config.navigationOnly !== false,
+      });
+      if (positions[key] !== undefined) {
+        result[positions[key]] = Object.assign({}, result[positions[key]], nextConfig);
+        return;
+      }
+      positions[key] = result.length;
+      result.push(nextConfig);
+    });
+    return result;
+  }
+
+  function collectHomeNavigationConfigsFromDocument(root, pageUrl) {
+    var baseUrl = normalizeNavigationHref(pageUrl || getHomeNavigationBaseUrl(location.origin), location.href);
+    return qsa('#content .t[id^="t_"]', root).map(function mapHomeDocumentModule(module, index) {
+      var header = qs('.h', module) || qs('h2', module);
+      var moduleId = module.id || 'spx-module-target-home-' + (index + 1);
+      return {
+        section: '子栏目',
+        label: getCompactNodeText(header, '模块 ' + (index + 1)).slice(0, 18),
+        href: baseUrl.replace(/#.*$/, '') + '#' + moduleId,
+        title: getCompactNodeText(header, '模块 ' + (index + 1)).slice(0, 18),
+        alwaysShow: true,
+        navigationOnly: true,
+      };
+    });
+  }
+
+  function collectForumNavigationConfigsFromDocument(root, pageUrl) {
+    var currentFid = getCurrentForumId(pageUrl || location.href);
+    var seen = {};
+    var configs = [];
+    qsa('a[href*="thread.php?fid"]', root).forEach(function collectFetchedForumLink(link) {
+      if (!isUsefulForumNavigationLink(link, currentFid)) return;
+      var href = normalizeNavigationHref(link.getAttribute('href') || link.href, pageUrl || location.href);
+      var fid = getCurrentForumId(href);
+      var label = normalizeNavigationLabel(link.textContent);
+      var parentLabel = getForumNavigationParentLabel(link);
+      var key = [parentLabel, fid || href].join('|');
+      if (!label || !href || seen[key]) return;
+      seen[key] = true;
+      configs.push({
+        section: '子栏目',
+        parentLabel: parentLabel,
+        label: label,
+        href: href,
+        title: label,
+        alwaysShow: true,
+        navigationOnly: true,
+      });
+    });
+    return configs;
+  }
+
+  function collectRemoteNavigationConfigsFromHtml(html, pageUrl) {
+    if (!html || typeof DOMParser === 'undefined') return [];
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    return collectHomeNavigationConfigsFromDocument(doc, pageUrl)
+      .concat(collectForumNavigationConfigsFromDocument(doc, pageUrl));
+  }
+
+  function getNavigationDiscoveryUrls() {
+    var seen = {};
+    function append(url) {
+      var href = normalizeNavigationHref(url, location.href).replace(/#.*$/, '');
+      try {
+        if (!href || seen[href] || new URL(href, location.href).origin !== location.origin) return;
+      } catch (error) {
+        return;
+      }
+      seen[href] = true;
+    }
+    append(getHomeNavigationBaseUrl(location.origin));
+    if (detectPageType(location.href) === 'forum') append(location.href);
+    qsa('.bdbA a[href*="thread.php?fid"], #breadcrumbs a[href*="thread.php?fid"], .crumbs-item[href*="thread.php?fid"], .crumbs-item a[href*="thread.php?fid"]').forEach(function collectCrumbDiscoveryUrl(link) {
+      append(link.href || link.getAttribute('href'));
+    });
+    return Object.keys(seen).slice(0, 4);
+  }
+
+  function remountGlobalModuleNavigation() {
+    mountModuleNavigation('导航中心', getAllModuleNavigationConfigs());
+  }
+
+  function scheduleNavigationPoolRefresh() {
+    if (testMode || typeof window === 'undefined' || typeof window.fetch !== 'function') return;
+    var urls = getNavigationDiscoveryUrls();
+    var refreshKey = urls.join('|');
+    if (!urls.length || document.documentElement.dataset.spxNavigationRefreshKey === refreshKey) return;
+    document.documentElement.dataset.spxNavigationRefreshKey = refreshKey;
+    Promise.all(urls.map(function fetchNavigationUrl(url) {
+      return window.fetch(url, {
+        credentials: 'include',
+        cache: 'force-cache',
+      })
+        .then(function readNavigationResponse(response) {
+          if (!response.ok) return '';
+          return response.text();
+        })
+        .then(function collectFetchedNavigation(html) {
+          return collectRemoteNavigationConfigsFromHtml(html, url);
+        })
+        .catch(function ignoreNavigationFetchFailure() {
+          return [];
+        });
+    })).then(function applyFetchedNavigation(results) {
+      var configs = [];
+      results.forEach(function concatNavigationItems(items) {
+        configs = configs.concat(items || []);
+      });
+      if (rememberModuleNavigationConfigs(configs)) remountGlobalModuleNavigation();
+    });
+  }
+
+  function createHomeModuleNavigation(modules) {
+    var configs = (modules || []).map(function mapHomeModule(module, index) {
+      var header = qs('.h', module) || qs('h2', module);
+      var id = ensureModuleTargetId(module, 'home', index);
+      var label = getCompactNodeText(header, '模块 ' + (index + 1)).slice(0, 18);
+      return {
+        section: '子栏目',
+        label: label,
+        href: getHomeNavigationBaseUrl(location.origin) + '#' + id,
+        title: label,
+        target: module,
+        alwaysShow: true,
+        navigationOnly: true,
+      };
+    });
+    queueModuleNavigationConfigs(configs);
+  }
+
+  function getForumBoardTitle() {
+    var currentCrumb = qs('.bdbA .crumbs-item.current');
+    var title = getCompactNodeText(currentCrumb, '').replace(/\[.*?\]/g, '').trim();
+    if (title) return title.slice(0, 24);
+    var documentTitle = (document.title || '').replace(/\s*[-|].*$/, '').trim();
+    return documentTitle || '全部主题';
+  }
+
+  function createForumSectionTitle(items, target) {
+    var table = target && target.closest ? target.closest('.spx-thread-list-table') || target : target;
+    if (!table || !table.parentNode) return null;
+    qsa('.spx-forum-section-title').forEach(function removeOldTitle(node) {
+      node.remove();
+    });
+    var title = createEl('div', 'spx-forum-section-title');
+    title.appendChild(createEl('strong', '', getForumBoardTitle()));
+    title.appendChild(createEl('span', '', '当前定位 · ' + (items ? items.length : 0) + ' 个帖子'));
+    table.parentNode.insertBefore(title, table);
+    return title;
+  }
+
+  function compactForumPrelude(threadTable) {
+    var table = threadTable && threadTable.closest ? threadTable.closest('.spx-thread-list-table') || threadTable : threadTable;
+    var content = qs('#content') || qs('#main');
+    if (!content || !table) return;
+    var node = content.firstElementChild;
+    while (node && node !== table) {
+      var next = node.nextElementSibling;
+      if (
+        node.id !== 'spx-forum-tools' &&
+        !node.classList.contains('spx-forum-section-title') &&
+        !node.classList.contains('spx-module-nav')
+      ) {
+        node.classList.add('spx-forum-prelude-hidden');
+      }
+      node = next;
+    }
+  }
+
+  function getForumNavigationScopeNodes(threadTable) {
+    var content = qs('#content') || qs('#main');
+    if (!content) return [];
+    if (!threadTable) return [content];
+    var nodes = [];
+    var node = content.firstElementChild;
+    while (node && node !== threadTable) {
+      if (
+        node.id !== 'spx-forum-tools' &&
+        !node.classList.contains('spx-forum-section-title') &&
+        !node.classList.contains('spx-module-nav')
+      ) {
+        nodes.push(node);
+      }
+      node = node.nextElementSibling;
+    }
+    return nodes;
+  }
+
+  function normalizeNavigationLabel(text) {
+    return String(text || '')
+      .replace(/\s+/g, ' ')
+      .replace(/\s*\(\d+\)\s*$/, '')
+      .trim();
+  }
+
+  function getCommonForumNavigationLabelByFid() {
+    return {
+      9: '茶馆',
+      48: '询问&求物',
+      13: '免空资源区',
+      128: 'GALGAME汉化区',
+      208: 'AI交流',
+    };
+  }
+
+  function isGlobalSiteNavigationTarget(label, href) {
+    var normalized = normalizeNavigationLabel(label);
+    var fid = getCurrentForumId(href);
+    var fidMap = getCommonForumNavigationLabelByFid();
+    if (fid && fidMap[fid] && normalizeNavigationLabel(fidMap[fid]) === normalized) return true;
+    return normalized === '最新帖子' && /search2?\.php/.test(String(href || '')) && /newatc/.test(String(href || ''));
+  }
+
+  function getHomeNavigationParentLabel(link) {
+    var module = link && link.closest ? link.closest('.spx-home-module,.t[id^="t_"]') : null;
+    if (!module) return '';
+    var header = qs('.h', module) || qs('h2', module);
+    return normalizeNavigationLabel(getCompactNodeText(header, '')).slice(0, 32);
+  }
+
+  function getForumNavigationParentLabel(link) {
+    var ownLabel = normalizeNavigationLabel(link && link.textContent);
+    var row = link && link.closest ? link.closest('tr') : null;
+    var isRowTitle = false;
+    var selectors = [
+      'a[id^="a_ajax_"]',
+      '[id^="fn_"] h3 a',
+      '[id^="fn_"] > a',
+      '[id^="fn_"] a[href*="thread.php?fid"]',
+    ];
+    if (row) {
+      for (var index = 0; index < selectors.length; index += 1) {
+        var candidate = qs(selectors[index], row);
+        var label = normalizeNavigationLabel(candidate && candidate.textContent);
+        if (label && label === ownLabel) isRowTitle = true;
+        if (label && label !== ownLabel) return label.slice(0, 32);
+      }
+    }
+    if (isRowTitle) return '';
+    var homeParent = getHomeNavigationParentLabel(link);
+    if (homeParent && homeParent !== ownLabel) return homeParent;
+    return '';
+  }
+
+  function isUsefulForumNavigationLink(link, currentFid) {
+    if (!link) return false;
+    var href = String(link.getAttribute('href') || link.href || '');
+    var label = normalizeNavigationLabel(link.textContent);
+    if (!href || !/thread\.php\?fid[=-]?\d+/.test(href)) return false;
+    if (/skinco|page-\d+|search|rss/i.test(href)) return false;
+    if (!shouldKeepNavigationLabel(label) || label.length > 28) return false;
+    if (/^(折叠|展开|版块|最后发表|主题\/文章|版主|上一页|下一页|首页)$/.test(label)) return false;
+    if (isGlobalSiteNavigationTarget(label, href)) return false;
+    return getCurrentForumId(href) !== String(currentFid || '');
+  }
+
+  function createForumModuleNavigation(items) {
+    if (!items || !items.length) return;
+    var table = items[0].row && items[0].row.closest ? items[0].row.closest('.spx-thread-list-table') : null;
+    var currentFid = getCurrentForumId(location.href);
+    var seen = {};
+    var configs = [];
+    getForumNavigationScopeNodes(table).forEach(function collectForumNavLinks(scope) {
+      qsa('a[href*="thread.php?fid"]', scope).forEach(function appendForumNavLink(link) {
+        if (!isUsefulForumNavigationLink(link, currentFid)) return;
+        var href = link.href || link.getAttribute('href');
+        var fid = getCurrentForumId(href);
+        var label = normalizeNavigationLabel(link.textContent);
+        var parentLabel = getForumNavigationParentLabel(link);
+        var key = [parentLabel, fid || href].join('|');
+        if (seen[key]) return;
+        seen[key] = true;
+        configs.push({
+          section: '子栏目',
+          parentLabel: parentLabel,
+          label: label,
+          href: href,
+          title: label,
+          alwaysShow: true,
+          navigationOnly: true,
+        });
+      });
+    });
+    queueModuleNavigationConfigs(configs);
+  }
+
+  function getCommonForumNavigationItems(origin) {
+    var base = String(origin || location.origin || '');
+    return [
+      { label: '首页', href: base + '/index.php' },
+      { label: '茶馆', fid: '9' },
+      { label: '询问&求物', fid: '48' },
+      { label: '免空资源区', fid: '13' },
+      { label: 'GALGAME汉化区', fid: '128' },
+      { label: 'AI交流', fid: '208' },
+      { label: '最新帖子', href: base + '/search2.php?orderway-postdate-asc-desc-newatc-1.html' },
+    ].map(function buildForumNavigationItem(item) {
+      if (item.href) return item;
+      return {
+        label: item.label,
+        fid: item.fid,
+        href: base + '/thread.php?fid-' + item.fid + '.html',
+      };
+    });
+  }
+
+  function getCurrentForumId(url) {
+    var text = String(url || '');
+    var match = text.match(/fid[=-](\d+)/) || text.match(/fid-(\d+)/);
+    return match ? match[1] : '';
+  }
+
+  function getNavigationComparableUrl(href, baseUrl, includeHash) {
+    if (!href || /^javascript:/i.test(String(href))) return '';
+    try {
+      var parsed = new URL(String(href), baseUrl || location.href);
+      return parsed.origin + parsed.pathname + parsed.search + (includeHash ? parsed.hash : '');
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function isModuleNavigationConfigActive(config, url) {
+    var href = config && config.href;
+    if (!href) return false;
+    var currentUrl = String(url || (typeof location !== 'undefined' ? location.href : ''));
+    var includeHash = String(href).indexOf('#') !== -1;
+    var targetKey = getNavigationComparableUrl(href, currentUrl, includeHash);
+    var currentKey = getNavigationComparableUrl(currentUrl, currentUrl, includeHash);
+    if (targetKey && currentKey && targetKey === currentKey) return true;
+    if (includeHash) return false;
+    var currentFid = getCurrentForumId(currentUrl);
+    var targetFid = getCurrentForumId(href);
+    return !!(currentFid && targetFid && currentFid === targetFid);
+  }
+
+  function isCommonNavigationActive(item, url) {
+    var text = String(url || '');
+    if (item.fid) return getCurrentForumId(text) === String(item.fid);
+    return item.label === '最新帖子' && isModuleNavigationConfigActive(item, url);
+  }
+
+  function getGlobalSiteNavigationConfigs(url) {
+    return getCommonForumNavigationItems(location.origin).map(function mapSiteNavigation(item) {
+      return {
+        section: '站点导航',
+        label: item.label,
+        href: item.href,
+        title: item.label,
+        className: 'spx-module-nav-site',
+        active: isCommonNavigationActive(item, url),
+        alwaysShow: true,
+        navigationOnly: true,
+      };
+    });
+  }
+
+  function getReadPageNavigationConfigs() {
+    if (detectPageType(location.href) !== 'read') return [];
+    var configs = [];
+    var seen = {};
+    function appendConfig(section, label, href, options) {
+      var normalized = normalizeNavigationLabel(label);
+      var url = String(href || '');
+      if (!normalized || !url || /^javascript:/i.test(url)) return;
+      var key = section + '|' + normalized + '|' + url.replace(/#.*$/, '');
+      if (seen[key]) return;
+      seen[key] = true;
+      var config = {
+        section: section,
+        label: normalized,
+        href: url,
+        title: normalized,
+        alwaysShow: true,
+        navigationOnly: true,
+      };
+      if (options && options.active) config.active = true;
+      if (options && options.className) config.className = options.className;
+      configs.push(config);
+    }
+
+    var crumbSeen = {};
+    var crumbLinks = [];
+    qsa('.bdbA a[href*="thread.php?fid"], #breadcrumbs a[href*="thread.php?fid"], .crumbs-item[href*="thread.php?fid"], .crumbs-item a[href*="thread.php?fid"], .breadcrumbs a[href*="thread.php?fid"], #breadCrumb a[href*="thread.php?fid"]').forEach(function collectReadCrumb(link) {
+      var label = normalizeNavigationLabel(link.textContent);
+      var href = link.href || link.getAttribute('href');
+      var fid = getCurrentForumId(href);
+      var key = fid || href;
+      if (!label || !href || !key || crumbSeen[key]) return;
+      if (/^(南\+ South Plus|首页)$/.test(label)) return;
+      crumbSeen[key] = true;
+      crumbLinks.push({ label: label, href: href });
+    });
+    crumbLinks.forEach(function appendReadCrumb(item, index) {
+      appendConfig('当前位置', item.label, item.href, {
+        active: index === crumbLinks.length - 1,
+        className: 'spx-module-nav-current',
+      });
+    });
+    rememberModuleNavigationConfigs(crumbLinks.map(function mapReadCrumbToPersistentNav(item) {
+      return {
+        section: '子栏目',
+        label: item.label,
+        href: item.href,
+        title: item.label,
+        alwaysShow: true,
+        navigationOnly: true,
+      };
+    }));
+
+    var topicSeen = {};
+    qsa('a[href]').forEach(function collectTopicNavigation(link) {
+      var rawLabel = normalizeNavigationLabel(link.textContent);
+      var label = '';
+      if (/上一主题/.test(rawLabel)) label = '上一主题';
+      if (/下一主题/.test(rawLabel)) label = '下一主题';
+      if (!label || topicSeen[label]) return;
+      var href = link.href || link.getAttribute('href');
+      if (!href || /^javascript:/i.test(href)) return;
+      topicSeen[label] = true;
+      appendConfig('主题导航', label, href, {
+        className: 'spx-module-nav-topic',
+      });
+    });
+    return configs;
+  }
+
+  function getSearchPageNavigationConfigs() {
+    if (detectPageType(location.href) !== 'search') return [];
+    var isLatest = /search2?\.php/.test(String(location.href || '')) && /newatc/.test(String(location.href || ''));
+    return [{
+      section: '站点导航',
+      label: '搜索',
+      href: location.origin + '/search.php',
+      title: '搜索',
+      className: 'spx-module-nav-search',
+      active: !isLatest,
+      alwaysShow: true,
+      navigationOnly: true,
+    }];
+  }
+
+  function getProfilePageNavigationConfigs() {
+    if (!shouldUseProfileListNavigation(location.href)) return [];
+    var uid = extractAccountUserId(document, location.href);
+    if (!uid) return [];
+    var activeKey = getAccountActiveKey(location.href);
+    return getAccountTabItems(uid, location.origin)
+      .filter(function keepProfileListNav(item) {
+        return item.key === 'topic' || item.key === 'post';
+      })
+      .map(function mapProfileListNav(item) {
+        return {
+          section: '个人导航',
+          label: item.key === 'topic' ? '我的主题' : '我的回复',
+          href: item.href,
+          title: item.key === 'topic' ? '我的主题' : '我的回复',
+          className: 'spx-module-nav-profile',
+          active: item.key === activeKey,
+          alwaysShow: true,
+          navigationOnly: true,
+        };
+      });
+  }
+
+  function getTaskPageNavigationConfigs() {
+    if (!shouldUseTaskPage(location.href)) return [];
+    return [{
+      section: '站点导航',
+      label: '社区论坛任务',
+      href: location.origin + '/plugin.php?H_name-tasks.html',
+      title: '社区论坛任务',
+      className: 'spx-module-nav-task',
+      active: true,
+      alwaysShow: true,
+      navigationOnly: true,
+    }];
+  }
+
+  function getAllModuleNavigationConfigs() {
+    return mergeModuleNavigationConfigs(
+      getGlobalSiteNavigationConfigs(location.href)
+        .concat(getPersistentModuleNavigationConfigs())
+        .concat(getSearchPageNavigationConfigs())
+        .concat(getProfilePageNavigationConfigs())
+        .concat(getTaskPageNavigationConfigs())
+        .concat(getReadPageNavigationConfigs())
+        .concat(pendingModuleNavigationConfigs)
+    );
+  }
+
+  function createGlobalModuleNavigation(settings, state) {
+    if (!shouldUseModuleNavigation(settings, location.href, document)) return;
+    mountModuleNavigation('导航中心', getAllModuleNavigationConfigs());
+    scheduleNavigationPoolRefresh();
   }
 
   function positionPreviewPanel(panel, event) {
@@ -4182,6 +5331,7 @@
     if (detectPageType(location.href) !== 'forum') return;
     qsa('.spx-thread-list-table').forEach(function clearThreadListTable(table) {
       table.classList.remove('spx-thread-list-table');
+      delete table.dataset.spxThreadListLayout;
     });
     var cells = qsa('td[id^="td_"]').filter(function realThreadCell(cell) {
       return parseThreadId(cell.id) && qs('a[id^="a_ajax_"]', cell);
@@ -4190,15 +5340,30 @@
 
     cells.forEach(function enhanceCell(cell) {
       var table = cell.closest ? cell.closest('.t') : null;
-      if (table) table.classList.add('spx-thread-list-table');
+      if (table) {
+        table.classList.add('spx-thread-list-table');
+        if (table.dataset.spxThreadListLayout !== '1') {
+          table.dataset.spxThreadListLayout = '1';
+          qsa('table,tbody', table).forEach(function blockThreadTable(node) {
+            setImportantStyle(node, 'display', 'block');
+            setImportantStyle(node, 'width', '100%');
+          });
+          qsa('tr.tr2,tr.tr3', table).forEach(function gridThreadRow(row) {
+            var isDecorativeThreadRow = row.classList.contains('tr3') && !qs('td[id^="td_"]', row);
+            if (row.dataset) row.dataset.spxThreadListRow = '1';
+            setThreadRowHiddenClass(row, 'spx-thread-row-hidden', isDecorativeThreadRow);
+          });
+        }
+      }
       var info = extractThreadCellInfo(cell);
       if (!info.id || !info.titleLink) return;
       items.push(info);
 
       var isRead = !!state.read[info.id];
       info.row.classList.toggle('spx-read-thread', isRead);
-      info.row.classList.toggle('spx-unread-hidden', !!settings.unreadOnly && isRead);
-      info.row.classList.toggle('spx-hidden-rule', matchesBlockRules(info, settings));
+      if (info.row.dataset) info.row.dataset.spxThreadListRow = '1';
+      setThreadRowHiddenClass(info.row, 'spx-unread-hidden', !!settings.unreadOnly && isRead);
+      setThreadRowHiddenClass(info.row, 'spx-hidden-rule', matchesBlockRules(info, settings));
 
       if (state.watch[info.id] && !qs('.spx-watch-badge', info.cell)) {
         info.titleLink.insertAdjacentElement('afterend', createWatchBadge(info.id));
@@ -4261,7 +5426,7 @@
       hideRowButton.addEventListener('click', function hideCurrentRow(event) {
         event.preventDefault();
         event.stopPropagation();
-        info.row.classList.add('spx-filter-hidden');
+        setThreadRowHiddenClass(info.row, 'spx-filter-hidden', true);
       });
 
       hideAuthorPageButton.addEventListener('click', function hideSameAuthorOnPage(event) {
@@ -4271,7 +5436,7 @@
           var item = items.filter(function matchId(candidate) {
             return candidate.id === id;
           })[0];
-          if (item && item.row) item.row.classList.add('spx-filter-hidden');
+          if (item && item.row) setThreadRowHiddenClass(item.row, 'spx-filter-hidden', true);
         });
       });
 
@@ -4290,6 +5455,10 @@
     });
 
     createForumQuickTools(settings, state, items);
+    var threadTable = items[0] && items[0].row && items[0].row.closest ? items[0].row.closest('.spx-thread-list-table') : null;
+    createForumSectionTitle(items, threadTable);
+    compactForumPrelude(threadTable);
+    createForumModuleNavigation(items, state);
     hideForumAnnouncements();
   }
 
@@ -4758,33 +5927,40 @@
     var scope = root || document;
     qsa('#header,#main,#content,#infobox,#notice', scope).forEach(function widenShellNode(node) {
       setImportantStyle(node, 'box-sizing', 'border-box');
-      setImportantStyle(node, 'width', 'min(1680px, calc(100vw - 44px))');
+      setImportantStyle(node, 'width', 'min(1480px, calc(100vw - 40px))');
       setImportantStyle(node, 'max-width', 'none');
       setImportantStyle(node, 'margin-left', 'auto');
       setImportantStyle(node, 'margin-right', 'auto');
     });
     qsa('#mainNav', scope).forEach(function widenNav(node) {
       setImportantStyle(node, 'box-sizing', 'border-box');
-      setImportantStyle(node, 'width', 'min(1680px, calc(100vw - 44px))');
+      setImportantStyle(node, 'width', 'min(1480px, calc(100vw - 40px))');
       setImportantStyle(node, 'max-width', 'none');
       setImportantStyle(node, 'margin-left', 'auto');
       setImportantStyle(node, 'margin-right', 'auto');
-      setImportantStyle(node, 'height', '30px');
+      setImportantStyle(node, 'height', '38px');
       setImportantStyle(node, 'overflow', 'visible');
+      qsa(':scope>div', node).forEach(function hideLegacyNavChild(child) {
+        if (qs('#guide', child)) return;
+        setImportantStyle(child, 'display', 'none');
+      });
     });
     qsa('#mainNav>div[style*="padding-left"]', scope).forEach(function resetNavMenuHost(node) {
+      setImportantStyle(node, 'display', 'flex');
+      setImportantStyle(node, 'align-items', 'center');
+      setImportantStyle(node, 'gap', '6px');
       setImportantStyle(node, 'box-sizing', 'border-box');
       setImportantStyle(node, 'width', '100%');
       setImportantStyle(node, 'max-width', '100%');
-      setImportantStyle(node, 'height', '30px');
-      setImportantStyle(node, 'padding-left', '250px');
+      setImportantStyle(node, 'height', '38px');
+      setImportantStyle(node, 'padding-left', '8px');
       setImportantStyle(node, 'overflow', 'visible');
     });
     qsa('#mainNav>div[style*="padding-left"] table,#mainNav>div[style*="padding-left"] tbody,#mainNav>div[style*="padding-left"] tr,#mainNav>div[style*="padding-left"] td', scope).forEach(function resetNavTableNode(node) {
       setImportantStyle(node, 'display', 'block');
       setImportantStyle(node, 'box-sizing', 'border-box');
       setImportantStyle(node, 'width', 'auto');
-      setImportantStyle(node, 'height', '30px');
+      setImportantStyle(node, 'height', '38px');
       setImportantStyle(node, 'margin', '0');
       setImportantStyle(node, 'padding', '0');
       setImportantStyle(node, 'border', '0');
@@ -4804,6 +5980,15 @@
     var scope = root || document;
     var configLink = qs('#peacemakerconfig', scope);
     var guide = qs('#guide', scope);
+
+    if (guide) {
+      var guideHost = guide.closest ? guide.closest('#mainNav>div') : null;
+      if (guideHost && !qs('#spx-nav-brand', guideHost)) {
+        var brand = createEl('strong', 'spx-nav-brand', 'South Plus +++');
+        brand.id = 'spx-nav-brand';
+        guideHost.insertBefore(brand, guideHost.firstChild);
+      }
+    }
 
     function getNavUrlKey(href) {
       if (!href || /^javascript:/i.test(String(href))) return '';
@@ -6526,6 +7711,7 @@
       cleanMode: '清爽模式',
       readerMode: '阅读排版优化',
       immersiveRead: '帖子页沉浸全屏',
+      nightMode: '夜间模式',
       unifiedPreviewGallery: '预览图集中显示',
       compactRead: '阅读页紧凑',
       foldQuotes: '折叠长引用',
@@ -6555,8 +7741,8 @@
     }
     var readingControls = renderSettingsSection(
       '阅读体验',
-      ['readerMode', 'immersiveRead', 'compactRead', 'foldQuotes', 'hideUserProfile', 'onlyOriginalAuthor', 'unifiedPreviewGallery'],
-      '控制正文排版、沉浸阅读、头像资料和图集显示。'
+      ['readerMode', 'immersiveRead', 'nightMode', 'compactRead', 'foldQuotes', 'hideUserProfile', 'onlyOriginalAuthor', 'unifiedPreviewGallery'],
+      '控制正文排版、沉浸阅读、夜间模式、头像资料和图集显示。'
     );
     var listControls = renderSettingsSection(
       '列表增强',
@@ -6883,6 +8069,7 @@
     return [
       { show: shouldShowToolbarFeature('clean'), group: '阅读模式', key: 'cleanMode', text: '净', label: '清爽模式', title: '切换清爽模式', description: '隐藏低频模块和干扰内容' },
       { show: shouldShowToolbarAction('reader', url, root), group: '阅读模式', key: 'readerMode', text: '字', label: '阅读排版', title: '切换阅读排版优化', description: '优化字体、宽度和正文间距' },
+      { show: true, group: '阅读模式', key: 'nightMode', text: '夜', label: '夜间模式', title: '切换夜间模式', description: '切换深色影院式阅读和图集界面' },
       { show: shouldShowToolbarAction('adBlock', url, root), group: '阅读模式', key: 'adBlock', text: '广', label: '隐藏广告', title: '切换隐藏广告', description: '隐藏广告链接、图片和容器' },
       { show: shouldShowToolbarAction('homeDashboard', url, root), group: '阅读模式', key: 'homeDashboard', text: '模', label: '首页模块', title: '切换首页模块全屏', description: '以网格方式整理首页板块' },
       { show: shouldShowToolbarAction('immersiveRead', url, root), group: '阅读模式', key: 'immersiveRead', text: '屏', label: '沉浸阅读', title: '切换帖子页沉浸全屏', description: '放大帖子内容并弱化周边' },
@@ -6972,18 +8159,20 @@
     var key = config.key || config.panelId || config.kind || config.label || '';
     var readPriority = {
       readerMode: 0,
-      immersiveRead: 1,
-      onlyOriginalAuthor: 2,
-      unifiedPreviewGallery: 3,
+      nightMode: 1,
+      immersiveRead: 2,
+      onlyOriginalAuthor: 3,
+      unifiedPreviewGallery: 4,
       'spx-resource-center': 4,
       'spx-history-center': 5,
     };
     var forumPriority = {
       unreadOnly: 0,
       'spx-watch-center': 1,
-      cleanMode: 2,
-      readerMode: 3,
-      latest: 4,
+      nightMode: 2,
+      cleanMode: 3,
+      readerMode: 4,
+      latest: 5,
     };
     var map = type === 'read' ? readPriority : (type === 'forum' ? forumPriority : null);
     return map && map[key] !== undefined ? map[key] : 50;
@@ -7256,7 +8445,6 @@
     restoreHomeDashboard();
     if (!shouldUseHomeDashboard(settings, location.href)) return;
 
-    createHomeQuickLinks();
     var modules = qsa('#content .t[id^="t_"]');
     if (!modules.length) return;
 
@@ -7300,9 +8488,11 @@
         }
       });
     });
+    createHomeModuleNavigation(modules);
   }
 
   function restoreHomeDashboard() {
+    restoreModuleNavigation();
     var quick = qs('#spx-home-quick');
     if (quick) quick.remove();
     qsa('.spx-home-module').forEach(function restoreModule(module) {
@@ -7336,32 +8526,127 @@
     if (grid) grid.remove();
   }
 
-  function createHomeQuickLinks() {
-    if (qs('#spx-home-quick')) return;
-    var quickItems = [
-      { label: '茶馆', fid: '9' },
-      { label: '询问&求物', fid: '48' },
-      { label: '免空资源区', fid: '13' },
-      { label: 'GALGAME汉化区', fid: '128' },
-      { label: 'AI交流', fid: '208' },
-      { label: '最新帖子', href: '/search2.php?orderway-postdate-asc-desc-newatc-1.html' },
-    ];
-    var quick = createEl('nav', 'spx-home-quick');
-    quick.id = 'spx-home-quick';
-    quickItems.forEach(function appendQuick(item) {
-      var link = createEl('a');
-      link.href = item.href ? location.origin + item.href : location.origin + '/thread.php?fid-' + item.fid + '.html';
-      link.textContent = item.label;
-      link.appendChild(createEl('span', '', item.href ? 'new' : 'fid-' + item.fid));
-      quick.appendChild(link);
+  function unwrapTaskLayoutStacks(host) {
+    qsa('.spx-task-side-stack,.spx-task-main-stack', host).forEach(function unwrapStack(stack) {
+      while (stack.firstChild) {
+        stack.parentNode.insertBefore(stack.firstChild, stack);
+      }
+      stack.remove();
     });
-    var main = qs('#main') || document.body;
-    var content = qs('#content');
-    if (content && content.parentNode) {
-      content.parentNode.insertBefore(quick, content);
-    } else {
-      main.insertBefore(quick, main.firstChild);
+  }
+
+  function isTaskBreadcrumbBlock(node) {
+    if (!node || !node.classList) return false;
+    return node.classList.contains('bdbA') || !!qs('#breadcrumbs', node);
+  }
+
+  function isTaskMainBlock(node) {
+    var text = String((node && node.textContent) || '');
+    if (!text.trim()) return false;
+    if (/(任务时效|上次领取|奖励\s*[:：])/.test(text)) return true;
+    if (/\bfr\b/.test(String(node.className || '')) && !/社区论坛任务功能简介|版权/.test(text)) return true;
+    return false;
+  }
+
+  function isTaskSideBlock(node) {
+    var text = String((node && node.textContent) || '');
+    if (!text.trim()) return false;
+    if (/社区论坛任务功能简介|操作|版权|作者\s*[:：]|网站\s*[:：]/.test(text)) return true;
+    return /\bfl\b/.test(String(node.className || ''));
+  }
+
+  function getTaskLayoutDirectChild(host, node) {
+    var current = node;
+    while (current && current.parentNode && current.parentNode !== host) {
+      current = current.parentNode;
     }
+    return current && current.parentNode === host ? current : node;
+  }
+
+  function hasTaskLayoutBlockClass(node) {
+    return !!(node && /\b(?:fl|fr|t|t3|t5)\b/.test(String(node.className || '')));
+  }
+
+  function getTaskLayoutCandidateNodes(host) {
+    var nodes = [];
+    function appendNode(node) {
+      if (!node || node === host || nodes.indexOf(node) !== -1) return;
+      if (isTaskBreadcrumbBlock(node)) return;
+      nodes.push(node);
+    }
+    Array.prototype.slice.call(host.children || []).forEach(appendNode);
+    qsa('.fl,.fr,.t,.t3,.t5', host).forEach(appendNode);
+    var matched = nodes.filter(function keepTaskLayoutBlock(node) {
+      if (!isTaskMainBlock(node) && !isTaskSideBlock(node)) return false;
+      if (
+        node.parentNode === host &&
+        !hasTaskLayoutBlockClass(node) &&
+        qsa('.fl,.fr,.t,.t3,.t5', node).some(function hasInnerTaskBlock(inner) {
+          return isTaskMainBlock(inner) || isTaskSideBlock(inner);
+        })
+      ) {
+        return false;
+      }
+      return true;
+    });
+    return matched.filter(function keepInnermostTaskBlock(node) {
+      return !matched.some(function hasSelectedDescendant(other) {
+        return other !== node && node.contains(other);
+      });
+    });
+  }
+
+  function sortTaskLayoutNodes(nodes) {
+    return nodes.slice().sort(function compareDomOrder(a, b) {
+      if (a === b) return 0;
+      if (!a.compareDocumentPosition) return 0;
+      return a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+    });
+  }
+
+  function enhanceTaskPageLayout() {
+    if (!shouldUseTaskPage(location.href)) return;
+    var host = qs('.spx-module-body') || qs('#main');
+    if (!host) return;
+    unwrapTaskLayoutStacks(host);
+
+    qsa('.spx-task-side-block,.spx-task-main-block', host).forEach(function resetTaskBlockClass(node) {
+      node.classList.remove('spx-task-side-block', 'spx-task-main-block');
+    });
+
+    var sideItems = [];
+    var mainItems = [];
+    sortTaskLayoutNodes(getTaskLayoutCandidateNodes(host)).forEach(function collectTaskLayoutItem(node) {
+      var isMain = isTaskMainBlock(node);
+      var isSide = isTaskSideBlock(node);
+      if (isMain && (!isSide || /(任务时效|上次领取|奖励\s*[:：])/.test(String(node.textContent || '')))) {
+        mainItems.push(node);
+        return;
+      }
+      if (isSide) {
+        sideItems.push(node);
+      }
+    });
+    if (!mainItems.length) {
+      host.classList.remove('spx-task-layout-body');
+      return;
+    }
+
+    host.classList.add('spx-task-layout-body');
+    var anchorItem = sortTaskLayoutNodes(sideItems.concat(mainItems))[0] || null;
+    var anchor = anchorItem ? getTaskLayoutDirectChild(host, anchorItem) : null;
+    var sideStack = createEl('div', 'spx-task-side-stack');
+    var mainStack = createEl('div', 'spx-task-main-stack');
+    host.insertBefore(sideStack, anchor);
+    host.insertBefore(mainStack, anchor);
+    sideItems.forEach(function moveSideItem(item) {
+      item.classList.add('spx-task-side-block');
+      sideStack.appendChild(item);
+    });
+    mainItems.forEach(function moveMainItem(item) {
+      item.classList.add('spx-task-main-block');
+      mainStack.appendChild(item);
+    });
   }
 
   function enhanceAdBlock(settings) {
@@ -7425,6 +8710,8 @@
 
   function enhanceAll(settings, state) {
     setBodyClasses(settings);
+    pendingModuleNavigationConfigs = [];
+    restoreModuleNavigation();
     applySiteShellLayout(document);
     enhanceSiteNavigation(document);
     enhanceAccountNavigation(document);
@@ -7433,6 +8720,8 @@
     enhanceThreadList(settings, state);
     enhanceReadPage(settings, state);
     enhanceQuickReply(settings, state);
+    createGlobalModuleNavigation(settings, state);
+    enhanceTaskPageLayout();
     var panel = qs('#spx-settings');
     if (panel && panel.spxSync) panel.spxSync();
   }
@@ -7524,6 +8813,8 @@
     getResourceEntriesByKeys: getResourceEntriesByKeys,
     markThreadsRead: markThreadsRead,
     findThreadIdsByAuthor: findThreadIdsByAuthor,
+    hasThreadRowHiddenClass: hasThreadRowHiddenClass,
+    isVisibleThreadRow: isVisibleThreadRow,
     isStickyCell: isStickyCell,
     hideStickyThreads: hideStickyThreads,
     hideForumAnnouncementPanels: hideForumAnnouncementPanels,
@@ -7544,9 +8835,13 @@
     shouldUseForumKeyboardPaging: shouldUseForumKeyboardPaging,
     shouldUseSearchPage: shouldUseSearchPage,
     shouldUseProfilePage: shouldUseProfilePage,
+    shouldUseTaskPage: shouldUseTaskPage,
     shouldUseReaderMode: shouldUseReaderMode,
     shouldUseImmersiveRead: shouldUseImmersiveRead,
     shouldUseHomeDashboard: shouldUseHomeDashboard,
+    shouldUseModuleNavigation: shouldUseModuleNavigation,
+    getCurrentForumId: getCurrentForumId,
+    isModuleNavigationConfigActive: isModuleNavigationConfigActive,
     shouldShowToolbarFeature: shouldShowToolbarFeature,
     hasPreviewGalleryImages: hasPreviewGalleryImages,
     shouldShowToolbarAction: shouldShowToolbarAction,

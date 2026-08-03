@@ -3,11 +3,94 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.2\.7/);
+assert.match(source, /@version\s+0\.2\.8/);
 assert.match(source, /South Plus 工具箱/);
 assert.match(source, /spx-toolbox-action/);
-assert.match(source, /--spx-page-max:1680px/);
+assert.match(source, /--spx-page-max:1480px/);
 assert.match(source, /--spx-reader-line:clamp\(760px,62vw,960px\)/);
+assert.match(source, /getInjectedPreviewParityStyleRules/);
+assert.match(source, /min\(1480px, calc\(100vw - 40px\)\)/);
+assert.match(source, /setImportantStyle\(node, 'height', '38px'\)/);
+assert.match(source, /nightMode: false/);
+assert.match(source, /spx-theme-clean/);
+assert.match(source, /spx-theme-night/);
+assert.match(source, /:root\.spx-theme-night/);
+assert.match(source, /夜间模式/);
+assert.match(source, /spx-module-nav/);
+assert.match(source, /spx-module-nav-ready/);
+assert.match(source, /spx-module-nav-host/);
+assert.match(source, /spx-module-body/);
+assert.match(source, /spx-module-nav-label/);
+assert.match(source, /spx-module-nav-section/);
+assert.match(source, /--spx-module-width:220px/);
+assert.match(source, /minmax\(196px,var\(--spx-module-width\)\)/);
+assert.match(source, /spx-module-nav-group/);
+assert.match(source, /spx-module-nav-node/);
+assert.match(source, /spx-module-nav-children/);
+assert.match(source, /spx-module-nav-parent-title/);
+assert.match(source, /spx-module-nav-level-3/);
+assert.match(source, /buildModuleNavigationTree/);
+assert.match(source, /dedupeModuleNavigationTree/);
+assert.match(source, /parentMap/);
+assert.match(source, /parentLabel/);
+assert.match(source, /pendingModuleNavigationConfigs/);
+assert.match(source, /NAVIGATION_KEY/);
+assert.match(source, /NAVIGATION_KEY = APP \+ ':navigation:v1'/);
+assert.match(source, /NAVIGATION_POOL_LIMIT = 160/);
+assert.match(source, /mountModuleNavigation\('导航中心', getAllModuleNavigationConfigs\(\)\)/);
+assert.match(source, /section: '站点导航'/);
+assert.match(source, /section: '子栏目'/);
+assert.match(source, /appendConfig\('当前位置'/);
+assert.match(source, /appendConfig\('主题导航'/);
+assert.match(source, /navigationOnly: true/);
+assert.match(source, /getForumNavigationScopeNodes/);
+assert.match(source, /getForumNavigationParentLabel/);
+assert.match(source, /isGlobalSiteNavigationTarget/);
+assert.match(source, /shouldKeepNavigationLabel/);
+assert.match(source, /\/图墙模式\/\.test\(normalized\)/);
+assert.match(source, /getReadPageNavigationConfigs/);
+assert.match(source, /getPersistentModuleNavigationConfigs/);
+assert.match(source, /rememberModuleNavigationConfigs/);
+assert.match(source, /scheduleNavigationPoolRefresh/);
+assert.match(source, /collectRemoteNavigationConfigsFromHtml/);
+assert.match(source, /getAllModuleNavigationConfigs/);
+assert.match(source, /normalizeNavigationLabel/);
+assert.match(source, /上一主题/);
+assert.match(source, /下一主题/);
+assert.doesNotMatch(source, /section: '页面操作'/);
+assert.doesNotMatch(source, /section: '阅读开关'/);
+assert.doesNotMatch(source, /section: '本页筛选'/);
+assert.doesNotMatch(source, /section: config\.kind === 'settings' \? '脚本设置' : '我的中心'/);
+assert.doesNotMatch(source, /createGlobalNavigationAction/);
+assert.match(source, /茶馆/);
+assert.match(source, /询问&求物/);
+assert.match(source, /免空资源区/);
+assert.match(source, /GALGAME汉化区/);
+assert.match(source, /AI交流/);
+assert.match(source, /最新帖子/);
+assert.match(source, /spx-nav-brand/);
+assert.match(source, /South Plus \+\+\+/);
+assert.match(source, /spx-home-dashboard \.spx-home-module\{[^}]*width:100%!important;max-width:100%!important;min-width:0!important/);
+assert.match(source, /spx-module-nav-host \.t\.spx-thread-list-table table[^}]*display:block!important/);
+assert.match(source, /setThreadRowHiddenClass\(row, 'spx-thread-row-hidden', isDecorativeThreadRow\)/);
+assert.match(source, /spx-module-nav-host \.t\.spx-thread-list-table tr\.tr3>td[^}]*padding:0!important/);
+assert.match(source, /spx-module-nav-host \.t\.spx-thread-list-table tr\.tr3>td:first-child:not\(\[id\^="td_"\]\)/);
+assert.match(source, /spx-forum-section-title/);
+assert.match(source, /spx-forum-prelude-hidden/);
+assert.match(source, /spx-thread-row-hidden/);
+assert.match(source, /spx-thread-list-table tr:not\(\.tr2\):not\(\.tr3\)/);
+assert.match(source, /spx-thread-list-table tr\.tr3:not\(:hover\) \.spx-thread-tools/);
+assert.doesNotMatch(source, /function createHomeQuickLinks/);
+assert.doesNotMatch(source, /label: '已关注'[\s\S]*?alwaysShow: true/);
+assert.doesNotMatch(source, /资源关键词/);
+assert.match(source, /#mainNav[^}]*height:38px!important/);
+assert.match(source, /spx-toolbar\{right:16px!important;bottom:18px!important;display:flex!important;flex-direction:row!important/);
+assert.match(source, /spx-toolbox-action[^}]*min-height:42px!important/);
+assert.match(source, /spx-theme-night\.spx-home-dashboard #notice/);
+assert.match(source, /spx-theme-night\.spx-home-dashboard \.spx-home-module[^}]*background:#181d1a!important/);
+assert.match(source, /spx-theme-night\.spx-forum-dashboard \.spx-module-nav-host \.t[^}]*background:#181d1a!important/);
+assert.match(source, /spx-theme-night\.spx-forum-dashboard #content \.t\.spx-thread-list-table tr\.tr3>td/);
+assert.match(source, /@media\(max-width:900px\).*spx-module-nav\{position:static!important;display:flex!important;flex-direction:row!important/);
 assert.match(source, /spx-thread-list-table/);
 assert.doesNotMatch(source, /\.spx-forum-dashboard #content \.t tr\.tr3\{display:grid/);
 assert.match(source, /\.spx-immersive-read \.tpc_content\{box-sizing:border-box!important;max-width:var\(--spx-reader-line\)!important/);
@@ -51,6 +134,43 @@ assert.match(source, /spx-watch-controls\{display:flex;align-items:center;flex-w
 assert.match(source, /compositionstart/);
 assert.match(source, /compositionend/);
 assert.match(source, /event\.isComposing/);
+assert.match(source, /THREAD_ROW_HIDDEN_CLASSES/);
+assert.match(source, /setThreadRowHiddenClass\(item\.row, 'spx-filter-hidden', hidden\)/);
+assert.match(source, /setThreadRowHiddenClass\(info\.row, 'spx-hidden-rule', matchesBlockRules\(info, settings\)\)/);
+assert.match(source, /spx-thread-list-table tr\.spx-filter-hidden/);
+assert.match(source, /shouldUseModuleNavigation\(settings, location\.href, document\)/);
+assert.match(source, /getSearchPageNavigationConfigs/);
+assert.match(source, /getProfilePageNavigationConfigs/);
+assert.match(source, /isModuleNavigationConfigActive\(item, location\.href\)/);
+assert.match(source, /spx-search-page #main\.spx-module-nav-host/);
+assert.match(source, /spx-profile-page #main\.spx-module-nav-host/);
+assert.match(source, /spx-module-nav-ready\.spx-search-page \.spx-module-body>\.bdbA/);
+assert.match(source, /spx-module-nav-ready\.spx-profile-page \.spx-module-body>\.bdbA/);
+assert.match(source, /spx-module-nav-ready\.spx-home-dashboard \.spx-module-body #spx-home-grid/);
+assert.match(source, /spx-module-nav-ready\.spx-home-dashboard \.spx-module-body \.spx-home-module/);
+assert.match(source, /spx-task-page #main\{display:block!important;width:calc\(100vw - 40px\)!important/);
+assert.doesNotMatch(source, /spx-task-page #main\{display:grid!important;grid-template-columns:minmax\(0,1fr\) minmax\(280px,360px\)!important/);
+assert.match(source, /spx-task-page #main>\.t,\.spx-task-page #main>\.t3,\.spx-task-page #main>\.t5/);
+assert.match(source, /getTaskPageNavigationConfigs/);
+assert.match(source, /spx-module-nav-task/);
+assert.match(source, /spx-module-nav-ready\.spx-task-page #main\.spx-module-nav-host/);
+assert.match(source, /spx-module-nav-ready\.spx-task-page #main\.spx-module-nav-host>\.spx-module-body/);
+assert.match(source, /spx-module-nav-ready\.spx-task-page #main\.spx-module-nav-host>\.spx-module-body[^}]*display:block!important/);
+assert.match(source, /spx-module-nav-ready\.spx-task-page \.spx-module-body>\.t,\.spx-module-nav-ready\.spx-task-page \.spx-module-body>\.t3/);
+assert.match(source, /function enhanceTaskPageLayout/);
+assert.match(source, /任务时效\|上次领取\|奖励\\s\*\[:：\]/);
+assert.match(source, /spx-task-side-stack/);
+assert.match(source, /spx-task-main-stack/);
+assert.match(source, /spx-task-side-stack:empty/);
+assert.match(source, /getTaskLayoutCandidateNodes/);
+assert.match(source, /qsa\('\.fl,\.fr,\.t,\.t3,\.t5', host\)/);
+assert.match(source, /getTaskLayoutDirectChild\(host, anchorItem\)/);
+assert.match(source, /node\.contains\(other\)/);
+assert.match(source, /spx-task-main-stack table/);
+assert.match(source, /spx-module-body\.spx-task-layout-body[^}]*display:grid!important;grid-template-columns:minmax\(240px,320px\) minmax\(0,1fr\)!important/);
+assert.match(source, /我的主题/);
+assert.match(source, /我的回复/);
+assert.match(source, /spx-theme-night \.spx-preview-popover \.spx-preview-text/);
 const emptyRoot = { querySelector: function querySelector() { return null; }, querySelectorAll: function querySelectorAll() { return []; } };
 const threadListRoot = {
   querySelectorAll: function querySelectorAll(selector) {
@@ -65,8 +185,66 @@ const threadListRoot = {
 };
 assert.equal(enhancer.shouldUseForumDashboard('https://south-plus.org/thread.php?fid-9.html', emptyRoot), false);
 assert.equal(enhancer.shouldUseForumDashboard('https://south-plus.org/thread.php?fid-9.html', threadListRoot), true);
+const defaultSettings = enhancer.getDefaultSettings();
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/search.php', emptyRoot), true);
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/search2.php?orderway-postdate-asc-desc-newatc-1.html', emptyRoot), true);
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/u.php?action-topic-uid-1.html', emptyRoot), true);
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/u.php?action-post-uid-1.html', emptyRoot), true);
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/profile.php', emptyRoot), false);
+assert.equal(enhancer.shouldUseTaskPage('https://south-plus.org/hack.php?H_name=tasks'), true);
+assert.equal(enhancer.shouldUseTaskPage('https://south-plus.org/hack.php?H_name-tasks.html'), true);
+assert.equal(enhancer.shouldUseTaskPage('https://south-plus.org/plugin.php?H_name-tasks.html'), true);
+assert.equal(enhancer.shouldUseTaskPage('https://south-plus.org/plugin.php?H_name=tasks'), true);
+assert.equal(enhancer.shouldUseTaskPage('https://south-plus.org/hack.php?H_name=bank'), false);
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/hack.php?H_name=tasks', emptyRoot), true);
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/plugin.php?H_name-tasks.html', emptyRoot), true);
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/index.php', emptyRoot), true);
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/thread.php?fid-9.html', threadListRoot), true);
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/thread.php?fid-9.html', emptyRoot), false);
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/read.php?tid=1', emptyRoot), true);
+assert.equal(enhancer.getCurrentForumId('https://south-plus.org/thread.php?fid-9-page-2.html'), '9');
+assert.equal(
+  enhancer.isModuleNavigationConfigActive(
+    { href: 'https://south-plus.org/thread.php?fid-9.html' },
+    'https://south-plus.org/thread.php?fid-9-page-2.html'
+  ),
+  true
+);
+assert.equal(
+  enhancer.isModuleNavigationConfigActive(
+    { href: 'https://south-plus.org/thread.php?fid-13.html' },
+    'https://south-plus.org/thread.php?fid-9-page-2.html'
+  ),
+  false
+);
+assert.equal(
+  enhancer.isModuleNavigationConfigActive(
+    { href: 'https://south-plus.org/index.php#spx-module-target-home-1' },
+    'https://south-plus.org/index.php'
+  ),
+  false
+);
+assert.equal(
+  enhancer.isModuleNavigationConfigActive(
+    { href: 'https://south-plus.org/index.php#spx-module-target-home-1' },
+    'https://south-plus.org/index.php#spx-module-target-home-1'
+  ),
+  true
+);
+function makeClassList(names) {
+  return {
+    contains: function contains(name) {
+      return names.indexOf(name) !== -1;
+    },
+  };
+}
+assert.equal(enhancer.hasThreadRowHiddenClass({ classList: makeClassList(['spx-filter-hidden']) }), true);
+assert.equal(enhancer.isVisibleThreadRow({ offsetParent: {}, classList: makeClassList(['spx-hidden-rule']) }), false);
+assert.equal(enhancer.isVisibleThreadRow({ offsetParent: {}, classList: makeClassList([]) }), true);
+assert.equal(enhancer.isVisibleThreadRow({ offsetParent: null, classList: makeClassList([]) }), false);
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('adBlock'), false);
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('homeDashboard'), false);
+assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('nightMode'));
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/thread.php?fid-9.html').includes('autoBuyPost'));
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/read.php?tid=1', emptyRoot).includes('autoBuyPost'));
 assert.match(source, /data-number="autoBuyMaxSp"/);
@@ -681,6 +859,9 @@ const healthData = {
     goodResource: { url: 'pan.baidu.com/s/health?pwd=9999', type: 'cloud', updatedAt: 300 },
     badResource: {},
   },
+  navigation: {
+    comic: { section: '子栏目', label: '漫区特设', href: 'https://south-plus.org/index.php#spx-module-target-home-1', updatedAt: 300 },
+  },
 };
 const healthReport = enhancer.collectDataHealthReport(healthData, healthNow);
 assert.equal(healthReport.counts.titleKeywords, 1);
@@ -707,12 +888,16 @@ assert.match(enhancer.formatBackupImportPreview(cleanedHealth.payload), /即将�
 
 assert.equal(enhancer.formatStorageBytes(1536), '1.5 KB');
 const storageReport = enhancer.collectStorageUsageReport(healthData);
-assert.equal(storageReport.entries.length, 6);
+assert.equal(storageReport.entries.length, 7);
 const resourceUsage = storageReport.entries.find(function findResourceUsage(entry) {
   return entry.label === '资源库';
 });
+const navigationUsage = storageReport.entries.find(function findNavigationUsage(entry) {
+  return entry.label === '导航池';
+});
 assert.equal(resourceUsage.count, 1);
-assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 6 项 · 最大：/);
+assert.equal(navigationUsage.count, 1);
+assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 7 项 · 最大：/);
 assert.match(enhancer.formatStorageUsageEntry(resourceUsage), /^资源库：.* \/ 1 条 \/ 上限 500$/);
 assert.equal(enhancer.formatStorageUsageLimit(resourceUsage), '1 / 500 条（0%）');
 assert.equal(enhancer.getStorageUsageLevel(resourceUsage), 'ok');
