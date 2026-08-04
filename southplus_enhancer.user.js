@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.2.9
+// @version      0.2.11
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -56,6 +56,7 @@
   var AUTO_BUY_KEY = APP + ':autoBuyAttempts:v1';
   var RESOURCE_KEY = APP + ':resources:v1';
   var NAVIGATION_KEY = APP + ':navigation:v1';
+  var NAVIGATION_COLLAPSE_KEY = APP + ':navigationCollapse:v1';
   var AUTO_BUY_CHECK_TTL = 10 * 60 * 1000;
   var AUTO_BUY_ATTEMPT_LIMIT = 100;
   var RESOURCE_LIMIT = 500;
@@ -2198,6 +2199,32 @@
     saveMap(NAVIGATION_KEY, normalizeNavigationPool(pool));
   }
 
+  function getModuleNavigationGroupKey(label) {
+    return normalizeNavigationLabel(label).toLowerCase();
+  }
+
+  function normalizeNavigationCollapseState(value) {
+    var source = isPlainObject(value) ? value : {};
+    var result = {};
+    Object.keys(source).forEach(function normalizeGroupState(key) {
+      var groupKey = getModuleNavigationGroupKey(key);
+      if (groupKey && source[key]) result[groupKey] = true;
+    });
+    return result;
+  }
+
+  function loadNavigationCollapseState() {
+    return normalizeNavigationCollapseState(loadMap(NAVIGATION_COLLAPSE_KEY));
+  }
+
+  function saveNavigationCollapseState(state) {
+    saveMap(NAVIGATION_COLLAPSE_KEY, normalizeNavigationCollapseState(state));
+  }
+
+  function isModuleNavigationGroupCollapsed(state, label) {
+    return !!(state && state[getModuleNavigationGroupKey(label)]);
+  }
+
   function loadReadProgress() {
     return pruneReadProgress(loadMap(PROGRESS_KEY));
   }
@@ -2778,9 +2805,12 @@
       '.spx-module-nav{grid-column:1!important;position:sticky!important;top:46px!important;z-index:20!important;box-sizing:border-box!important;display:flex!important;flex-direction:column!important;align-self:start!important;gap:8px!important;max-height:calc(100vh - 76px)!important;padding:12px!important;overflow:auto!important;border:1px solid var(--spx-line)!important;border-radius:var(--spx-radius-lg)!important;background:var(--spx-panel)!important;box-shadow:var(--spx-shadow-card)!important;color:var(--spx-text)!important;scrollbar-width:thin!important;}',
       '.spx-module-nav-title{padding:0 2px 8px!important;border-bottom:1px solid var(--spx-line-soft)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;line-height:1.25!important;white-space:nowrap!important;}',
       '.spx-module-nav-group{display:flex!important;flex-direction:column!important;gap:5px!important;}',
-      '.spx-module-nav-section{box-sizing:border-box!important;display:flex!important;align-items:center!important;gap:7px!important;min-height:28px!important;margin:5px 0 1px!important;padding:0 9px!important;border-radius:8px!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;font-size:11px!important;font-weight:900!important;line-height:1.2!important;white-space:nowrap!important;}',
+      '.spx-module-nav-section{appearance:none!important;box-sizing:border-box!important;display:flex!important;align-items:center!important;gap:7px!important;width:100%!important;min-height:28px!important;margin:5px 0 1px!important;padding:0 9px!important;border:0!important;border-radius:8px!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;font-size:11px!important;font-weight:900!important;line-height:1.2!important;text-align:left!important;white-space:nowrap!important;cursor:pointer!important;}',
       '.spx-module-nav-section:before{content:"▸";font-size:10px!important;color:var(--spx-accent)!important;}',
+      '.spx-module-nav-section[aria-expanded="true"]:before{content:"▾";}',
+      '.spx-module-nav-section[aria-expanded="false"]:before{content:"▸";}',
       '.spx-module-nav-section:after{content:"";height:1px!important;flex:1!important;background:rgba(37,99,235,.18)!important;}',
+      '.spx-module-nav-group.spx-module-nav-collapsed>.spx-module-nav-node{display:none!important;}',
       '.spx-module-nav-node{display:flex!important;flex-direction:column!important;gap:4px!important;}',
       '.spx-module-nav-children{display:flex!important;flex-direction:column!important;gap:4px!important;margin:2px 0 3px 11px!important;padding-left:9px!important;border-left:2px solid var(--spx-line-soft)!important;}',
       '.spx-module-nav-parent-title{box-sizing:border-box!important;min-height:30px!important;padding:7px 10px!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;color:var(--spx-strong)!important;font-size:12px!important;font-weight:900!important;line-height:1.25!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
@@ -2905,7 +2935,8 @@
       '.spx-module-nav-ready.spx-home-dashboard .spx-module-body .spx-home-module,.spx-module-nav-ready.spx-home-dashboard .spx-module-body .spx-home-module[data-spx-large="1"]{grid-column:1!important;width:100%!important;max-width:100%!important;min-width:0!important;}',
       '.spx-module-nav{top:52px!important;gap:9px!important;padding:12px!important;border-radius:12px!important;box-shadow:0 5px 14px rgba(15,23,42,.05)!important;}',
       '.spx-module-nav-title{padding:0 2px 9px!important;border-bottom:1px solid var(--spx-line)!important;}',
-      '.spx-module-nav-section{margin:6px 0 1px!important;}',
+      '.spx-module-nav-section{margin:6px 0 1px!important;border:0!important;background:var(--spx-accent-wash)!important;cursor:pointer!important;}',
+      '.spx-module-nav-group.spx-module-nav-collapsed>.spx-module-nav-node{display:none!important;}',
       '.spx-module-nav-item{min-height:34px!important;padding:0 10px!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;}',
       '.spx-module-nav-count{min-width:22px!important;height:20px!important;}',
       '.spx-home-dashboard .spx-home-quick{display:none!important;}',
@@ -2913,14 +2944,15 @@
       '.spx-home-dashboard .spx-home-module>h2,.spx-home-dashboard .spx-home-module .h{min-height:38px!important;padding:0 12px!important;background:var(--spx-panel)!important;border:0!important;border-bottom:1px solid var(--spx-line)!important;color:var(--spx-strong)!important;font-size:13px!important;font-weight:900!important;}',
       '.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table table,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tbody{display:block!important;width:100%!important;border:0!important;background:transparent!important;}',
       '.spx-home-dashboard .spx-home-module tr.tr2,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2{display:grid!important;gap:8px!important;padding:10px 12px!important;border-bottom:1px solid var(--spx-line)!important;background:var(--spx-panel-muted)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;}',
-      '.spx-home-dashboard .spx-home-module tr.tr2{grid-template-columns:1fr 92px 82px!important;}',
+      '.spx-home-dashboard .spx-home-module tr.tr2{grid-template-columns:minmax(360px,620px) 96px minmax(180px,260px)!important;justify-content:start!important;}',
       '.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2{grid-template-columns:minmax(0,1fr) 92px 82px minmax(160px,.7fr)!important;}',
       '.spx-home-dashboard .spx-home-module tr.tr2>td,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2>td,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2>td{display:block!important;width:auto!important;padding:0!important;border:0!important;background:transparent!important;color:var(--spx-sub)!important;}',
+      '.spx-home-dashboard .spx-home-module tr.tr2>td:last-child,.spx-home-dashboard .spx-home-module tr.tr3>td:last-child{display:none!important;}',
       '.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2>td:first-child{display:none!important;}',
       '.spx-home-dashboard .spx-home-module tr.tr3,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3{min-height:44px!important;padding:9px 12px!important;border-bottom:1px solid var(--spx-line)!important;background:var(--spx-panel)!important;}',
-      '.spx-home-dashboard .spx-home-module tr.tr3{grid-template-columns:minmax(0,1fr) 92px 82px!important;}',
+      '.spx-home-dashboard .spx-home-module tr.tr3{grid-template-columns:minmax(360px,620px) 96px minmax(180px,260px)!important;justify-content:start!important;}',
       '.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3{grid-template-columns:minmax(0,1fr) 92px 82px minmax(160px,.7fr)!important;}',
-      '.spx-home-dashboard .spx-home-module tr.tr3>td,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3>td,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3>td,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3>th{display:block!important;width:auto!important;padding:0!important;border:0!important;background:transparent!important;font-size:12px!important;line-height:1.45!important;color:var(--spx-sub)!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
+      '.spx-home-dashboard .spx-home-module tr.tr3>td,.spx-home-dashboard .spx-home-module tr.tr3>th,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3>td,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3>td,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3>th{display:block!important;width:auto!important;padding:0!important;border:0!important;background:transparent!important;font-size:12px!important;line-height:1.45!important;color:var(--spx-sub)!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
       '.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3>td:first-child:not([id^="td_"]){display:none!important;}',
       '.spx-home-dashboard .spx-home-module [id^="fn_"] a,.spx-home-dashboard .spx-home-module [id^="fn_"],.spx-forum-dashboard td[id^="td_"] a[id^="a_ajax_"],.spx-forum-dashboard [id^="td_"] a[href*="read.php"]{color:var(--spx-strong)!important;font-size:14px!important;font-weight:800!important;}',
       '.spx-home-dashboard .spx-home-hot [id^="fn_"] a,.spx-home-dashboard .spx-home-hot [id^="fn_"]{color:var(--spx-accent)!important;}',
@@ -4587,6 +4619,33 @@
     parent.appendChild(wrapper);
   }
 
+  function setModuleNavigationGroupCollapsed(groupNode, button, label, collapsed) {
+    if (!groupNode || !button) return;
+    groupNode.classList.toggle('spx-module-nav-collapsed', !!collapsed);
+    button.setAttribute('aria-expanded', String(!collapsed));
+    button.title = (collapsed ? '展开 ' : '折叠 ') + label;
+  }
+
+  function appendModuleNavigationSection(groupNode, label, collapseState) {
+    var button = createEl('button', 'spx-module-nav-section', label);
+    var key = getModuleNavigationGroupKey(label);
+    var collapsed = isModuleNavigationGroupCollapsed(collapseState, label);
+    button.type = 'button';
+    button.dataset.spxModuleNavGroup = key;
+    setModuleNavigationGroupCollapsed(groupNode, button, label, collapsed);
+    button.addEventListener('click', function toggleModuleNavigationGroup() {
+      var nextCollapsed = !isModuleNavigationGroupCollapsed(collapseState, label);
+      if (nextCollapsed) {
+        collapseState[key] = true;
+      } else {
+        delete collapseState[key];
+      }
+      saveNavigationCollapseState(collapseState);
+      setModuleNavigationGroupCollapsed(groupNode, button, label, nextCollapsed);
+    });
+    groupNode.appendChild(button);
+  }
+
   function mountModuleNavigation(title, configs) {
     restoreModuleNavigation();
     var content = getModuleNavigationHost();
@@ -4611,9 +4670,10 @@
       return !!config.active;
     });
     var state = { index: 0 };
+    var collapseState = loadNavigationCollapseState();
     buildModuleNavigationTree(visibleConfigs).forEach(function appendGroup(group) {
       var groupNode = createEl('div', 'spx-module-nav-group');
-      groupNode.appendChild(createEl('div', 'spx-module-nav-section', group.label));
+      appendModuleNavigationSection(groupNode, group.label, collapseState);
       group.nodes.forEach(function appendNode(node) {
         appendModuleNavigationNode(nav, groupNode, node, hasActive, state);
       });
@@ -8848,6 +8908,9 @@
     shouldUseHomeDashboard: shouldUseHomeDashboard,
     shouldUseModuleNavigation: shouldUseModuleNavigation,
     getCurrentForumId: getCurrentForumId,
+    getModuleNavigationGroupKey: getModuleNavigationGroupKey,
+    normalizeNavigationCollapseState: normalizeNavigationCollapseState,
+    isModuleNavigationGroupCollapsed: isModuleNavigationGroupCollapsed,
     isModuleNavigationConfigActive: isModuleNavigationConfigActive,
     shouldShowToolbarFeature: shouldShowToolbarFeature,
     hasPreviewGalleryImages: hasPreviewGalleryImages,
