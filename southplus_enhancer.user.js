@@ -7459,6 +7459,45 @@
     };
   }
 
+  function getQuickReplyFormValue(request, name) {
+    var body = request && request.options && request.options.body;
+    if (!body || typeof body.get !== 'function') return '';
+    try {
+      var value = body.get(name);
+      return value == null ? '' : String(value).trim();
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function buildQuickReplyLastPageUrl(pageUrl, tid) {
+    var id = String(tid || '').trim();
+    if (!id) return '';
+    var parsed = new URL(String(pageUrl || ''), 'https://south-plus.org/');
+    return parsed.origin + '/read.php?tid=' + encodeURIComponent(id) + '&page=e#a';
+  }
+
+  function resolveQuickReplyRefreshUrl(pageUrl, request, submitResponse) {
+    var baseUrl = pageUrl || (typeof location !== 'undefined' ? location.href : 'https://south-plus.org/');
+    var responseUrl = '';
+
+    try {
+      responseUrl = submitResponse && submitResponse.url
+        ? new URL(String(submitResponse.url), baseUrl).href
+        : '';
+    } catch (error) {
+      responseUrl = '';
+    }
+
+    if (responseUrl && detectPageType(responseUrl) === 'read') return responseUrl;
+
+    var tid =
+      getQuickReplyFormValue(request, 'tid') ||
+      parseThreadId(responseUrl) ||
+      parseThreadId(baseUrl);
+    return tid ? buildQuickReplyLastPageUrl(responseUrl || baseUrl, tid) : baseUrl;
+  }
+
   function performQuickReplySubmit(options) {
     if (
       !options ||
@@ -7472,6 +7511,7 @@
     var setPending = typeof options.setPending === 'function' ? options.setPending : function noop() {};
     var onError = typeof options.onError === 'function' ? options.onError : null;
     var shouldResetPending = false;
+    var refreshUrl = '';
 
     function reportQuickReplyError(error) {
       if (!onError) return;
@@ -7493,7 +7533,10 @@
           })
           .then(function checkSubmitResponse(response) {
             if (!response || response.ok !== true) throw new Error('快捷回复提交失败');
-            return options.fetch(options.pageUrl, {
+            refreshUrl = typeof options.resolveRefreshUrl === 'function'
+              ? options.resolveRefreshUrl(response)
+              : resolveQuickReplyRefreshUrl(options.pageUrl, options.request, response);
+            return options.fetch(refreshUrl || options.pageUrl, {
               credentials: 'include',
               cache: 'no-store',
             });
@@ -7503,7 +7546,7 @@
             return response.text();
           })
           .then(function applyReloadedHtml(html) {
-            if (options.applyHtml(html) === false) throw new Error('无法更新帖子内容');
+            if (options.applyHtml(html, refreshUrl || options.pageUrl) === false) throw new Error('无法更新帖子内容');
             return true;
           });
       })
@@ -7642,7 +7685,8 @@
       FormDataCtor
     );
 
-    if (!request || !fetchImpl || detectPageType(location.href) !== 'read') {
+    var pageType = detectPageType(location.href);
+    if (!request || !fetchImpl || (pageType !== 'read' && pageType !== 'post')) {
       return false;
     }
 
@@ -7659,8 +7703,26 @@
       setPending: function setPending(pending) {
         setQuickReplyPending(form, panel, pending);
       },
-      applyHtml: function applyHtml(html) {
-        return replaceReadPageContent(html, settings, state);
+      applyHtml: function applyHtml(html, refreshUrl) {
+        var currentUrl = location.href;
+        var shouldReplaceUrl =
+          refreshUrl &&
+          detectPageType(refreshUrl) === 'read' &&
+          refreshUrl !== currentUrl &&
+          typeof window !== 'undefined' &&
+          window.history &&
+          typeof window.history.replaceState === 'function';
+
+        if (shouldReplaceUrl) {
+          window.history.replaceState(window.history.state, document.title, refreshUrl);
+        }
+
+        if (replaceReadPageContent(html, settings, state)) return true;
+
+        if (shouldReplaceUrl) {
+          window.history.replaceState(window.history.state, document.title, currentUrl);
+        }
+        return false;
       },
       onError: function onError() {
         setQuickReplyPanelError(panel);
@@ -8921,6 +8983,7 @@
     getQuickReplySubmitter: getQuickReplySubmitter,
     isQuickReplyEditorCandidate: isQuickReplyEditorCandidate,
     performQuickReplySubmit: performQuickReplySubmit,
+    resolveQuickReplyRefreshUrl: resolveQuickReplyRefreshUrl,
     buildPageUrl: buildPageUrl,
     detectPageType: detectPageType,
     getInjectedStyleText: getInjectedStyleText,

@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.2.11 - 2026-08-03
+## 0.2.11 - 2026-08-04
+
+### Fixed
+
+- 修复多页帖子或回复页提交后仍刷新原地址，导致新回复没有在当前页面无刷新展示的问题；现在会优先跟随服务端重定向地址，缺失时从表单 `tid` 回到帖子末页加载最新楼层。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
+## 0.2.10 - 2026-08-03
 
 ### Added
 

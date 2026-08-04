@@ -1033,6 +1033,39 @@ const shadowedActionRequest = enhancer.createQuickReplyRequest(
 
 assert.equal(shadowedActionRequest.url, 'https://south-plus.org/post.php?');
 
+const tidFallbackRequest = enhancer.createQuickReplyRequest(
+  {
+    action: 'post.php?',
+    method: 'post',
+    fields: {
+      action: 'reply',
+      fid: '9',
+      tid: '456',
+      atc_content: '感谢分享',
+    },
+  },
+  { name: 'Submit', value: '提交' },
+  'https://south-plus.org/post.php?action=reply&tid=456',
+  FakeFormData
+);
+
+assert.equal(
+  enhancer.resolveQuickReplyRefreshUrl(
+    'https://south-plus.org/post.php?action=reply&tid=456',
+    tidFallbackRequest,
+    { ok: true, url: 'https://south-plus.org/post.php?' }
+  ),
+  'https://south-plus.org/read.php?tid=456&page=e#a'
+);
+assert.equal(
+  enhancer.resolveQuickReplyRefreshUrl(
+    'https://south-plus.org/read.php?tid=123',
+    tidFallbackRequest,
+    { ok: true, url: 'https://south-plus.org/read.php?tid=123&page=e#a' }
+  ),
+  'https://south-plus.org/read.php?tid=123&page=e#a'
+);
+
 function createFakeSubmitter(tagName, type, name, value) {
   return {
     tagName,
@@ -1095,6 +1128,7 @@ async function testQuickReplySubmissionFlow() {
   const successPendingCalls = [];
   let successPending = false;
   let appliedHtml = '';
+  let appliedRefreshUrl = '';
 
   const success = await enhancer.performQuickReplySubmit({
     request,
@@ -1115,8 +1149,9 @@ async function testQuickReplySubmissionFlow() {
       successPendingCalls.push(value);
       successPending = value;
     },
-    applyHtml: function applyHtml(html) {
+    applyHtml: function applyHtml(html, refreshUrl) {
       appliedHtml = html;
+      appliedRefreshUrl = refreshUrl;
       return true;
     },
   });
@@ -1125,7 +1160,7 @@ async function testQuickReplySubmissionFlow() {
   assert.equal(successCalls[0].url, request.url);
   assert.strictEqual(successCalls[0].options, request.options);
   assert.deepEqual(successCalls[1], {
-    url: pageUrl,
+    url: 'https://south-plus.org/read.php?tid=123&page=e#a',
     options: {
       credentials: 'include',
       cache: 'no-store',
@@ -1133,6 +1168,7 @@ async function testQuickReplySubmissionFlow() {
   });
   assert.equal(successCalls[1].options.body, undefined);
   assert.equal(appliedHtml, '<main id="main">new reply</main>');
+  assert.equal(appliedRefreshUrl, 'https://south-plus.org/read.php?tid=123&page=e#a');
   assert.deepEqual(successPendingCalls, [true, false]);
   assert.equal(successPending, false);
 
