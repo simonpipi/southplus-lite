@@ -3,7 +3,23 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.2\.11/);
+assert.match(source, /@version\s+0\.2\.12/);
+const defaultSettings = enhancer.getDefaultSettings();
+assert.equal(defaultSettings.moduleNavDensity, 'comfortable');
+assert.equal(enhancer.normalizeModuleNavDensity('compact'), 'compact');
+assert.equal(enhancer.normalizeModuleNavDensity('standard'), 'standard');
+assert.equal(enhancer.normalizeModuleNavDensity('bad-value'), 'comfortable');
+assert.equal(enhancer.getModuleNavigationDensityConfig('standard').width, 240);
+assert.equal(enhancer.getModuleNavigationDensityConfig('comfortable').itemHeight, 44);
+assert.deepEqual(enhancer.normalizeNavigationPinMap({ alpha: true, beta: false, '': true }), { alpha: true });
+assert.equal(
+  enhancer.getModuleNavigationConfigPinKey({
+    section: '站点导航',
+    label: '茶馆',
+    href: 'https://south-plus.org/thread.php?fid-9.html',
+  }),
+  '站点导航|茶馆|https://south-plus.org/thread.php?fid-9.html'
+);
 assert.match(source, /South Plus 工具箱/);
 assert.match(source, /spx-toolbox-action/);
 assert.match(source, /--spx-page-max:1480px/);
@@ -26,7 +42,19 @@ assert.match(source, /NAVIGATION_COLLAPSE_KEY = APP \+ ':navigationCollapse:v1'/
 assert.match(source, /spx-module-nav-section\[aria-expanded="true"\]:before/);
 assert.match(source, /spx-module-nav-group\.spx-module-nav-collapsed>\.spx-module-nav-node\{display:none!important;\}/);
 assert.match(source, /appendModuleNavigationSection\(groupNode, group\.label, collapseState\)/);
-assert.match(source, /--spx-module-width:220px/);
+assert.match(source, /--spx-module-width:260px/);
+assert.match(source, /--spx-module-item-height:44px/);
+assert.match(source, /max-height:calc\(100vh - var\(--spx-module-max-offset\)\)!important/);
+assert.match(source, /setProperty\('--spx-module-item-height', navDensity\.itemHeight \+ 'px'\)/);
+assert.match(source, /data-choice="moduleNavDensity"/);
+assert.match(source, /select\[data-choice\]/);
+assert.match(source, /spx-module-nav-search/);
+assert.match(source, /filterModuleNavigation/);
+assert.match(source, /spx-module-nav-pin/);
+assert.match(source, /NAVIGATION_PIN_KEY = APP \+ ':navigationPins:v1'/);
+assert.match(source, /normalizeNavigationPinMap/);
+assert.match(source, /section: '置顶导航'/);
+assert.match(source, /withPinnedModuleNavigationConfigs/);
 assert.match(source, /minmax\(196px,var\(--spx-module-width\)\)/);
 assert.match(source, /spx-module-nav-group/);
 assert.match(source, /spx-module-nav-node/);
@@ -205,7 +233,6 @@ const threadListRoot = {
 };
 assert.equal(enhancer.shouldUseForumDashboard('https://south-plus.org/thread.php?fid-9.html', emptyRoot), false);
 assert.equal(enhancer.shouldUseForumDashboard('https://south-plus.org/thread.php?fid-9.html', threadListRoot), true);
-const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/search.php', emptyRoot), true);
 assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/search2.php?orderway-postdate-asc-desc-newatc-1.html', emptyRoot), true);
 assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/u.php?action-topic-uid-1.html', emptyRoot), true);
@@ -918,16 +945,20 @@ assert.match(enhancer.formatBackupImportPreview(cleanedHealth.payload), /即将�
 
 assert.equal(enhancer.formatStorageBytes(1536), '1.5 KB');
 const storageReport = enhancer.collectStorageUsageReport(healthData);
-assert.equal(storageReport.entries.length, 7);
+assert.equal(storageReport.entries.length, 8);
 const resourceUsage = storageReport.entries.find(function findResourceUsage(entry) {
   return entry.label === '资源库';
 });
 const navigationUsage = storageReport.entries.find(function findNavigationUsage(entry) {
   return entry.label === '导航池';
 });
+const navigationPinUsage = storageReport.entries.find(function findNavigationPinUsage(entry) {
+  return entry.label === '导航置顶';
+});
 assert.equal(resourceUsage.count, 1);
 assert.equal(navigationUsage.count, 1);
-assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 7 项 · 最大：/);
+assert.equal(navigationPinUsage.count, 0);
+assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 8 项 · 最大：/);
 assert.match(enhancer.formatStorageUsageEntry(resourceUsage), /^资源库：.* \/ 1 条 \/ 上限 500$/);
 assert.equal(enhancer.formatStorageUsageLimit(resourceUsage), '1 / 500 条（0%）');
 assert.equal(enhancer.getStorageUsageLevel(resourceUsage), 'ok');

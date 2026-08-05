@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.12 - 2026-08-05
+
+### Added
+
+- 导航中心支持搜索导航项、星标置顶常用入口，并将置顶记录纳入本地备份和体积统计。
+
+### Changed
+
+- 导航中心新增紧凑 / 标准 / 舒适三档密度设置，舒适档默认保留 260px 左栏、更高纵向可视高度和加高条目块区域。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.2.11 - 2026-08-04
 
 ### Fixed

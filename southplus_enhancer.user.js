@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.2.11
+// @version      0.2.12
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -57,6 +57,7 @@
   var RESOURCE_KEY = APP + ':resources:v1';
   var NAVIGATION_KEY = APP + ':navigation:v1';
   var NAVIGATION_COLLAPSE_KEY = APP + ':navigationCollapse:v1';
+  var NAVIGATION_PIN_KEY = APP + ':navigationPins:v1';
   var AUTO_BUY_CHECK_TTL = 10 * 60 * 1000;
   var AUTO_BUY_ATTEMPT_LIMIT = 100;
   var RESOURCE_LIMIT = 500;
@@ -120,6 +121,7 @@
     immersiveFontSize: 16,
     unifiedPreviewGallery: true,
     homeDashboard: true,
+    moduleNavDensity: 'comfortable',
     adBlock: true,
     compactRead: true,
     unreadOnly: false,
@@ -173,6 +175,52 @@
 
   function parseQuickReplyList(value) {
     return parseLineList(value).slice(0, 30);
+  }
+
+  function normalizeModuleNavDensity(value) {
+    var text = String(value || '').trim();
+    if (text === 'compact' || text === 'standard' || text === 'comfortable') return text;
+    return 'comfortable';
+  }
+
+  function getModuleNavigationDensityConfig(value) {
+    var density = normalizeModuleNavDensity(value);
+    var configs = {
+      compact: {
+        width: 220,
+        maxOffset: 76,
+        sectionHeight: 28,
+        parentHeight: 30,
+        itemHeight: 34,
+        childHeight: 30,
+        itemPadding: 10,
+        sectionPadding: 9,
+        radius: 9,
+      },
+      standard: {
+        width: 240,
+        maxOffset: 64,
+        sectionHeight: 30,
+        parentHeight: 36,
+        itemHeight: 40,
+        childHeight: 32,
+        itemPadding: 12,
+        sectionPadding: 11,
+        radius: 10,
+      },
+      comfortable: {
+        width: 260,
+        maxOffset: 52,
+        sectionHeight: 34,
+        parentHeight: 40,
+        itemHeight: 44,
+        childHeight: 36,
+        itemPadding: 14,
+        sectionPadding: 12,
+        radius: 12,
+      },
+    };
+    return Object.assign({ density: density }, configs[density]);
   }
 
   function normalizeListValue(value, parser) {
@@ -1687,6 +1735,7 @@
         settings[key] = !!settings[key];
       }
     });
+    settings.moduleNavDensity = normalizeModuleNavDensity(settings.moduleNavDensity);
     settings.immersiveFontSize = 16;
     settings.autoBuyMaxSp = Math.max(0, Number(settings.autoBuyMaxSp) || 0);
     settings.titleKeywords = normalizeListValue(settings.titleKeywords, parseLineList);
@@ -1709,6 +1758,7 @@
         autoBuyAttempts: pruneAutoBuyAttempts(copyStorageMap(source.autoBuyAttempts)),
         resources: pruneResourceLibrary(copyStorageMap(source.resources)),
         navigation: normalizeNavigationPool(source.navigation),
+        navigationPins: normalizeNavigationPinMap(source.navigationPins),
       },
     };
   }
@@ -1725,6 +1775,7 @@
       autoBuyAttempts: source.autoBuyAttempts || source.autoBuy,
       resources: source.resources,
       navigation: source.navigation,
+      navigationPins: source.navigationPins,
     }, payload.exportedAt);
   }
 
@@ -1737,6 +1788,7 @@
       autoBuyAttempts: loadAutoBuyAttempts(),
       resources: state && state.resources,
       navigation: loadNavigationPool(),
+      navigationPins: loadNavigationPins(),
     });
   }
 
@@ -1806,6 +1858,7 @@
       createStorageUsageEntry(AUTO_BUY_KEY, '自动购买记录', source.autoBuyAttempts, countMapItems(source.autoBuyAttempts), AUTO_BUY_ATTEMPT_LIMIT),
       createStorageUsageEntry(RESOURCE_KEY, '资源库', source.resources, countMapItems(source.resources), RESOURCE_LIMIT),
       createStorageUsageEntry(NAVIGATION_KEY, '导航池', source.navigation, countMapItems(source.navigation), NAVIGATION_POOL_LIMIT),
+      createStorageUsageEntry(NAVIGATION_PIN_KEY, '导航置顶', source.navigationPins, countMapItems(source.navigationPins), 0),
     ];
     var totalBytes = entries.reduce(function sumBytes(total, entry) {
       return total + entry.bytes;
@@ -2042,6 +2095,7 @@
       autoBuyAttempts: autoBuyAttempts,
       resources: resources,
       navigation: source.navigation,
+      navigationPins: source.navigationPins,
     }, now);
 
     return {
@@ -2199,6 +2253,24 @@
     saveMap(NAVIGATION_KEY, normalizeNavigationPool(pool));
   }
 
+  function normalizeNavigationPinMap(value) {
+    var source = isPlainObject(value) ? value : {};
+    var result = {};
+    Object.keys(source).forEach(function normalizePinKey(key) {
+      var text = String(key || '').trim();
+      if (text && source[key]) result[text] = true;
+    });
+    return result;
+  }
+
+  function loadNavigationPins() {
+    return normalizeNavigationPinMap(loadMap(NAVIGATION_PIN_KEY));
+  }
+
+  function saveNavigationPins(pins) {
+    saveMap(NAVIGATION_PIN_KEY, normalizeNavigationPinMap(pins));
+  }
+
   function getModuleNavigationGroupKey(label) {
     return normalizeNavigationLabel(label).toLowerCase();
   }
@@ -2280,6 +2352,7 @@
     state.progress = pruneReadProgress(copyStorageMap(data.progress));
     state.resources = pruneResourceLibrary(copyStorageMap(data.resources));
     var navigation = normalizeNavigationPool(data.navigation);
+    var navigationPins = normalizeNavigationPinMap(data.navigationPins);
     saveSettings(settings);
     saveMap(READ_KEY, state.read);
     saveMap(WATCH_KEY, state.watch);
@@ -2287,6 +2360,7 @@
     saveAutoBuyAttempts(data.autoBuyAttempts);
     saveResourceLibrary(state.resources);
     saveNavigationPool(navigation);
+    saveNavigationPins(navigationPins);
     clearReadProgressRestoreRequest(parseThreadId(location.href));
     refreshWatchCenter();
     refreshHistoryCenter();
@@ -2402,7 +2476,7 @@
 
   function getInjectedStyleText() {
     return [
-      ':root,.spx-theme-clean{--spx-bg:#f7f9fc;--spx-page-bg:#eef2f6;--spx-panel:#fff;--spx-panel-muted:#f7f9fc;--spx-line:#d7dee9;--spx-line-soft:#e5eaf2;--spx-text:#1f2937;--spx-strong:#182230;--spx-sub:#667085;--spx-muted:#98a2b3;--spx-link:#1d4ed8;--spx-accent:#2563eb;--spx-accent-soft:#dbeafe;--spx-accent-wash:#eff6ff;--spx-danger:#b91c1c;--spx-danger-soft:#fef2f2;--spx-warn:#b45309;--spx-nav-bg:#283241;--spx-nav-hover:#334155;--spx-nav-text:#dfe7f0;--spx-nav-current-bg:#fff;--spx-nav-current-text:#182230;--spx-input-bg:#fff;--spx-row-bg:#fff;--spx-row-hover:#f8fbff;--spx-module-width:220px;--spx-radius-sm:6px;--spx-radius:8px;--spx-radius-lg:12px;--spx-radius-xl:16px;--spx-shadow-card:0 6px 18px rgba(15,23,42,.06);--spx-shadow-popover:0 18px 48px rgba(15,23,42,.24);--spx-shadow-strong:0 24px 80px rgba(15,23,42,.3);--spx-page-max:1680px;--spx-page-space:clamp(28px,5.2vw,72px);--spx-reader-line:clamp(760px,62vw,960px);--spx-panel-width:min(620px,calc(100vw - 96px));--spx-panel-max-height:min(78vh,760px);--spx-control-height:32px;}',
+      ':root,.spx-theme-clean{--spx-bg:#f7f9fc;--spx-page-bg:#eef2f6;--spx-panel:#fff;--spx-panel-muted:#f7f9fc;--spx-line:#d7dee9;--spx-line-soft:#e5eaf2;--spx-text:#1f2937;--spx-strong:#182230;--spx-sub:#667085;--spx-muted:#98a2b3;--spx-link:#1d4ed8;--spx-accent:#2563eb;--spx-accent-soft:#dbeafe;--spx-accent-wash:#eff6ff;--spx-danger:#b91c1c;--spx-danger-soft:#fef2f2;--spx-warn:#b45309;--spx-nav-bg:#283241;--spx-nav-hover:#334155;--spx-nav-text:#dfe7f0;--spx-nav-current-bg:#fff;--spx-nav-current-text:#182230;--spx-input-bg:#fff;--spx-row-bg:#fff;--spx-row-hover:#f8fbff;--spx-module-width:260px;--spx-module-max-offset:52px;--spx-module-section-height:34px;--spx-module-parent-height:40px;--spx-module-item-height:44px;--spx-module-child-height:36px;--spx-module-item-padding:14px;--spx-module-section-padding:12px;--spx-module-item-radius:12px;--spx-radius-sm:6px;--spx-radius:8px;--spx-radius-lg:12px;--spx-radius-xl:16px;--spx-shadow-card:0 6px 18px rgba(15,23,42,.06);--spx-shadow-popover:0 18px 48px rgba(15,23,42,.24);--spx-shadow-strong:0 24px 80px rgba(15,23,42,.3);--spx-page-max:1680px;--spx-page-space:clamp(28px,5.2vw,72px);--spx-reader-line:clamp(760px,62vw,960px);--spx-panel-width:min(620px,calc(100vw - 96px));--spx-panel-max-height:min(78vh,760px);--spx-control-height:32px;}',
       ':root.spx-theme-night,.spx-theme-night{--spx-bg:#202720;--spx-page-bg:#111412;--spx-panel:#181d1a;--spx-panel-muted:#202720;--spx-line:#303a32;--spx-line-soft:#263029;--spx-text:#edf4ec;--spx-strong:#f8fff5;--spx-sub:#aebbae;--spx-muted:#7c887d;--spx-link:#86efac;--spx-accent:#4ade80;--spx-accent-soft:#173a25;--spx-accent-wash:#102318;--spx-danger:#f87171;--spx-danger-soft:#3a171c;--spx-warn:#fbbf24;--spx-nav-bg:#070908;--spx-nav-hover:#202720;--spx-nav-text:#aebbae;--spx-nav-current-bg:#202720;--spx-nav-current-text:#f8fff5;--spx-input-bg:#151a17;--spx-row-bg:#181d1a;--spx-row-hover:#202720;--spx-shadow-card:0 10px 30px rgba(0,0,0,.28);--spx-shadow-popover:0 18px 48px rgba(0,0,0,.46);--spx-shadow-strong:0 24px 80px rgba(0,0,0,.55);}',
       '@media(max-width:900px){:root,.spx-theme-clean,.spx-theme-night{--spx-page-max:100vw;--spx-page-space:16px;--spx-reader-line:calc(100vw - 28px);--spx-panel-width:calc(100vw - 16px);--spx-panel-max-height:calc(100vh - 80px);}}',
       '.spx-adblock .spx-ad-hidden{display:none!important;}',
@@ -2714,6 +2788,8 @@
       '.spx-settings label input[type="checkbox"]{flex:none;accent-color:var(--spx-accent);}',
       '.spx-settings .spx-number-setting{justify-content:space-between;gap:10px;}',
       '.spx-settings .spx-number-setting input{box-sizing:border-box;width:92px;height:var(--spx-control-height);border:1px solid var(--spx-line);border-radius:var(--spx-radius-sm);padding:0 8px;text-align:right;}',
+      '.spx-settings .spx-choice-setting{justify-content:space-between;gap:10px;}',
+      '.spx-settings .spx-choice-setting select{box-sizing:border-box;min-width:132px;height:var(--spx-control-height);border:1px solid var(--spx-line);border-radius:var(--spx-radius-sm);padding:0 8px;background:#fff;color:var(--spx-text);}',
       '.spx-settings textarea{box-sizing:border-box;width:100%;min-height:72px;border:1px solid var(--spx-line);border-radius:var(--spx-radius-sm);padding:7px;background:#fff;font:12px/1.4 monospace;}',
       '.spx-settings .spx-help{margin:4px 0 8px;color:var(--spx-sub);font-size:12px;}',
       '.spx-settings .spx-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}',
@@ -2802,21 +2878,29 @@
       '.spx-module-body{grid-column:2!important;min-width:0!important;display:block!important;}',
       '.spx-module-nav-ready.spx-home-dashboard #content>*:not(.spx-module-nav):not(.spx-module-body),.spx-module-nav-ready.spx-forum-dashboard #content>*:not(.spx-module-nav):not(.spx-module-body){grid-column:2!important;min-width:0!important;}',
       '.spx-module-nav-ready .spx-forum-tools{width:100%!important;margin:0 0 10px!important;}',
-      '.spx-module-nav{grid-column:1!important;position:sticky!important;top:46px!important;z-index:20!important;box-sizing:border-box!important;display:flex!important;flex-direction:column!important;align-self:start!important;gap:8px!important;max-height:calc(100vh - 76px)!important;padding:12px!important;overflow:auto!important;border:1px solid var(--spx-line)!important;border-radius:var(--spx-radius-lg)!important;background:var(--spx-panel)!important;box-shadow:var(--spx-shadow-card)!important;color:var(--spx-text)!important;scrollbar-width:thin!important;}',
+      '.spx-module-nav{grid-column:1!important;position:sticky!important;top:46px!important;z-index:20!important;box-sizing:border-box!important;display:flex!important;flex-direction:column!important;align-self:start!important;gap:8px!important;max-height:calc(100vh - var(--spx-module-max-offset))!important;padding:12px!important;overflow:auto!important;border:1px solid var(--spx-line)!important;border-radius:var(--spx-radius-lg)!important;background:var(--spx-panel)!important;box-shadow:var(--spx-shadow-card)!important;color:var(--spx-text)!important;scrollbar-width:thin!important;}',
       '.spx-module-nav-title{padding:0 2px 8px!important;border-bottom:1px solid var(--spx-line-soft)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;line-height:1.25!important;white-space:nowrap!important;}',
+      '.spx-module-nav-controls{display:flex!important;align-items:center!important;width:100%!important;}',
+      '.spx-module-nav-search{box-sizing:border-box!important;width:100%!important;height:30px!important;padding:0 10px!important;border:1px solid var(--spx-line)!important;border-radius:9px!important;background:var(--spx-input-bg)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:800!important;outline:none!important;}',
+      '.spx-module-nav-search:focus{border-color:var(--spx-accent)!important;box-shadow:0 0 0 2px rgba(37,99,235,.12)!important;}',
       '.spx-module-nav-group{display:flex!important;flex-direction:column!important;gap:5px!important;}',
-      '.spx-module-nav-section{appearance:none!important;box-sizing:border-box!important;display:flex!important;align-items:center!important;gap:7px!important;width:100%!important;min-height:28px!important;margin:5px 0 1px!important;padding:0 9px!important;border:0!important;border-radius:8px!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;font-size:11px!important;font-weight:900!important;line-height:1.2!important;text-align:left!important;white-space:nowrap!important;cursor:pointer!important;}',
+      '.spx-module-nav-section{appearance:none!important;box-sizing:border-box!important;display:flex!important;align-items:center!important;gap:7px!important;width:100%!important;min-height:var(--spx-module-section-height)!important;margin:5px 0 1px!important;padding:0 var(--spx-module-section-padding)!important;border:0!important;border-radius:calc(var(--spx-module-item-radius) - 2px)!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;font-size:11px!important;font-weight:900!important;line-height:1.2!important;text-align:left!important;white-space:nowrap!important;cursor:pointer!important;}',
       '.spx-module-nav-section:before{content:"▸";font-size:10px!important;color:var(--spx-accent)!important;}',
       '.spx-module-nav-section[aria-expanded="true"]:before{content:"▾";}',
       '.spx-module-nav-section[aria-expanded="false"]:before{content:"▸";}',
       '.spx-module-nav-section:after{content:"";height:1px!important;flex:1!important;background:rgba(37,99,235,.18)!important;}',
       '.spx-module-nav-group.spx-module-nav-collapsed>.spx-module-nav-node{display:none!important;}',
+      '.spx-module-nav[data-spx-module-nav-searching="1"] .spx-module-nav-group.spx-module-nav-collapsed>.spx-module-nav-node{display:flex!important;}',
       '.spx-module-nav-node{display:flex!important;flex-direction:column!important;gap:4px!important;}',
       '.spx-module-nav-children{display:flex!important;flex-direction:column!important;gap:4px!important;margin:2px 0 3px 11px!important;padding-left:9px!important;border-left:2px solid var(--spx-line-soft)!important;}',
-      '.spx-module-nav-parent-title{box-sizing:border-box!important;min-height:30px!important;padding:7px 10px!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;color:var(--spx-strong)!important;font-size:12px!important;font-weight:900!important;line-height:1.25!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
-      '.spx-module-nav-item{box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;min-height:34px!important;width:100%!important;padding:0 10px!important;border:1px solid transparent!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;color:var(--spx-text)!important;text-decoration:none!important;font-size:12px!important;font-weight:900!important;line-height:1.2!important;white-space:nowrap!important;cursor:pointer!important;}',
-      '.spx-module-nav-item.spx-module-nav-level-3{min-height:30px!important;padding:0 9px!important;border-radius:8px!important;background:transparent!important;color:var(--spx-link)!important;font-size:11px!important;font-weight:800!important;}',
+      '.spx-module-nav-parent-title{box-sizing:border-box!important;display:flex!important;align-items:center!important;min-height:var(--spx-module-parent-height)!important;padding:0 var(--spx-module-section-padding)!important;border-radius:var(--spx-module-item-radius)!important;background:var(--spx-panel-muted)!important;color:var(--spx-strong)!important;font-size:12px!important;font-weight:900!important;line-height:1.25!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
+      '.spx-module-nav-item{box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;min-height:var(--spx-module-item-height)!important;width:100%!important;padding:0 var(--spx-module-item-padding)!important;border:1px solid transparent!important;border-radius:var(--spx-module-item-radius)!important;background:var(--spx-panel-muted)!important;color:var(--spx-text)!important;text-decoration:none!important;font-size:12px!important;font-weight:900!important;line-height:1.2!important;white-space:nowrap!important;cursor:pointer!important;}',
+      '.spx-module-nav-item.spx-module-nav-level-3{min-height:var(--spx-module-child-height)!important;padding:0 var(--spx-module-section-padding)!important;border-radius:calc(var(--spx-module-item-radius) - 2px)!important;background:transparent!important;color:var(--spx-link)!important;font-size:11px!important;font-weight:800!important;}',
       '.spx-module-nav-label{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
+      '.spx-module-nav-pin{flex:none;display:inline-flex!important;align-items:center!important;justify-content:center!important;width:20px!important;height:20px!important;border-radius:999px!important;color:var(--spx-muted)!important;font-size:13px!important;line-height:1!important;opacity:.72!important;cursor:pointer!important;}',
+      '.spx-module-nav-pin:hover,.spx-module-nav-pin:focus-visible{background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;opacity:1!important;outline:none!important;}',
+      '.spx-module-nav-item.spx-module-nav-pinned .spx-module-nav-pin{color:var(--spx-accent)!important;opacity:1!important;}',
+      '.spx-module-nav-search-hidden{display:none!important;}',
       '.spx-module-nav-item:hover,.spx-module-nav-item:focus-visible{border-color:var(--spx-accent)!important;color:var(--spx-accent)!important;text-decoration:none!important;outline:none!important;}',
       '.spx-module-nav-item.spx-active{border-color:var(--spx-accent)!important;background:var(--spx-accent)!important;color:#fff!important;box-shadow:0 7px 16px rgba(37,99,235,.2)!important;}',
       '.spx-module-nav-count{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-width:22px!important;height:20px!important;padding:0 6px!important;border-radius:999px!important;background:var(--spx-panel)!important;color:var(--spx-sub)!important;font-size:11px!important;font-weight:900!important;font-variant-numeric:tabular-nums!important;}',
@@ -2846,7 +2930,7 @@
       '.spx-compact-read:not(.spx-reader) .tpc_content{font-size:15px;line-height:1.7;max-width:var(--spx-reader-line);}',
       '.spx-folded-quote{max-height:110px;overflow:hidden;position:relative;border-bottom:1px dashed var(--spx-line);}',
       '.spx-folded-quote:after{content:"";position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(transparent,var(--spx-panel));}',
-      '@media(max-width:900px){.spx-home-dashboard #content,.spx-forum-dashboard #content{width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready.spx-home-dashboard #content,.spx-module-nav-ready.spx-forum-dashboard #content{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:10px!important}.spx-module-nav-ready.spx-home-dashboard #content>*:not(.spx-module-nav),.spx-module-nav-ready.spx-forum-dashboard #content>*:not(.spx-module-nav),.spx-module-nav{grid-column:1!important}.spx-module-nav{position:static!important;display:flex!important;flex-direction:row!important;align-items:center!important;max-height:none!important;overflow-x:auto!important;overflow-y:hidden!important;padding:7px!important}.spx-module-nav-title{flex:none!important;padding:0 8px!important;border-bottom:0!important}.spx-module-nav-group,.spx-module-nav-node,.spx-module-nav-children{flex:none!important;display:flex!important;flex-direction:row!important;align-items:center!important;gap:6px!important;margin:0!important;padding:0!important;border-left:0!important}.spx-module-nav-section,.spx-module-nav-parent-title{flex:none!important}.spx-module-nav-parent-title{min-height:30px!important;border-radius:999px!important}.spx-module-nav-item{flex:none!important;width:auto!important;min-height:30px!important;border-radius:999px!important}.spx-home-dashboard #spx-home-grid{grid-template-columns:1fr!important}.spx-home-dashboard .spx-home-module,.spx-home-dashboard .spx-home-module[data-spx-large="1"]{grid-column:1!important}.spx-home-dashboard #header,.spx-home-dashboard #mainNav,.spx-home-dashboard #infobox,.spx-home-dashboard #notice,.spx-home-dashboard .spx-home-quick,.spx-forum-dashboard #header,.spx-forum-dashboard #mainNav,.spx-forum-dashboard #infobox,.spx-forum-dashboard #notice{width:calc(100vw - 16px)!important}.spx-home-dashboard .spx-home-module tr.tr3,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3{grid-template-columns:1fr!important;gap:4px!important}.spx-home-dashboard .spx-home-module tr.tr3>td:first-child,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3>td:first-child:not([id^="td_"]){display:none!important}.spx-forum-tools{width:100%!important;flex-wrap:wrap}.spx-forum-tools input{flex-basis:100%!important}}',
+      '@media(max-width:900px){.spx-home-dashboard #content,.spx-forum-dashboard #content{width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready.spx-home-dashboard #content,.spx-module-nav-ready.spx-forum-dashboard #content{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:10px!important}.spx-module-nav-ready.spx-home-dashboard #content>*:not(.spx-module-nav),.spx-module-nav-ready.spx-forum-dashboard #content>*:not(.spx-module-nav),.spx-module-nav{grid-column:1!important}.spx-module-nav{position:static!important;display:flex!important;flex-direction:row!important;align-items:center!important;max-height:none!important;overflow-x:auto!important;overflow-y:hidden!important;padding:7px!important}.spx-module-nav-title{flex:none!important;padding:0 8px!important;border-bottom:0!important}.spx-module-nav-controls{flex:none!important;width:180px!important}.spx-module-nav-group,.spx-module-nav-node,.spx-module-nav-children{flex:none!important;display:flex!important;flex-direction:row!important;align-items:center!important;gap:6px!important;margin:0!important;padding:0!important;border-left:0!important}.spx-module-nav-section,.spx-module-nav-parent-title{flex:none!important}.spx-module-nav-parent-title{min-height:30px!important;border-radius:999px!important}.spx-module-nav-item{flex:none!important;width:auto!important;min-height:30px!important;border-radius:999px!important}.spx-home-dashboard #spx-home-grid{grid-template-columns:1fr!important}.spx-home-dashboard .spx-home-module,.spx-home-dashboard .spx-home-module[data-spx-large="1"]{grid-column:1!important}.spx-home-dashboard #header,.spx-home-dashboard #mainNav,.spx-home-dashboard #infobox,.spx-home-dashboard #notice,.spx-home-dashboard .spx-home-quick,.spx-forum-dashboard #header,.spx-forum-dashboard #mainNav,.spx-forum-dashboard #infobox,.spx-forum-dashboard #notice{width:calc(100vw - 16px)!important}.spx-home-dashboard .spx-home-module tr.tr3,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3{grid-template-columns:1fr!important;gap:4px!important}.spx-home-dashboard .spx-home-module tr.tr3>td:first-child,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3>td:first-child:not([id^="td_"]){display:none!important}.spx-forum-tools{width:100%!important;flex-wrap:wrap}.spx-forum-tools input{flex-basis:100%!important}}',
       '@media(max-width:760px){.spx-preview-lightbox{padding:0!important}.spx-preview-lightbox-shell{border:0!important;border-radius:0!important}.spx-preview-lightbox-toolbar{align-items:flex-start!important;min-height:0!important;padding:8px!important}.spx-preview-lightbox-actions{gap:4px!important}.spx-preview-lightbox button{height:30px!important;padding:0 8px!important}.spx-preview-lightbox-canvas{padding:22px 50px!important}.spx-preview-lightbox-nav{width:38px!important;height:54px!important;font-size:26px!important}.spx-preview-lightbox-prev{left:6px!important}.spx-preview-lightbox-next{right:6px!important}.spx-preview-lightbox-caption{padding:6px 9px!important}.spx-preview-lightbox-help{display:none!important}.spx-reader body{font-size:16px!important}.spx-reader #wrapA{width:calc(100vw - 14px)!important;margin:0 7px!important}.spx-reader .tpc_content{font-size:16px!important;line-height:1.76!important;padding:12px!important}.spx-reader .tpc_content #read_tpc,.spx-reader .tpc_content>.f14{font-size:16px!important;line-height:1.76!important}.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{display:flex!important;flex-direction:column!important;gap:12px!important;padding:14px!important}.spx-reader .spx-post-body-split .tpc_content,.spx-immersive-read .spx-post-body-split .tpc_content{padding:0!important}.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{width:auto!important;max-height:360px!important;margin:0!important;padding:10px!important}.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{height:132px!important}.spx-preview-panel.spx-preview-drawer{left:8px!important;right:8px!important;top:auto!important;bottom:calc(62px + env(safe-area-inset-bottom,0px))!important;width:auto!important;max-height:58vh!important;border-radius:16px!important}.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed{left:auto!important;right:8px!important;bottom:calc(62px + env(safe-area-inset-bottom,0px))!important;top:auto!important;width:46px!important;height:126px!important}.spx-immersive-read #wrapA,.spx-immersive-read #main,.spx-immersive-read #content{width:100vw!important;margin:0!important}.spx-immersive-read table.js-post{width:calc(100vw - 14px)!important;margin:10px 7px!important}.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{font-size:19px!important;padding:16px 14px 6px!important}.spx-immersive-read .tpc_content{font-size:16px!important;line-height:1.76!important;padding:14px!important}.spx-immersive-read .tpc_content #read_tpc,.spx-immersive-read .tpc_content>.f14{font-size:16px!important;line-height:1.76!important}.spx-toolbar{left:8px!important;right:8px!important;bottom:calc(8px + env(safe-area-inset-bottom,0px))!important;width:auto!important;flex-direction:row!important;justify-content:space-between!important;padding:6px!important;border-radius:16px!important}.spx-toolbar button,.spx-toolbar a{flex:1 1 0!important;width:auto!important;height:34px!important;font-size:12px}.spx-settings,.spx-watch-center,.spx-toolbox{left:8px!important;right:8px!important;bottom:calc(58px + env(safe-area-inset-bottom,0px))!important;width:auto!important;max-height:calc(100vh - 92px - env(safe-area-inset-bottom,0px))!important;border-radius:18px!important}.spx-settings-grid,.spx-toolbox-grid{grid-template-columns:1fr!important}.spx-toolbox-body{max-height:calc(100vh - 150px - env(safe-area-inset-bottom,0px));padding:11px}.spx-toolbox-action{min-height:54px!important}.spx-watch-controls input,.spx-watch-controls select{flex:1 1 100%!important;max-width:none!important}.spx-resource-panel,#spx-resource-center{width:auto!important}.spx-watch-center-header{top:-14px}.spx-toolbox-desc{-webkit-line-clamp:1}}',
     ];
   }
@@ -2937,7 +3021,7 @@
       '.spx-module-nav-title{padding:0 2px 9px!important;border-bottom:1px solid var(--spx-line)!important;}',
       '.spx-module-nav-section{margin:6px 0 1px!important;border:0!important;background:var(--spx-accent-wash)!important;cursor:pointer!important;}',
       '.spx-module-nav-group.spx-module-nav-collapsed>.spx-module-nav-node{display:none!important;}',
-      '.spx-module-nav-item{min-height:34px!important;padding:0 10px!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;}',
+      '.spx-module-nav-item{min-height:var(--spx-module-item-height)!important;padding:0 var(--spx-module-item-padding)!important;border-radius:var(--spx-module-item-radius)!important;background:var(--spx-panel-muted)!important;}',
       '.spx-module-nav-count{min-width:22px!important;height:20px!important;}',
       '.spx-home-dashboard .spx-home-quick{display:none!important;}',
       '.spx-home-dashboard #notice,.spx-home-dashboard .spx-home-module,.spx-forum-dashboard #content .t,.spx-forum-dashboard .spx-module-nav-host .t{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;border-radius:12px!important;background:var(--spx-panel)!important;border-color:var(--spx-line)!important;box-shadow:0 8px 18px rgba(15,23,42,.06)!important;}',
@@ -2995,6 +3079,7 @@
   }
 
   function setBodyClasses(settings) {
+    var navDensity = getModuleNavigationDensityConfig(settings && settings.moduleNavDensity);
     document.documentElement.classList.toggle('spx-theme-clean', !settings.nightMode);
     document.documentElement.classList.toggle('spx-theme-night', !!settings.nightMode);
     document.documentElement.classList.toggle('spx-site-shell', shouldUseSiteShell(location.href));
@@ -3010,6 +3095,15 @@
     document.documentElement.classList.toggle('spx-compact-read', !!settings.compactRead);
     document.documentElement.classList.toggle('spx-hide-profile', !!settings.hideUserProfile);
     document.documentElement.style.setProperty('--spx-immersive-font-size', '16px');
+    document.documentElement.style.setProperty('--spx-module-width', navDensity.width + 'px');
+    document.documentElement.style.setProperty('--spx-module-max-offset', navDensity.maxOffset + 'px');
+    document.documentElement.style.setProperty('--spx-module-section-height', navDensity.sectionHeight + 'px');
+    document.documentElement.style.setProperty('--spx-module-parent-height', navDensity.parentHeight + 'px');
+    document.documentElement.style.setProperty('--spx-module-item-height', navDensity.itemHeight + 'px');
+    document.documentElement.style.setProperty('--spx-module-child-height', navDensity.childHeight + 'px');
+    document.documentElement.style.setProperty('--spx-module-item-padding', navDensity.itemPadding + 'px');
+    document.documentElement.style.setProperty('--spx-module-section-padding', navDensity.sectionPadding + 'px');
+    document.documentElement.style.setProperty('--spx-module-item-radius', navDensity.radius + 'px');
   }
 
   function extractAccountUserId(root, url) {
@@ -4467,20 +4561,77 @@
     });
   }
 
+  function getModuleNavigationConfigPinKey(config) {
+    if (!config || !config.href) return '';
+    var label = normalizeNavigationLabel(config.label || config.title);
+    var baseUrl = typeof location !== 'undefined' ? location.href : 'https://south-plus.org/';
+    var href = normalizeNavigationHref(config.href, baseUrl);
+    if (!label || !href) return '';
+    return getNavigationItemKey(config.section || '导航', label, href);
+  }
+
+  function toggleModuleNavigationPin(pinKey) {
+    if (!pinKey) return;
+    var pins = loadNavigationPins();
+    if (pins[pinKey]) {
+      delete pins[pinKey];
+    } else {
+      pins[pinKey] = true;
+    }
+    saveNavigationPins(pins);
+    remountGlobalModuleNavigation();
+  }
+
+  function createModuleNavigationPin(config) {
+    var pin = createEl('span', 'spx-module-nav-pin', config.pinned ? '★' : '☆');
+    pin.setAttribute('role', 'button');
+    pin.setAttribute('tabindex', '0');
+    pin.setAttribute('aria-label', config.pinned ? '取消置顶' : '置顶导航');
+    pin.title = config.pinned ? '取消置顶' : '置顶导航';
+    pin.addEventListener('click', function handleModuleNavigationPinClick(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleModuleNavigationPin(config.pinKey);
+    });
+    pin.addEventListener('keydown', function handleModuleNavigationPinKeydown(event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleModuleNavigationPin(config.pinKey);
+    });
+    return pin;
+  }
+
+  function getModuleNavigationSearchText(config) {
+    return compactText([
+      config && config.section,
+      config && config.parentLabel,
+      config && config.label,
+      config && config.title,
+    ].join(' '));
+  }
+
   function appendModuleNavigationItem(container, config, active, level) {
     var item = createEl(config.href ? 'a' : 'button', 'spx-module-nav-item');
     item.classList.add('spx-module-nav-level-' + (level || 2));
-    if (config.className) item.classList.add(config.className);
+    if (config.className) {
+      String(config.className).split(/\s+/).filter(Boolean).forEach(function addNavigationClass(className) {
+        item.classList.add(className);
+      });
+    }
+    item.classList.toggle('spx-module-nav-pinned', !!config.pinned);
     if (config.href) {
       item.href = config.href;
     } else {
       item.type = 'button';
     }
     item.title = config.title || config.label || '';
+    item.dataset.spxModuleNavText = getModuleNavigationSearchText(config);
     item.appendChild(createEl('span', 'spx-module-nav-label', config.label));
     if (!config.navigationOnly && (config.countText !== undefined || config.count !== undefined)) {
       item.appendChild(createEl('span', 'spx-module-nav-count', String(config.countText !== undefined ? config.countText : config.count)));
     }
+    if (config.pinKey) item.appendChild(createModuleNavigationPin(config));
     item.classList.toggle('spx-active', !!active);
     item.addEventListener('click', function activateModuleNav(event) {
       var nav = item.closest ? item.closest('.spx-module-nav') : null;
@@ -4494,6 +4645,49 @@
       }
     });
     container.appendChild(item);
+  }
+
+  function filterModuleNavigation(nav, query) {
+    if (!nav) return;
+    var term = compactText(query).toLowerCase();
+    var hiddenClass = 'spx-module-nav-search-hidden';
+    qsa('.' + hiddenClass, nav).forEach(function clearPreviousSearch(node) {
+      node.classList.remove(hiddenClass);
+    });
+    if (!term) {
+      delete nav.dataset.spxModuleNavSearching;
+      return;
+    }
+    nav.dataset.spxModuleNavSearching = '1';
+    qsa('.spx-module-nav-item,.spx-module-nav-parent-title', nav).forEach(function toggleSearchItem(item) {
+      var text = compactText(item.dataset.spxModuleNavText || item.textContent).toLowerCase();
+      item.classList.toggle(hiddenClass, text.indexOf(term) === -1);
+    });
+    qsa('.spx-module-nav-node', nav).reverse().forEach(function toggleSearchNode(node) {
+      var own = node.firstElementChild;
+      var hasVisibleItem = qsa('.spx-module-nav-item:not(.' + hiddenClass + '),.spx-module-nav-parent-title:not(.' + hiddenClass + ')', node).length > 0;
+      if (hasVisibleItem && own && own.classList && own.classList.contains(hiddenClass)) {
+        own.classList.remove(hiddenClass);
+      }
+      node.classList.toggle(hiddenClass, !hasVisibleItem);
+    });
+    qsa('.spx-module-nav-group', nav).forEach(function toggleSearchGroup(group) {
+      var hasVisibleNode = qsa('.spx-module-nav-node:not(.' + hiddenClass + ')', group).length > 0;
+      group.classList.toggle(hiddenClass, !hasVisibleNode);
+    });
+  }
+
+  function createModuleNavigationSearch(nav) {
+    var controls = createEl('div', 'spx-module-nav-controls');
+    var search = createEl('input', 'spx-module-nav-search');
+    search.type = 'search';
+    search.placeholder = '搜索导航';
+    search.setAttribute('aria-label', '搜索导航');
+    search.addEventListener('input', function handleModuleNavigationSearchInput() {
+      filterModuleNavigation(nav, search.value);
+    });
+    controls.appendChild(search);
+    return controls;
   }
 
   function getModuleNavigationHost() {
@@ -4606,7 +4800,9 @@
       appendModuleNavigationItem(wrapper, node.config, active || (!hasActive && state.index === 0), node.children.length ? 2 : 2);
       state.index += 1;
     } else {
-      wrapper.appendChild(createEl('div', 'spx-module-nav-parent-title', node.label));
+      var parentTitle = createEl('div', 'spx-module-nav-parent-title', node.label);
+      parentTitle.dataset.spxModuleNavText = compactText(node.label);
+      wrapper.appendChild(parentTitle);
     }
     if (node.children.length) {
       var children = createEl('div', 'spx-module-nav-children');
@@ -4666,6 +4862,7 @@
     nav.id = 'spx-module-nav';
     nav.setAttribute('aria-label', title || '导航中心');
     nav.appendChild(createEl('div', 'spx-module-nav-title', title || '导航中心'));
+    nav.appendChild(createModuleNavigationSearch(nav));
     var hasActive = visibleConfigs.some(function hasActiveConfig(config) {
       return !!config.active;
     });
@@ -4810,6 +5007,38 @@
       result.push(nextConfig);
     });
     return result;
+  }
+
+  function getPinnedModuleNavigationClassName(config) {
+    var classNames = String(config && config.className || '').split(/\s+/).filter(Boolean);
+    if (classNames.indexOf('spx-module-nav-pinned') === -1) classNames.push('spx-module-nav-pinned');
+    return classNames.join(' ');
+  }
+
+  function withPinnedModuleNavigationConfigs(configs) {
+    var pins = loadNavigationPins();
+    var pinnedConfigs = [];
+    var sourceConfigs = (configs || []).map(function markPinnedNavigationConfig(config) {
+      var pinKey = getModuleNavigationConfigPinKey(config);
+      var pinned = !!(pinKey && pins[pinKey]);
+      var nextConfig = Object.assign({}, config, {
+        pinKey: pinKey,
+        pinned: pinned,
+      });
+      if (pinned && nextConfig.href) {
+        pinnedConfigs.push(Object.assign({}, nextConfig, {
+          section: '置顶导航',
+          parentLabel: '',
+          title: (nextConfig.title || nextConfig.label) + ' · 置顶',
+          className: getPinnedModuleNavigationClassName(nextConfig),
+          active: !!nextConfig.active,
+          alwaysShow: true,
+          navigationOnly: true,
+        }));
+      }
+      return nextConfig;
+    });
+    return pinnedConfigs.concat(sourceConfigs);
   }
 
   function collectHomeNavigationConfigsFromDocument(root, pageUrl) {
@@ -5279,7 +5508,7 @@
   }
 
   function getAllModuleNavigationConfigs() {
-    return mergeModuleNavigationConfigs(
+    return withPinnedModuleNavigationConfigs(mergeModuleNavigationConfigs(
       getGlobalSiteNavigationConfigs(location.href)
         .concat(getPersistentModuleNavigationConfigs())
         .concat(getSearchPageNavigationConfigs())
@@ -5287,7 +5516,7 @@
         .concat(getTaskPageNavigationConfigs())
         .concat(getReadPageNavigationConfigs())
         .concat(pendingModuleNavigationConfigs)
-    );
+    ));
   }
 
   function createGlobalModuleNavigation(settings, state) {
@@ -7886,6 +8115,17 @@
       '<div class="spx-help">仅当帖子价格严格小于该值、账户 SP 足够且页面存在购买按钮时自动购买；默认关闭。</div>',
       '</section>',
     ] : [];
+    var navigationControls = [
+      '<section class="spx-settings-section">',
+      '<h4>导航中心</h4>',
+      '<div class="spx-help">控制左侧导航中心的块区域密度，搜索和置顶入口会即时保留在导航栏内。</div>',
+      '<label class="spx-choice-setting"><span>导航密度</span><select data-choice="moduleNavDensity">',
+      '<option value="compact">紧凑</option>',
+      '<option value="standard">标准</option>',
+      '<option value="comfortable">舒适</option>',
+      '</select></label>',
+      '</section>',
+    ];
 
     panel = createEl('div', 'spx-settings');
     panel.id = 'spx-settings';
@@ -7896,7 +8136,7 @@
       '<p class="spx-settings-subtitle">按场景分组管理阅读、列表、购买和本地数据。</p>',
       '</div>',
       '<div class="spx-settings-body">',
-    ].concat(readingControls, listControls, autoBuyControls, [
+    ].concat(readingControls, listControls, navigationControls, autoBuyControls, [
       '<section class="spx-settings-section">',
       '<h4>本地屏蔽</h4>',
       '<div class="spx-help">标题和作者关键词每行一个，保存后立即应用到当前页面。</div>',
@@ -7959,6 +8199,9 @@
       qsa('input[data-number]', panel).forEach(function syncNumber(input) {
         input.value = String(Number(settings[input.dataset.number]) || 0);
       });
+      qsa('select[data-choice]', panel).forEach(function syncChoice(select) {
+        select.value = settings[select.dataset.choice] || '';
+      });
     }
 
     function saveForm() {
@@ -7973,9 +8216,15 @@
       qsa('input[data-number]', panel).forEach(function readNumber(input) {
         settings[input.dataset.number] = Math.max(0, Number(input.value) || 0);
       });
+      qsa('select[data-choice]', panel).forEach(function readChoice(select) {
+        if (select.dataset.choice === 'moduleNavDensity') {
+          settings.moduleNavDensity = normalizeModuleNavDensity(select.value);
+        }
+      });
       delete document.documentElement.dataset.spxAutoBuyStatus;
       var autoBuyStatus = qs('#spx-auto-buy-status');
       if (autoBuyStatus) autoBuyStatus.remove();
+      Object.assign(settings, normalizeSettings(settings));
       saveSettings(settings);
       enhanceAll(settings, state);
     }
@@ -7988,6 +8237,8 @@
         progress: state && state.progress,
         autoBuyAttempts: loadAutoBuyAttempts(),
         resources: state && state.resources,
+        navigation: loadNavigationPool(),
+        navigationPins: loadNavigationPins(),
       };
     }
 
@@ -8970,7 +9221,12 @@
     shouldUseHomeDashboard: shouldUseHomeDashboard,
     shouldUseModuleNavigation: shouldUseModuleNavigation,
     getCurrentForumId: getCurrentForumId,
+    normalizeModuleNavDensity: normalizeModuleNavDensity,
+    getModuleNavigationDensityConfig: getModuleNavigationDensityConfig,
     getModuleNavigationGroupKey: getModuleNavigationGroupKey,
+    normalizeNavigationPinMap: normalizeNavigationPinMap,
+    getModuleNavigationConfigPinKey: getModuleNavigationConfigPinKey,
+    withPinnedModuleNavigationConfigs: withPinnedModuleNavigationConfigs,
     normalizeNavigationCollapseState: normalizeNavigationCollapseState,
     isModuleNavigationGroupCollapsed: isModuleNavigationGroupCollapsed,
     isModuleNavigationConfigActive: isModuleNavigationConfigActive,
