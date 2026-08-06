@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.2.12
+// @version      0.3.2
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -58,18 +58,39 @@
   var NAVIGATION_KEY = APP + ':navigation:v1';
   var NAVIGATION_COLLAPSE_KEY = APP + ':navigationCollapse:v1';
   var NAVIGATION_PIN_KEY = APP + ':navigationPins:v1';
+  var NAVIGATION_REFRESH_KEY = APP + ':navigationRefresh:v1';
+  var FAVORITE_NAV_SEEN_KEY = APP + ':favoriteNavSeen:v1';
   var AUTO_BUY_CHECK_TTL = 10 * 60 * 1000;
   var AUTO_BUY_ATTEMPT_LIMIT = 100;
   var RESOURCE_LIMIT = 500;
   var NAVIGATION_POOL_LIMIT = 160;
+  var NAVIGATION_REFRESH_TTL = 6 * 60 * 60 * 1000;
   var READ_PROGRESS_LIMIT = 200;
   var STALE_PROGRESS_MAX_AGE = 180 * 24 * 60 * 60 * 1000;
   var LOCAL_STORAGE_WARNING_BYTES = 4 * 1024 * 1024;
   var PREVIEW_GALLERY_BATCH_SIZE = 36;
+  var FAVORITE_NAV_BATCH_SIZE = 50;
+  var FAVORITE_NAV_MAX_FETCHED_ITEMS = 120;
+  var THREAD_PREVIEW_CACHE_TTL = 20 * 60 * 1000;
+  var THREAD_PREVIEW_FAILURE_TTL = 3 * 60 * 1000;
+  var THREAD_PREVIEW_CACHE_LIMIT = 50;
+  var THREAD_PREVIEW_IMAGE_LIMIT = 6;
+  var SP_BALANCE_CACHE_TTL = 90 * 1000;
   var TOOLBOX_BUTTON_SELECTOR = '[data-spx-toolbox-button="1"]';
   var SETTINGS_BUTTON_SELECTOR = '[data-spx-settings-button="1"]';
   var THREAD_ROW_HIDDEN_CLASSES = ['spx-filter-hidden', 'spx-hidden-rule', 'spx-unread-hidden', 'spx-thread-row-hidden'];
   var pendingModuleNavigationConfigs = [];
+  var scriptRequestState = {
+    queue: [],
+    running: false,
+    timer: null,
+    lastStartedAt: 0,
+    cooldownUntil: 0,
+    sequence: 0,
+  };
+  var threadPreviewCache = {};
+  var threadPreviewCacheOrder = [];
+  var spBalanceCache = { value: null, expiresAt: 0 };
   var RESOURCE_STATUSES = {
     saved: '已保存',
     todo: '待下载',
@@ -128,6 +149,7 @@
     onlyOriginalAuthor: false,
     foldQuotes: true,
     hideUserProfile: false,
+    networkFriendly: true,
     autoBuyPost: false,
     autoBuyMaxSp: 5,
     titleKeywords: [],
@@ -1656,6 +1678,7 @@
       'compactRead',
       'foldQuotes',
       'hideUserProfile',
+      'networkFriendly',
       'autoBuyPost',
       'unreadOnly',
       'onlyOriginalAuthor',
@@ -1670,6 +1693,7 @@
       if (key === 'compactRead' && detectPageType(url) === 'read') keys.push(key);
       if (key === 'foldQuotes' && detectPageType(url) === 'read') keys.push(key);
       if (key === 'hideUserProfile' && detectPageType(url) === 'read') keys.push(key);
+      if (key === 'networkFriendly') keys.push(key);
       if (key === 'autoBuyPost') keys.push(key);
       if (key === 'unreadOnly' && shouldShowToolbarAction('unreadOnly', url, root)) keys.push(key);
       if (key === 'onlyOriginalAuthor' && shouldShowToolbarAction('onlyOriginalAuthor', url, root)) keys.push(key);
@@ -1697,6 +1721,243 @@
     }
 
     return href;
+  }
+
+  function isNetworkFriendlyMode(settings) {
+    return !settings || settings.networkFriendly !== false;
+  }
+
+  function getScriptRequestPolicyConfig(policy) {
+    var source = policy || {};
+    var mode = source.mode || source.type || 'background';
+    var friendly = source.networkFriendly !== false;
+    var minDelay = Number(source.minDelay);
+    var priority = Number(source.priority);
+    var cooldownMs = Number(source.cooldownMs);
+
+    if (!(minDelay >= 0)) {
+      if (mode === 'action' || mode === 'interactive') minDelay = friendly ? 850 : 300;
+      else if (mode === 'preview') minDelay = friendly ? 1200 : 500;
+      else minDelay = friendly ? 1500 : 650;
+    }
+
+    if (!isFinite(priority)) {
+      if (mode === 'action' || mode === 'interactive') priority = 30;
+      else if (mode === 'preview') priority = 20;
+      else priority = 5;
+    }
+
+    if (!(cooldownMs > 0)) cooldownMs = friendly ? 20 * 1000 : 10 * 1000;
+
+    return {
+      mode: mode,
+      label: source.label || '脚本请求',
+      priority: priority,
+      minDelay: minDelay,
+      cooldownMs: cooldownMs,
+      networkFriendly: friendly,
+      allowDuringCooldown: !!source.allowDuringCooldown,
+    };
+  }
+
+  function isScriptRateLimitStatus(status) {
+    var code = Number(status);
+    return code === 429 || code === 503 || code === 504;
+  }
+
+  function isScriptRateLimitHtml(html) {
+    var text = String(html || '').replace(/\s+/g, ' ').slice(0, 4000);
+    return /(?:1\s*秒内操作频繁|操作频繁|访问过于频繁|请求过于频繁|系统繁忙|504\s*Gateway|Gateway\s*Timeout|HTTP\s*504)/i.test(text);
+  }
+
+  function createScriptRateLimitError(message) {
+    var error = new Error(message || '请求过于频繁，脚本已暂停后台请求，请稍后再试。');
+    error.spxRateLimited = true;
+    return error;
+  }
+
+  function getScriptRequestDelay(policy, state, now) {
+    var config = getScriptRequestPolicyConfig(policy);
+    var source = state || {};
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    var cooldownDelay = config.allowDuringCooldown ? 0 : Math.max(0, Number(source.cooldownUntil || 0) - currentTime);
+    var intervalDelay = Math.max(0, Number(source.lastStartedAt || 0) + config.minDelay - currentTime);
+    return Math.max(cooldownDelay, intervalDelay);
+  }
+
+  function isScriptRequestCoolingDown(now) {
+    return Number(scriptRequestState.cooldownUntil || 0) > (now === undefined ? Date.now() : Number(now));
+  }
+
+  function getRateLimitErrorMessage(policy, reason) {
+    var config = getScriptRequestPolicyConfig(policy);
+    var label = config.label || '脚本请求';
+    var detail = reason ? '：' + reason : '';
+    return label + '触发站点限流' + detail + '，已暂停后台请求，请稍后再试。';
+  }
+
+  function markScriptRequestCooldown(policy, reason) {
+    var config = getScriptRequestPolicyConfig(policy);
+    scriptRequestState.cooldownUntil = Math.max(
+      Number(scriptRequestState.cooldownUntil || 0),
+      Date.now() + config.cooldownMs
+    );
+    return createScriptRateLimitError(getRateLimitErrorMessage(config, reason));
+  }
+
+  function getSchedulerTimerHost() {
+    if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') return window;
+    return typeof globalThis !== 'undefined' ? globalThis : null;
+  }
+
+  function pumpScriptRequestQueue() {
+    var timerHost = getSchedulerTimerHost();
+    if (scriptRequestState.running || !scriptRequestState.queue.length) return;
+    var next = scriptRequestState.queue[0];
+    var delay = getScriptRequestDelay(next.policy, scriptRequestState, Date.now());
+
+    if (delay > 0) {
+      if (!timerHost || typeof timerHost.setTimeout !== 'function' || scriptRequestState.timer) return;
+      scriptRequestState.timer = timerHost.setTimeout(function resumeScriptRequestQueue() {
+        scriptRequestState.timer = null;
+        pumpScriptRequestQueue();
+      }, delay);
+      return;
+    }
+
+    scriptRequestState.queue.shift();
+    scriptRequestState.running = true;
+    scriptRequestState.lastStartedAt = Date.now();
+    Promise.resolve()
+      .then(next.task)
+      .then(function resolveScriptRequest(value) {
+        scriptRequestState.running = false;
+        next.resolve(value);
+        pumpScriptRequestQueue();
+      }, function rejectScriptRequest(error) {
+        scriptRequestState.running = false;
+        next.reject(error);
+        pumpScriptRequestQueue();
+      });
+  }
+
+  function scheduleScriptRequest(task, policy) {
+    if (typeof Promise !== 'function') return task();
+    var config = getScriptRequestPolicyConfig(policy);
+    return new Promise(function enqueueScriptRequest(resolve, reject) {
+      var timerHost = getSchedulerTimerHost();
+      scriptRequestState.sequence += 1;
+      scriptRequestState.queue.push({
+        task: task,
+        policy: config,
+        resolve: resolve,
+        reject: reject,
+        sequence: scriptRequestState.sequence,
+      });
+      scriptRequestState.queue.sort(function sortScriptRequestQueue(left, right) {
+        if (right.policy.priority !== left.policy.priority) return right.policy.priority - left.policy.priority;
+        return left.sequence - right.sequence;
+      });
+      if (scriptRequestState.timer && timerHost && typeof timerHost.clearTimeout === 'function') {
+        timerHost.clearTimeout(scriptRequestState.timer);
+        scriptRequestState.timer = null;
+      }
+      pumpScriptRequestQueue();
+    });
+  }
+
+  function requestWithPolicy(url, options, policy) {
+    var fetchImpl = policy && policy.fetch;
+    if (!fetchImpl && typeof window !== 'undefined' && typeof window.fetch === 'function') {
+      fetchImpl = window.fetch.bind(window);
+    }
+    if (typeof fetchImpl !== 'function') return Promise.reject(new Error('当前浏览器不支持 fetch'));
+    var config = getScriptRequestPolicyConfig(policy);
+    return scheduleScriptRequest(function executeScriptFetch() {
+      return fetchImpl(url, options).then(function inspectScriptResponse(response) {
+        if (response && isScriptRateLimitStatus(response.status)) {
+          throw markScriptRequestCooldown(config, 'HTTP ' + response.status);
+        }
+        return response;
+      });
+    }, config);
+  }
+
+  function readScriptResponseText(response, policy) {
+    if (!response || typeof response.text !== 'function') return Promise.resolve('');
+    return response.text().then(function inspectScriptResponseText(html) {
+      if (isScriptRateLimitHtml(html)) throw markScriptRequestCooldown(policy, '页面提示频繁或 504');
+      return html;
+    });
+  }
+
+  function getCachedThreadPreview(url, now) {
+    var key = String(url || '');
+    var entry = threadPreviewCache[key];
+    if (!entry) return null;
+    if (Number(entry.expiresAt || 0) <= (now === undefined ? Date.now() : Number(now))) {
+      delete threadPreviewCache[key];
+      threadPreviewCacheOrder = threadPreviewCacheOrder.filter(function keepThreadPreviewKey(item) {
+        return item !== key;
+      });
+      return null;
+    }
+    return cloneJson(entry.payload, entry.payload);
+  }
+
+  function rememberThreadPreview(url, payload, now, ttl) {
+    var key = String(url || '');
+    if (!key || !payload) return;
+    if (!threadPreviewCache[key]) threadPreviewCacheOrder.push(key);
+    threadPreviewCache[key] = {
+      expiresAt: (now === undefined ? Date.now() : Number(now)) + (Number(ttl) > 0 ? Number(ttl) : THREAD_PREVIEW_CACHE_TTL),
+      payload: cloneJson(payload, payload),
+    };
+    while (threadPreviewCacheOrder.length > THREAD_PREVIEW_CACHE_LIMIT) {
+      delete threadPreviewCache[threadPreviewCacheOrder.shift()];
+    }
+  }
+
+  function getCachedUserSpBalance(now) {
+    if (Number(spBalanceCache.expiresAt || 0) <= (now === undefined ? Date.now() : Number(now))) return null;
+    return spBalanceCache.value === null ? null : Number(spBalanceCache.value);
+  }
+
+  function rememberUserSpBalance(balance, now) {
+    var value = Number(balance);
+    if (!isFinite(value)) return;
+    spBalanceCache.value = value;
+    spBalanceCache.expiresAt = (now === undefined ? Date.now() : Number(now)) + SP_BALANCE_CACHE_TTL;
+  }
+
+  function clearUserSpBalanceCache() {
+    spBalanceCache = { value: null, expiresAt: 0 };
+  }
+
+  function getNavigationRefreshKey(urls) {
+    return (urls || []).map(function normalizeRefreshUrl(url) {
+      return String(url || '').replace(/#.*$/, '');
+    }).join('|');
+  }
+
+  function shouldRefreshNavigationPool(urls, now) {
+    var key = getNavigationRefreshKey(urls);
+    var refreshedAt = Number(loadMap(NAVIGATION_REFRESH_KEY)[key] || 0);
+    return !key || !refreshedAt || ((now === undefined ? Date.now() : Number(now)) - refreshedAt) >= NAVIGATION_REFRESH_TTL;
+  }
+
+  function rememberNavigationPoolRefresh(urls, now) {
+    var key = getNavigationRefreshKey(urls);
+    if (!key) return;
+    var data = loadMap(NAVIGATION_REFRESH_KEY);
+    data[key] = now === undefined ? Date.now() : Number(now);
+    var keys = Object.keys(data).sort(function sortNavigationRefresh(left, right) {
+      return Number(data[right] || 0) - Number(data[left] || 0);
+    });
+    keys.slice(20).forEach(function pruneNavigationRefresh(item) {
+      delete data[item];
+    });
+    saveMap(NAVIGATION_REFRESH_KEY, data);
   }
 
   function safeJsonParse(value, fallback) {
@@ -2502,6 +2763,22 @@
       '.spx-site-shell #guide>li.current>a,.spx-site-shell #guide>li.spx-nav-current>a,.spx-site-shell #guide>li>a.spx-nav-current{background:var(--spx-nav-current-bg)!important;color:var(--spx-nav-current-text)!important;text-decoration:none!important;box-shadow:inset 0 -3px 0 var(--spx-accent)!important;}',
       '.spx-site-shell #guide>li.spx-nav-active>a,.spx-site-shell #guide>li>a.spx-menu-open{background:var(--spx-nav-hover)!important;color:#fff!important;text-decoration:none!important;box-shadow:none!important;}',
       '.spx-site-shell #spx-nav-brand{display:inline-flex!important;flex:none!important;align-items:center!important;height:28px!important;padding:0 12px!important;color:#fff!important;font-size:13px!important;font-weight:900!important;line-height:28px!important;letter-spacing:.02em!important;white-space:nowrap!important;}',
+      '.spx-favorite-nav{position:relative!important;display:flex!important;flex:none!important;align-items:center!important;margin-left:auto!important;align-self:center!important;height:38px!important;overflow:visible!important;z-index:10002!important;}',
+      '.spx-favorite-nav-trigger{box-sizing:border-box!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:6px!important;height:28px!important;min-width:max-content!important;margin:0!important;padding:0 10px!important;border:1px solid rgba(217,119,6,.28)!important;border-radius:8px!important;background:#ffedd5!important;color:#7c2d12!important;font:900 12px/28px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;white-space:nowrap!important;cursor:pointer!important;box-shadow:none!important;}',
+      '.spx-favorite-nav-trigger:hover,.spx-favorite-nav-trigger[aria-expanded="true"]{background:#fff7ed!important;color:#7c2d12!important;text-decoration:none!important;box-shadow:inset 0 -2px 0 var(--spx-warn)!important;}',
+      '.spx-favorite-nav-star{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:18px!important;height:18px!important;border-radius:6px!important;background:var(--spx-warn)!important;color:#fff!important;font-size:12px!important;line-height:18px!important;}',
+      '.spx-favorite-nav-count{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-width:20px!important;height:18px!important;padding:0 6px!important;border-radius:999px!important;background:#fff!important;color:var(--spx-warn)!important;font-size:11px!important;line-height:18px!important;font-variant-numeric:tabular-nums!important;}',
+      '.spx-favorite-nav-panel{box-sizing:border-box!important;position:absolute!important;top:46px!important;right:0!important;left:auto!important;z-index:10020!important;width:min(720px,calc(100vw - 72px))!important;max-height:min(78vh,720px)!important;overflow:hidden!important;border:1px solid #f3c27a!important;border-radius:12px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;box-shadow:0 22px 52px rgba(15,23,42,.24)!important;font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
+      '.spx-favorite-nav-panel[hidden]{display:none!important;}',
+      '.spx-favorite-head{display:flex!important;align-items:flex-start!important;justify-content:space-between!important;gap:12px!important;padding:14px 14px 10px!important;border-bottom:1px solid #fde4bd!important;background:linear-gradient(180deg,#fff7ed 0%,var(--spx-panel) 100%)!important;}',
+      '.spx-favorite-title h3{margin:0!important;color:var(--spx-strong)!important;font-size:15px!important;line-height:1.3!important;font-weight:900!important;}.spx-favorite-summary{margin-top:4px!important;color:#7c2d12!important;font-size:12px!important;font-weight:700!important;}',
+      '.spx-favorite-open{display:inline-flex!important;align-items:center!important;min-height:30px!important;padding:0 10px!important;border-radius:8px!important;background:var(--spx-warn)!important;color:#fff!important;text-decoration:none!important;font-size:12px!important;font-weight:900!important;white-space:nowrap!important;}',
+      '.spx-favorite-stats{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:8px!important;padding:12px 14px 0!important;}.spx-favorite-stat{min-width:0!important;padding:9px 10px!important;border:1px solid #fde4bd!important;border-radius:10px!important;background:#fffaf3!important;}.spx-favorite-stat strong{display:block!important;color:#7c2d12!important;font-size:16px!important;line-height:1.2!important;font-variant-numeric:tabular-nums!important;}.spx-favorite-stat span{display:block!important;margin-top:3px!important;color:var(--spx-sub)!important;font-size:11px!important;font-weight:800!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
+      '.spx-favorite-search{box-sizing:border-box!important;width:calc(100% - 28px)!important;min-height:34px!important;margin:12px 14px 8px!important;padding:0 11px!important;border:1px solid var(--spx-line)!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;color:var(--spx-text)!important;font-size:13px!important;outline:none!important;}.spx-favorite-search:focus{border-color:var(--spx-warn)!important;box-shadow:0 0 0 3px rgba(217,119,6,.14)!important;}',
+      '.spx-favorite-tabs,.spx-favorite-tools{display:flex!important;align-items:center!important;gap:8px!important;padding:0 14px 10px!important;}.spx-favorite-tools{justify-content:space-between!important;}.spx-favorite-chips{display:flex!important;gap:6px!important;min-width:0!important;overflow-x:auto!important;scrollbar-width:thin!important;}.spx-favorite-tab,.spx-favorite-chip{flex:none!important;min-height:28px!important;padding:0 10px!important;border:1px solid var(--spx-line)!important;border-radius:999px!important;background:var(--spx-panel)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;cursor:pointer!important;}.spx-favorite-tab.spx-active,.spx-favorite-chip.spx-active{border-color:var(--spx-warn)!important;background:#ffedd5!important;color:#7c2d12!important;}.spx-favorite-sort{width:116px!important;height:30px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:800!important;}',
+      '.spx-favorite-list{display:grid!important;gap:8px!important;max-height:360px!important;overflow:auto!important;padding:0 14px 14px!important;}.spx-favorite-group{position:sticky!important;top:0!important;z-index:1!important;display:flex!important;justify-content:space-between!important;gap:10px!important;min-height:28px!important;padding:4px 2px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;}.spx-favorite-item{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:12px!important;min-height:64px!important;padding:11px 12px!important;border:1px solid var(--spx-line)!important;border-radius:10px!important;background:var(--spx-panel)!important;}.spx-favorite-item-title{display:-webkit-box!important;min-width:0!important;color:var(--spx-strong)!important;font-size:14px!important;font-weight:900!important;line-height:1.38!important;white-space:normal!important;overflow:hidden!important;text-overflow:ellipsis!important;-webkit-line-clamp:2!important;-webkit-box-orient:vertical!important;}.spx-favorite-meta{margin-top:5px!important;color:var(--spx-text)!important;font-size:13px!important;line-height:1.42!important;white-space:normal!important;overflow:hidden!important;text-overflow:ellipsis!important;}.spx-favorite-actions{display:flex!important;gap:6px!important;align-items:center!important;}.spx-favorite-actions a,.spx-favorite-actions button,.spx-favorite-load-more{min-width:52px!important;height:28px!important;padding:0 8px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;text-decoration:none!important;cursor:pointer!important;}.spx-favorite-actions .spx-primary{border-color:var(--spx-accent)!important;background:var(--spx-accent)!important;color:#fff!important;}.spx-favorite-load{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;min-height:42px!important;padding:8px 10px!important;border:1px dashed #f3c27a!important;border-radius:10px!important;background:#fffaf3!important;color:#7c2d12!important;font-size:12px!important;font-weight:900!important;}.spx-favorite-empty{padding:18px 14px 20px!important;color:var(--spx-sub)!important;font-size:13px!important;font-weight:700!important;text-align:center!important;}',
+      '.spx-favorite-nav-panel a.spx-favorite-item-title,.spx-favorite-nav-panel a.spx-favorite-item-title:link,.spx-favorite-nav-panel a.spx-favorite-item-title:visited{color:var(--spx-strong)!important;text-decoration:none!important;text-shadow:none!important;opacity:1!important;filter:none!important;}.spx-favorite-nav-panel .spx-favorite-meta{color:var(--spx-text)!important;text-shadow:none!important;opacity:1!important;filter:none!important;}',
+      '.spx-site-shell #mainNav .spx-favorite-nav-panel a.spx-favorite-item-title,.spx-site-shell #mainNav .spx-favorite-nav-panel a.spx-favorite-item-title:link,.spx-site-shell #mainNav .spx-favorite-nav-panel a.spx-favorite-item-title:visited{display:-webkit-box!important;color:#182230!important;text-decoration:none!important;text-shadow:none!important;font-size:14px!important;font-weight:900!important;line-height:1.38!important;opacity:1!important;filter:none!important;}.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-meta{color:#1f2937!important;font-size:13px!important;line-height:1.42!important;opacity:1!important;filter:none!important;}.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-open,.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-actions a.spx-primary{color:#fff!important;line-height:28px!important;}.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-actions a:not(.spx-primary){color:#1f2937!important;line-height:28px!important;}',
       '.spx-site-shell #guide .spx-peacemaker-nav{position:relative!important;width:auto!important;min-width:max-content!important;overflow:visible!important;}',
       '.spx-site-shell #peacemakerconfig{position:relative!important;overflow:visible!important;color:var(--spx-nav-text)!important;}',
       '.spx-site-shell #peacemakerconfig.spx-menu-open{color:#fff!important;}',
@@ -2921,6 +3198,10 @@
       '.spx-preview-popover{position:fixed;z-index:100001;width:min(520px,calc(100vw - 28px));max-height:min(74vh,620px);overflow:auto;padding:12px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 18px 48px rgba(15,23,42,.28);color:#172033;font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;}',
       '.spx-preview-popover h4{display:block;margin:0 0 6px;font-size:15px;line-height:1.35;color:#0f172a;}',
       '.spx-preview-meta{margin-bottom:8px;color:#64748b;font-size:12px;}',
+      '.spx-preview-popover-actions{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px;}',
+      '.spx-preview-popover-actions a,.spx-preview-popover-actions button{box-sizing:border-box;min-height:28px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#1f2937;padding:4px 9px;font-size:12px;line-height:18px;text-decoration:none;cursor:pointer;}',
+      '.spx-preview-popover-actions a:hover,.spx-preview-popover-actions button:hover{border-color:#2563eb;color:#2563eb;}',
+      '.spx-preview-popover-actions button:disabled{cursor:default;opacity:.62;}',
       '.spx-preview-text{max-height:120px;overflow:hidden;margin-bottom:10px;color:#334155;}',
       '.spx-preview-images{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;}',
       '.spx-preview-images a{display:block;overflow:hidden;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;}',
@@ -2960,6 +3241,8 @@
       '.spx-theme-night.spx-profile-page #set-menu>li>a,.spx-theme-night.spx-profile-page #u-top-nav .b>li>a,.spx-theme-night.spx-profile-page .spx-account-tabs a,.spx-theme-night.spx-search-page input[type="text"],.spx-theme-night.spx-search-page input[type="search"],.spx-theme-night.spx-search-page input[name="keyword"],.spx-theme-night.spx-search-page input[name="username"]{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night .spx-preview-popover h4{color:var(--spx-strong)!important;}',
       '.spx-theme-night .spx-preview-popover .spx-preview-meta,.spx-theme-night .spx-preview-popover .spx-preview-status{color:var(--spx-muted)!important;}',
+      '.spx-theme-night .spx-preview-popover-actions a,.spx-theme-night .spx-preview-popover-actions button{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
+      '.spx-theme-night .spx-preview-popover-actions a:hover,.spx-theme-night .spx-preview-popover-actions button:hover{border-color:var(--spx-accent)!important;color:var(--spx-accent)!important;}',
       '.spx-theme-night .spx-preview-popover .spx-preview-text{color:var(--spx-text)!important;}',
       '.spx-theme-night .spx-preview-popover .spx-preview-images a{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;}',
     ];
@@ -3065,6 +3348,7 @@
       '.spx-theme-night.spx-home-dashboard .spx-home-module tr.tr3,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3,.spx-theme-night.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3{background:#181d1a!important;border-color:#303a32!important;}',
       '.spx-theme-night.spx-home-dashboard .spx-home-module>h2,.spx-theme-night.spx-home-dashboard .spx-home-module .h,.spx-theme-night .spx-toolbox-header,.spx-theme-night .spx-settings-header,.spx-theme-night .spx-watch-center-header{background:var(--spx-panel)!important;}',
       '@media(max-width:900px){:root,.spx-theme-clean,.spx-theme-night{--spx-page-space:16px}.spx-site-shell #mainNav,.spx-home-dashboard #mainNav,.spx-forum-dashboard #mainNav,.spx-immersive-read #mainNav{height:34px!important}.spx-site-shell #guide{height:34px!important;overflow-x:auto!important}.spx-site-shell #guide>li>a{height:26px!important}.spx-site-shell #spx-nav-brand{height:26px!important;line-height:26px!important}.spx-module-nav-ready .spx-module-nav-host{grid-template-columns:minmax(0,1fr)!important;gap:10px!important;width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready .spx-module-nav-host>*:not(.spx-module-nav),.spx-module-nav-ready .spx-module-body,.spx-module-nav{grid-column:1!important}.spx-module-nav{top:auto!important;position:static!important}.spx-module-nav-section{flex:none!important;margin:0 2px!important}.spx-home-dashboard .spx-home-module tr.tr2,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2{display:none!important}.spx-home-dashboard .spx-home-module tr.tr3,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3{grid-template-columns:1fr!important}}',
+      '@media(max-width:900px){.spx-favorite-nav{margin-left:0!important;height:34px!important}.spx-favorite-nav-trigger{height:26px!important;line-height:26px!important}.spx-favorite-nav-panel{top:38px!important;right:auto!important;left:0!important;width:min(720px,calc(100vw - 24px))!important;max-height:calc(100vh - 84px)!important}.spx-favorite-stats{grid-template-columns:repeat(3,minmax(96px,1fr))!important;overflow-x:auto!important}.spx-favorite-item{grid-template-columns:minmax(0,1fr)!important}.spx-favorite-actions{justify-content:flex-start!important}.spx-favorite-tools{align-items:flex-start!important;flex-direction:column!important}.spx-favorite-sort{width:100%!important}}',
       '@media(max-width:900px){.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host{grid-template-columns:minmax(0,1fr)!important;width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host>.spx-module-body{grid-column:1!important;width:auto!important;max-width:100%!important}}',
       '@media(max-width:900px){.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host{grid-template-columns:minmax(0,1fr)!important;width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-body{grid-column:1!important;width:auto!important;max-width:100%!important}.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-body.spx-task-layout-body,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-body.spx-task-layout-body{grid-template-columns:minmax(0,1fr)!important}.spx-module-nav-ready.spx-task-page .spx-task-side-stack,.spx-module-nav-ready.spx-task-page .spx-task-main-stack{grid-column:1!important}}',
     ];
@@ -3149,6 +3433,590 @@
     if (/action-trade/.test(text)) return 'trade';
     if (/\/u\.php/.test(text)) return 'home';
     return '';
+  }
+
+  function getFavoriteNavUrl(userId, origin) {
+    var uid = String(userId || '').replace(/\D+/g, '');
+    if (!uid) return '';
+    var base = String(origin || location.origin || '').replace(/\/+$/, '');
+    return base + '/u.php?action-favor-uid-' + uid + '.html';
+  }
+
+  function normalizeFavoriteNavSource(value) {
+    return value === 'watch' ? 'watch' : 'site';
+  }
+
+  function normalizeFavoriteNavFilter(value) {
+    var filter = String(value || 'all');
+    return /^(all|recent|unread|resource|image|ai)$/.test(filter) ? filter : 'all';
+  }
+
+  function normalizeFavoriteNavSort(value) {
+    var sort = String(value || 'recent');
+    return /^(recent|read|reply)$/.test(sort) ? sort : 'recent';
+  }
+
+  function formatFavoriteNavCount(count, loading) {
+    if (loading) return '...';
+    var value = Number(count);
+    if (!isFinite(value) || value < 0) return '-';
+    if (value >= 1000) return '999+';
+    return String(value);
+  }
+
+  function inferFavoriteNavTags(title, meta) {
+    var text = compactText([title, meta].join(' '));
+    var tags = [];
+    if (/资源|磁力|网盘|种子|下载|合集|ed2k|torrent|magnet/i.test(text)) tags.push('资源');
+    if (/图片|图集|预览|写真|画廊|gallery/i.test(text)) tags.push('图片');
+    if (/\bAI\b|人工智能|模型|ChatGPT|Claude|Gemini/i.test(text)) tags.push('AI');
+    if (/阅读|长帖|续读|楼层/i.test(text)) tags.push('阅读');
+    return parseTagList(tags.join('\n'));
+  }
+
+  function getFavoriteNavEntrySearchText(entry) {
+    return compactText([
+      entry && entry.title,
+      entry && entry.author,
+      entry && entry.meta,
+      entry && entry.progressText,
+      entry && entry.tagText,
+      entry && entry.tags && entry.tags.join ? entry.tags.join(' ') : entry && entry.tags,
+    ].join(' ')).toLowerCase();
+  }
+
+  function matchesFavoriteNavFilter(entry, filter) {
+    var normalized = normalizeFavoriteNavFilter(filter);
+    var text = getFavoriteNavEntrySearchText(entry);
+    if (normalized === 'all') return true;
+    if (normalized === 'recent') return !entry || !entry.savedAt || Date.now() - entry.savedAt <= 14 * 24 * 60 * 60 * 1000;
+    if (normalized === 'unread') return !entry || !entry.read;
+    if (normalized === 'resource') return /资源|磁力|网盘|种子|下载|合集|ed2k|torrent|magnet/i.test(text);
+    if (normalized === 'image') return /图片|图集|预览|写真|画廊|gallery/i.test(text);
+    if (normalized === 'ai') return /\bai\b|人工智能|模型|chatgpt|claude|gemini/i.test(text);
+    return true;
+  }
+
+  function filterFavoriteNavEntries(entries, options) {
+    var query = normalizeCenterSearchQuery(options && options.query);
+    var filter = normalizeFavoriteNavFilter(options && options.filter);
+    return (entries || []).filter(function matchFavoriteEntry(entry) {
+      if (query && getFavoriteNavEntrySearchText(entry).indexOf(query) === -1) return false;
+      return matchesFavoriteNavFilter(entry, filter);
+    });
+  }
+
+  function sortFavoriteNavEntries(entries, sort) {
+    var normalized = normalizeFavoriteNavSort(sort);
+    return (entries || []).slice().sort(function sortFavoriteEntry(left, right) {
+      if (normalized === 'reply') return (Number(right.replies) || 0) - (Number(left.replies) || 0);
+      if (normalized === 'read') return (Number(right.progressAt) || 0) - (Number(left.progressAt) || 0);
+      return (Number(right.savedAt) || 0) - (Number(left.savedAt) || 0) || (Number(left.index) || 0) - (Number(right.index) || 0);
+    });
+  }
+
+  function parseFavoriteReplyCount(text) {
+    var match = String(text || '').match(/(?:回复|回帖|Replies?)\D{0,4}(\d+)/i);
+    return match ? Number(match[1]) || 0 : 0;
+  }
+
+  function parseFavoriteSavedAt(text, now) {
+    var value = String(text || '').replace(/\s+/g, ' ');
+    var base = new Date(now || Date.now());
+    var fullMatch = value.match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})日?\s+(\d{1,2}):(\d{2})/);
+    if (fullMatch) {
+      return new Date(
+        Number(fullMatch[1]),
+        Number(fullMatch[2]) - 1,
+        Number(fullMatch[3]),
+        Number(fullMatch[4]),
+        Number(fullMatch[5])
+      ).getTime() || 0;
+    }
+    var shortMatch = value.match(/(?:收藏|时间|保存)?\s*(\d{1,2})[-/.月](\d{1,2})日?\s+(\d{1,2}):(\d{2})/);
+    if (shortMatch) {
+      return new Date(
+        base.getFullYear(),
+        Number(shortMatch[1]) - 1,
+        Number(shortMatch[2]),
+        Number(shortMatch[3]),
+        Number(shortMatch[4])
+      ).getTime() || 0;
+    }
+    var todayMatch = value.match(/今天\s*(\d{1,2}):(\d{2})/);
+    if (todayMatch) {
+      return new Date(base.getFullYear(), base.getMonth(), base.getDate(), Number(todayMatch[1]), Number(todayMatch[2])).getTime() || 0;
+    }
+    var yesterdayMatch = value.match(/昨天\s*(\d{1,2}):(\d{2})/);
+    if (yesterdayMatch) {
+      return new Date(base.getFullYear(), base.getMonth(), base.getDate() - 1, Number(yesterdayMatch[1]), Number(yesterdayMatch[2])).getTime() || 0;
+    }
+    var relativeMatch = value.match(/(\d+)\s*(分钟|小时|天)前/);
+    if (relativeMatch) {
+      var amount = Number(relativeMatch[1]) || 0;
+      var unit = relativeMatch[2];
+      var duration = unit === '分钟' ? amount * 60 * 1000 : (unit === '小时' ? amount * 60 * 60 * 1000 : amount * 24 * 60 * 60 * 1000);
+      return Date.now() - duration;
+    }
+    return 0;
+  }
+
+  function normalizeFavoriteNavSeenMap(map) {
+    var result = {};
+    Object.keys(map || {}).forEach(function normalizeFavoriteSeenKey(key) {
+      var time = Number(map[key]) || 0;
+      if (key && time > 0) result[key] = time;
+    });
+    return result;
+  }
+
+  function applyFavoriteNavSeenTimes(entries, seenMap, now) {
+    var map = normalizeFavoriteNavSeenMap(seenMap);
+    var changed = false;
+    var currentTime = now || Date.now();
+    (entries || []).forEach(function applyFavoriteSeen(entry) {
+      if (!entry || entry.source !== 'site' || !entry.id) return;
+      if (entry.savedAt) {
+        entry.savedAtLabel = '收藏';
+        if (!map[entry.id] || entry.savedAt < map[entry.id]) {
+          map[entry.id] = entry.savedAt;
+          changed = true;
+        }
+        return;
+      }
+      if (!map[entry.id]) {
+        map[entry.id] = currentTime;
+        changed = true;
+      }
+      entry.savedAt = map[entry.id];
+      entry.savedAtLabel = '记录';
+    });
+    return { map: map, changed: changed };
+  }
+
+  function createSiteFavoriteEntryFromLink(link, pageUrl, index, readMap, now) {
+    if (!link) return null;
+    var href = normalizeNavigationHref(link.getAttribute('href') || link.href, pageUrl || location.href);
+    var id = parseThreadId(href) || href;
+    var title = compactText(link.textContent || link.title || '');
+    if (!href || !title || !/read\.php/i.test(href)) return null;
+    var row = link.closest ? (link.closest('tr') || link.closest('.tr3') || link.parentNode) : link.parentNode;
+    var rowText = compactText(row ? row.textContent : '');
+    var authorLink = row ? qsa('a[href*="u.php"]', row).filter(function keepAuthorLink(candidate) {
+      return candidate !== link && !/read\.php/i.test(candidate.getAttribute('href') || candidate.href || '');
+    })[0] : null;
+    var author = compactText(authorLink ? authorLink.textContent : '');
+    var tags = inferFavoriteNavTags(title, rowText);
+    var savedAt = parseFavoriteSavedAt(rowText, now);
+    return {
+      source: 'site',
+      id: String(id),
+      title: title,
+      url: href,
+      author: author,
+      meta: rowText,
+      savedAt: savedAt,
+      savedAtLabel: savedAt ? '收藏' : '',
+      progressAt: 0,
+      replies: parseFavoriteReplyCount(rowText),
+      read: !!(readMap && readMap[id]),
+      tags: tags,
+      tagText: formatTags(tags),
+      index: index,
+    };
+  }
+
+  function parseFavoriteNavEntriesFromDocument(root, pageUrl, readMap, limit, seenMap, now) {
+    var seen = {};
+    var entries = [];
+    var maxItems = Math.max(1, Number(limit) || FAVORITE_NAV_MAX_FETCHED_ITEMS);
+    qsa('a[href*="read.php"]', root).some(function collectFavoriteLink(link) {
+      var entry = createSiteFavoriteEntryFromLink(link, pageUrl, entries.length, readMap, now);
+      if (!entry || seen[entry.url]) return false;
+      seen[entry.url] = true;
+      entries.push(entry);
+      return entries.length >= maxItems;
+    });
+    return entries;
+  }
+
+  function getFavoriteNavWatchEntries(state) {
+    var source = state || {};
+    return getWatchCenterEntries(source.watch || {}, source.progress || {}).map(function mapWatchFavorite(entry, index) {
+      return {
+        source: 'watch',
+        id: entry.id,
+        title: entry.title,
+        url: entry.progressUrl || entry.url,
+        author: '',
+        meta: entry.progressText || '',
+        savedAt: entry.savedAt,
+        progressAt: entry.progressAt,
+        progressText: entry.progressText,
+        floorLabel: entry.floorLabel,
+        nextFloorLabel: entry.nextFloorLabel,
+        replies: 0,
+        read: !!entry.isCompleted,
+        tags: entry.tags,
+        tagText: entry.tagText,
+        index: index,
+      };
+    });
+  }
+
+  function ensureFavoriteNavState(panel, favoriteUrl) {
+    if (!panel.spxFavoriteNavState) {
+      panel.spxFavoriteNavState = {
+        source: 'site',
+        query: '',
+        filter: 'all',
+        sort: 'recent',
+        limit: FAVORITE_NAV_BATCH_SIZE,
+        favoriteUrl: favoriteUrl || '',
+        siteEntries: [],
+        siteLoaded: false,
+        siteLoading: false,
+        siteError: '',
+      };
+    }
+    if (favoriteUrl) panel.spxFavoriteNavState.favoriteUrl = favoriteUrl;
+    return panel.spxFavoriteNavState;
+  }
+
+  function updateFavoriteNavTrigger(wrapper, panelState, state) {
+    var countNode = qs('.spx-favorite-nav-count', wrapper);
+    if (!countNode) return;
+    var siteCount = panelState && panelState.siteLoaded ? (panelState.siteEntries || []).length : null;
+    var watchCount = Object.keys((state && state.watch) || {}).length;
+    var loading = !!(panelState && panelState.siteLoading);
+    countNode.textContent = formatFavoriteNavCount(siteCount === null ? watchCount : siteCount, loading);
+    countNode.title = siteCount === null ? ('本地稍后看 ' + watchCount + ' 条') : ('站内收藏已读取 ' + siteCount + ' 条');
+  }
+
+  function createFavoriteNavAction(text, action, value, primary) {
+    var button = createEl('button', primary ? 'spx-primary' : '', text);
+    button.type = 'button';
+    button.dataset.action = action;
+    if (value !== undefined) button.dataset.value = String(value);
+    return button;
+  }
+
+  function appendFavoriteNavEntry(list, entry) {
+    var item = createEl('div', 'spx-favorite-item');
+    item.dataset.source = entry.source || 'site';
+    item.dataset.id = String(entry.id || '');
+    var body = createEl('div');
+    var title = createEl('a', 'spx-favorite-item-title', entry.title || '未命名帖子');
+    title.href = entry.url || '#';
+    title.target = '_blank';
+    title.rel = 'noreferrer';
+    body.appendChild(title);
+    var metaParts = [];
+    if (entry.author) metaParts.push(entry.author);
+    if (entry.savedAt) metaParts.push((entry.savedAtLabel || '保存') + ' ' + formatShortTime(entry.savedAt));
+    if (entry.progressText) metaParts.push('进度 ' + entry.progressText);
+    if (entry.nextFloorLabel) metaParts.push('续读 ' + entry.nextFloorLabel);
+    if (entry.replies) metaParts.push('回复 ' + entry.replies);
+    if (entry.tagText) metaParts.push('标签 ' + entry.tagText);
+    body.appendChild(createEl('div', 'spx-favorite-meta', metaParts.join(' · ') || (entry.source === 'site' ? '站内收藏' : '本地稍后看')));
+    item.appendChild(body);
+    var actions = createEl('div', 'spx-favorite-actions');
+    var open = createEl('a', 'spx-primary', entry.source === 'watch' && entry.progressAt ? '续读' : '打开');
+    open.href = entry.url || '#';
+    open.target = '_blank';
+    open.rel = 'noreferrer';
+    actions.appendChild(open);
+    actions.appendChild(createFavoriteNavAction('复制', 'copy-favorite', entry.url || '', false));
+    if (entry.source === 'watch') actions.appendChild(createFavoriteNavAction('移除', 'remove-favorite-watch', entry.id, false));
+    item.appendChild(actions);
+    list.appendChild(item);
+  }
+
+  function renderFavoriteNavPanel(panel, settings, state, wrapper) {
+    var panelState = ensureFavoriteNavState(panel, panel && panel.dataset.favoriteUrl);
+    var watchEntries = getFavoriteNavWatchEntries(state);
+    var siteEntries = panelState.siteEntries || [];
+    var source = normalizeFavoriteNavSource(panelState.source);
+    var sourceEntries = source === 'watch' ? watchEntries : siteEntries;
+    var filtered = sortFavoriteNavEntries(filterFavoriteNavEntries(sourceEntries, panelState), panelState.sort);
+    var visible = filtered.slice(0, Math.max(1, Number(panelState.limit) || FAVORITE_NAV_BATCH_SIZE));
+    var isFiltered = !!(panelState.query || normalizeFavoriteNavFilter(panelState.filter) !== 'all');
+
+    panel.textContent = '';
+
+    var header = createEl('div', 'spx-favorite-head');
+    var title = createEl('div', 'spx-favorite-title');
+    title.appendChild(createEl('h3', '', '我的收藏'));
+    title.appendChild(createEl('div', 'spx-favorite-summary', panelState.siteLoading ? '正在读取站内收藏页...' : '主导航一键打开，站内收藏和稍后看分开管理'));
+    header.appendChild(title);
+    var openLink = createEl('a', 'spx-favorite-open', '打开收藏页');
+    openLink.href = panelState.favoriteUrl || '#';
+    openLink.target = '_blank';
+    openLink.rel = 'noreferrer';
+    header.appendChild(openLink);
+    panel.appendChild(header);
+
+    var stats = createEl('div', 'spx-favorite-stats');
+    [['站内收藏', panelState.siteLoading ? '...' : siteEntries.length], ['本次显示', visible.length + ' / ' + filtered.length], ['稍后看', watchEntries.length]].forEach(function appendStat(item) {
+      var stat = createEl('div', 'spx-favorite-stat');
+      stat.appendChild(createEl('strong', '', String(item[1])));
+      stat.appendChild(createEl('span', '', item[0]));
+      stats.appendChild(stat);
+    });
+    panel.appendChild(stats);
+
+    var query = createEl('input', 'spx-favorite-search');
+    query.type = 'search';
+    query.placeholder = '筛选收藏标题、作者或标签';
+    query.value = panelState.query || '';
+    query.dataset.spxFavoriteQuery = '1';
+    panel.appendChild(query);
+
+    var tabs = createEl('div', 'spx-favorite-tabs');
+    [
+      { value: 'site', label: '站内收藏 ' + (panelState.siteLoading ? '...' : siteEntries.length) },
+      { value: 'watch', label: '稍后看 ' + watchEntries.length },
+    ].forEach(function appendTab(tab) {
+      var button = createFavoriteNavAction(tab.label, 'favorite-source', tab.value, false);
+      button.className = 'spx-favorite-tab' + (source === tab.value ? ' spx-active' : '');
+      tabs.appendChild(button);
+    });
+    panel.appendChild(tabs);
+
+    var tools = createEl('div', 'spx-favorite-tools');
+    var chips = createEl('div', 'spx-favorite-chips');
+    [
+      { value: 'all', label: '全部' },
+      { value: 'recent', label: '最近' },
+      { value: 'unread', label: '未读' },
+      { value: 'resource', label: '资源' },
+      { value: 'image', label: '图片' },
+      { value: 'ai', label: 'AI' },
+    ].forEach(function appendChip(chip) {
+      var button = createFavoriteNavAction(chip.label, 'favorite-filter', chip.value, false);
+      button.className = 'spx-favorite-chip' + (normalizeFavoriteNavFilter(panelState.filter) === chip.value ? ' spx-active' : '');
+      chips.appendChild(button);
+    });
+    tools.appendChild(chips);
+    var sort = createEl('select', 'spx-favorite-sort');
+    sort.dataset.spxFavoriteSort = '1';
+    [
+      { value: 'recent', label: '最近收藏' },
+      { value: 'read', label: '最近阅读' },
+      { value: 'reply', label: '回复最多' },
+    ].forEach(function appendSortOption(item) {
+      var option = createEl('option');
+      option.value = item.value;
+      option.textContent = item.label;
+      option.selected = normalizeFavoriteNavSort(panelState.sort) === item.value;
+      sort.appendChild(option);
+    });
+    tools.appendChild(sort);
+    panel.appendChild(tools);
+
+    var list = createEl('div', 'spx-favorite-list');
+    if (source === 'site' && panelState.siteLoading) {
+      list.appendChild(createEl('div', 'spx-favorite-empty', '正在读取站内收藏页...'));
+    } else if (source === 'site' && panelState.siteError) {
+      list.appendChild(createEl('div', 'spx-favorite-empty', panelState.siteError + '，可先打开收藏页查看。'));
+    } else if (!sourceEntries.length) {
+      list.appendChild(createEl('div', 'spx-favorite-empty', source === 'site' ? '暂无可展示的站内收藏。' : '还没有本地稍后看。'));
+    } else if (!visible.length) {
+      list.appendChild(createEl('div', 'spx-favorite-empty', '没有匹配的收藏。'));
+    } else {
+      var group = createEl('div', 'spx-favorite-group');
+      group.appendChild(createEl('span', '', source === 'site' ? '站内收藏' : '本地稍后看'));
+      group.appendChild(createEl('span', '', (isFiltered ? filtered.length + ' / ' : '') + sourceEntries.length + ' 条'));
+      list.appendChild(group);
+      visible.forEach(function appendVisibleEntry(entry) {
+        appendFavoriteNavEntry(list, entry);
+      });
+      if (filtered.length > visible.length) {
+        var load = createEl('div', 'spx-favorite-load');
+        load.appendChild(createEl('span', '', '已显示 ' + visible.length + ' 条，继续加载下一批。'));
+        load.appendChild(createFavoriteNavAction('加载更多', 'favorite-load-more'));
+        list.appendChild(load);
+      }
+    }
+    panel.appendChild(list);
+    updateFavoriteNavTrigger(wrapper, panelState, state);
+  }
+
+  function loadFavoriteNavSiteEntries(panel, settings, state, wrapper) {
+    var panelState = ensureFavoriteNavState(panel, panel && panel.dataset.favoriteUrl);
+    if (panelState.siteLoaded || panelState.siteLoading || !panelState.favoriteUrl) return;
+    if (typeof DOMParser === 'undefined') return;
+    panelState.siteLoading = true;
+    panelState.siteError = '';
+    renderFavoriteNavPanel(panel, settings, state, wrapper);
+    var policy = {
+      mode: 'interactive',
+      label: '我的收藏',
+      networkFriendly: isNetworkFriendlyMode(settings),
+    };
+    requestWithPolicy(panelState.favoriteUrl, { credentials: 'include', cache: 'no-store' }, policy)
+      .then(function readFavoriteResponse(response) {
+        if (!response.ok) throw new Error('读取收藏页失败');
+        return readScriptResponseText(response, policy);
+      })
+      .then(function parseFavoriteHtml(html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var seenMap = loadMap(FAVORITE_NAV_SEEN_KEY);
+        panelState.siteEntries = parseFavoriteNavEntriesFromDocument(
+          doc,
+          panelState.favoriteUrl,
+          state && state.read,
+          FAVORITE_NAV_MAX_FETCHED_ITEMS,
+          seenMap,
+          Date.now()
+        );
+        var seenResult = applyFavoriteNavSeenTimes(panelState.siteEntries, seenMap, Date.now());
+        if (seenResult.changed) saveMap(FAVORITE_NAV_SEEN_KEY, seenResult.map);
+        panelState.siteLoaded = true;
+      })
+      .catch(function handleFavoriteLoadError(error) {
+        panelState.siteError = error && error.message ? error.message : '读取收藏页失败';
+      })
+      .then(function finishFavoriteLoad() {
+        panelState.siteLoading = false;
+        if (panel && !panel.hidden) renderFavoriteNavPanel(panel, settings, state, wrapper);
+        else updateFavoriteNavTrigger(wrapper, panelState, state);
+      });
+  }
+
+  function closeFavoriteNavPanel(wrapper) {
+    var panel = qs('.spx-favorite-nav-panel', wrapper);
+    var trigger = qs('.spx-favorite-nav-trigger', wrapper);
+    if (panel) panel.hidden = true;
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  }
+
+  function setFavoriteNavPanelHidden(wrapper, hidden, settings, state) {
+    var panel = qs('.spx-favorite-nav-panel', wrapper);
+    var trigger = qs('.spx-favorite-nav-trigger', wrapper);
+    if (!panel || !trigger) return;
+    panel.hidden = !!hidden;
+    trigger.setAttribute('aria-expanded', String(!panel.hidden));
+    if (!panel.hidden) {
+      renderFavoriteNavPanel(panel, settings, state, wrapper);
+      loadFavoriteNavSiteEntries(panel, settings, state, wrapper);
+      var input = qs('.spx-favorite-search', panel);
+      if (input && typeof input.focus === 'function') input.focus();
+    }
+  }
+
+  function getFavoriteNavMountHost(scope) {
+    return qs('#mainNav>div[style*="padding-left"]', scope) || qs('#mainNav', scope);
+  }
+
+  function enhanceFavoriteNavigation(settings, state, root) {
+    var scope = root || document;
+    var host = getFavoriteNavMountHost(scope);
+    if (!host) return;
+    var uid = extractAccountUserId(scope, location.href);
+    var favoriteUrl = getFavoriteNavUrl(uid, location.origin);
+    if (!favoriteUrl) return;
+
+    var wrapper = qs('#spx-favorite-nav', host) || createEl('div', 'spx-favorite-nav');
+    wrapper.id = 'spx-favorite-nav';
+    wrapper.dataset.favoriteUrl = favoriteUrl;
+    var panel = qs('.spx-favorite-nav-panel', wrapper);
+
+    if (!panel) {
+      var trigger = createEl('button', 'spx-favorite-nav-trigger');
+      trigger.type = 'button';
+      trigger.setAttribute('aria-haspopup', 'dialog');
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.setAttribute('aria-controls', 'spx-favorite-nav-panel');
+      trigger.title = '打开我的收藏';
+      trigger.appendChild(createEl('span', 'spx-favorite-nav-star', '★'));
+      trigger.appendChild(createEl('span', '', '我的收藏'));
+      trigger.appendChild(createEl('span', 'spx-favorite-nav-count', formatFavoriteNavCount(Object.keys((state && state.watch) || {}).length)));
+      wrapper.appendChild(trigger);
+
+      panel = createEl('section', 'spx-favorite-nav-panel');
+      panel.id = 'spx-favorite-nav-panel';
+      panel.hidden = true;
+      panel.dataset.favoriteUrl = favoriteUrl;
+      wrapper.appendChild(panel);
+
+      trigger.addEventListener('click', function toggleFavoriteNav(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        setFavoriteNavPanelHidden(wrapper, !panel.hidden, settings, state);
+      });
+      panel.addEventListener('click', function stopFavoritePanelClick(event) {
+        event.stopPropagation();
+      });
+      panel.addEventListener('input', function handleFavoriteInput(event) {
+        var target = event.target;
+        if (!target || !target.dataset || target.dataset.spxFavoriteQuery !== '1') return;
+        var panelState = ensureFavoriteNavState(panel, favoriteUrl);
+        panelState.query = target.value;
+        panelState.limit = FAVORITE_NAV_BATCH_SIZE;
+        renderFavoriteNavPanel(panel, settings, state, wrapper);
+        var nextInput = qs('.spx-favorite-search', panel);
+        if (nextInput) nextInput.focus();
+      });
+      panel.addEventListener('change', function handleFavoriteChange(event) {
+        var target = event.target;
+        if (!target || !target.dataset || target.dataset.spxFavoriteSort !== '1') return;
+        var panelState = ensureFavoriteNavState(panel, favoriteUrl);
+        panelState.sort = normalizeFavoriteNavSort(target.value);
+        panelState.limit = FAVORITE_NAV_BATCH_SIZE;
+        renderFavoriteNavPanel(panel, settings, state, wrapper);
+      });
+      panel.addEventListener('click', function handleFavoriteAction(event) {
+        var target = event.target;
+        var action = target && target.dataset && target.dataset.action;
+        if (!action) return;
+        var panelState = ensureFavoriteNavState(panel, favoriteUrl);
+        if (action === 'favorite-source') {
+          panelState.source = normalizeFavoriteNavSource(target.dataset.value);
+          panelState.limit = FAVORITE_NAV_BATCH_SIZE;
+          renderFavoriteNavPanel(panel, settings, state, wrapper);
+          return;
+        }
+        if (action === 'favorite-filter') {
+          panelState.filter = normalizeFavoriteNavFilter(target.dataset.value);
+          panelState.limit = FAVORITE_NAV_BATCH_SIZE;
+          renderFavoriteNavPanel(panel, settings, state, wrapper);
+          return;
+        }
+        if (action === 'favorite-load-more') {
+          panelState.limit += FAVORITE_NAV_BATCH_SIZE;
+          renderFavoriteNavPanel(panel, settings, state, wrapper);
+          return;
+        }
+        if (action === 'copy-favorite') {
+          copyTextToClipboard(target.dataset.value).then(
+            function showFavoriteCopySuccess() { setTemporaryText(target, '已复制', '复制'); },
+            function showFavoriteCopyFailure() { setTemporaryText(target, '失败', '复制'); }
+          );
+          return;
+        }
+        if (action === 'remove-favorite-watch') {
+          var id = target.dataset.value;
+          if (!id || !state || !state.watch) return;
+          delete state.watch[id];
+          saveMap(WATCH_KEY, state.watch);
+          refreshWatchCenter();
+          renderFavoriteNavPanel(panel, settings, state, wrapper);
+        }
+      });
+      document.addEventListener('click', function closeFavoriteNavOnOutside(event) {
+        if (!wrapper.contains(event.target)) closeFavoriteNavPanel(wrapper);
+      });
+      document.addEventListener('keydown', function closeFavoriteNavOnEscape(event) {
+        if (event.key === 'Escape') closeFavoriteNavPanel(wrapper);
+      });
+    } else {
+      panel.dataset.favoriteUrl = favoriteUrl;
+    }
+
+    if (!wrapper.parentNode) host.appendChild(wrapper);
+    ensureFavoriteNavState(panel, favoriteUrl);
+    updateFavoriteNavTrigger(wrapper, panel.spxFavoriteNavState, state);
   }
 
   function enhanceAccountNavigation(root) {
@@ -4491,15 +5359,20 @@
     preloadNextButton.addEventListener('click', function preloadNextPage() {
       if (typeof window.fetch !== 'function') return;
       var nextUrl = buildPageUrl(location.href, currentPageNumber(location.href) + 1);
+      var preloadPolicy = {
+        mode: 'interactive',
+        label: '预载下页',
+        networkFriendly: isNetworkFriendlyMode(settings),
+      };
       preloadNextButton.disabled = true;
       preloadNextButton.textContent = '预载中';
-      window.fetch(nextUrl, {
+      requestWithPolicy(nextUrl, {
         credentials: 'include',
         cache: 'force-cache',
-      })
+      }, preloadPolicy)
         .then(function readNextPage(response) {
           if (!response.ok) throw new Error('下一页加载失败');
-          return response.text();
+          return readScriptResponseText(response, preloadPolicy);
         })
         .then(function showNextPageCount(html) {
           var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -5113,32 +5986,48 @@
     mountModuleNavigation('导航中心', getAllModuleNavigationConfigs());
   }
 
-  function scheduleNavigationPoolRefresh() {
+  function scheduleNavigationPoolRefresh(settings) {
     if (testMode || typeof window === 'undefined' || typeof window.fetch !== 'function') return;
     var urls = getNavigationDiscoveryUrls();
+    if (isNetworkFriendlyMode(settings)) {
+      urls = urls.slice(0, 2);
+      if (!shouldRefreshNavigationPool(urls)) return;
+    }
     var refreshKey = urls.join('|');
     if (!urls.length || document.documentElement.dataset.spxNavigationRefreshKey === refreshKey) return;
     document.documentElement.dataset.spxNavigationRefreshKey = refreshKey;
-    Promise.all(urls.map(function fetchNavigationUrl(url) {
-      return window.fetch(url, {
-        credentials: 'include',
-        cache: 'force-cache',
-      })
-        .then(function readNavigationResponse(response) {
-          if (!response.ok) return '';
-          return response.text();
-        })
-        .then(function collectFetchedNavigation(html) {
-          return collectRemoteNavigationConfigsFromHtml(html, url);
-        })
-        .catch(function ignoreNavigationFetchFailure() {
-          return [];
-        });
-    })).then(function applyFetchedNavigation(results) {
+    var navigationPolicy = {
+      mode: 'background',
+      label: '导航中心后台刷新',
+      networkFriendly: isNetworkFriendlyMode(settings),
+    };
+    var navigationRateLimited = false;
+    urls.reduce(function chainNavigationFetch(chain, url) {
+      return chain.then(function fetchNavigationUrl(results) {
+        return requestWithPolicy(url, {
+          credentials: 'include',
+          cache: 'force-cache',
+        }, navigationPolicy)
+          .then(function readNavigationResponse(response) {
+            if (!response.ok) return '';
+            return readScriptResponseText(response, navigationPolicy);
+          })
+          .then(function collectFetchedNavigation(html) {
+            results.push(collectRemoteNavigationConfigsFromHtml(html, url));
+            return results;
+          })
+          .catch(function ignoreNavigationFetchFailure(error) {
+            if (error && error.spxRateLimited) navigationRateLimited = true;
+            results.push([]);
+            return results;
+          });
+      });
+    }, Promise.resolve([])).then(function applyFetchedNavigation(results) {
       var configs = [];
       results.forEach(function concatNavigationItems(items) {
         configs = configs.concat(items || []);
       });
+      if (!navigationRateLimited) rememberNavigationPoolRefresh(urls);
       if (rememberModuleNavigationConfigs(configs)) remountGlobalModuleNavigation();
     });
   }
@@ -5522,7 +6411,7 @@
   function createGlobalModuleNavigation(settings, state) {
     if (!shouldUseModuleNavigation(settings, location.href, document)) return;
     mountModuleNavigation('导航中心', getAllModuleNavigationConfigs());
-    scheduleNavigationPoolRefresh();
+    scheduleNavigationPoolRefresh(settings);
   }
 
   function positionPreviewPanel(panel, event) {
@@ -5538,20 +6427,113 @@
     if (panel) panel.remove();
   }
 
-  function renderPreviewPanel(info, payload, event) {
+  function getThreadPreviewUrl(info) {
+    return String(info && info.titleLink && info.titleLink.href || info && info.url || '');
+  }
+
+  function getThreadPreviewMetaText(info, payload) {
+    var status = payload && payload.status
+      ? String(payload.status)
+      : (payload && payload.cached ? '已缓存' : '悬停预览');
+    return (info && info.author ? '作者：' + info.author + ' · ' : '') + status;
+  }
+
+  function getThreadPreviewImageUrls(payload) {
+    return (payload && payload.images || []).slice(0, THREAD_PREVIEW_IMAGE_LIMIT);
+  }
+
+  function getThreadPreviewImageSummary(payload) {
+    var count = payload && payload.images ? payload.images.length : 0;
+    if (!count) return '没有可预览图片';
+    if (count > THREAD_PREVIEW_IMAGE_LIMIT) return '已显示前 ' + THREAD_PREVIEW_IMAGE_LIMIT + ' 张，打开帖子查看其余 ' + (count - THREAD_PREVIEW_IMAGE_LIMIT) + ' 张';
+    return '共 ' + count + ' 张预览图';
+  }
+
+  function saveThreadPreviewWatch(info, state) {
+    if (!info || !info.id || !state) return false;
+    state.watch = state.watch || {};
+    if (state.watch[info.id]) return false;
+    state.watch[info.id] = {
+      title: info.title,
+      url: getThreadPreviewUrl(info),
+      savedAt: Date.now(),
+    };
+    saveMap(WATCH_KEY, state.watch);
+    if (info.cell && info.titleLink && !qs('.spx-watch-badge', info.cell)) {
+      info.titleLink.insertAdjacentElement('afterend', createWatchBadge(info.id));
+    }
+    refreshWatchCenter();
+    return true;
+  }
+
+  function setPreviewActionText(button, text) {
+    if (!button) return;
+    var previous = button.dataset.spxPreviewOriginalText || button.textContent;
+    button.dataset.spxPreviewOriginalText = previous;
+    button.textContent = text;
+    if (typeof window === 'undefined' || typeof window.setTimeout !== 'function') return;
+    window.setTimeout(function restorePreviewActionText() {
+      if ('isConnected' in button && !button.isConnected) return;
+      button.textContent = button.dataset.spxPreviewOriginalText || previous;
+      delete button.dataset.spxPreviewOriginalText;
+    }, 1400);
+  }
+
+  function appendPreviewActions(panel, info, state) {
+    var url = getThreadPreviewUrl(info);
+    if (!url) return;
+    var actions = createEl('div', 'spx-preview-popover-actions');
+    var openLink = createEl('a', '', '打开帖子');
+    openLink.href = url;
+    openLink.target = '_blank';
+    openLink.rel = 'noopener noreferrer';
+    actions.appendChild(openLink);
+
+    var watchButton = createEl('button', '', state && state.watch && state.watch[info.id] ? '已稍后' : '加入稍后');
+    watchButton.type = 'button';
+    watchButton.disabled = !!(state && state.watch && state.watch[info.id]);
+    watchButton.addEventListener('click', function addPreviewWatch(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (saveThreadPreviewWatch(info, state)) {
+        watchButton.textContent = '已加入稍后';
+        watchButton.disabled = true;
+      } else {
+        setPreviewActionText(watchButton, state ? '已稍后' : '无法保存');
+      }
+    });
+    actions.appendChild(watchButton);
+
+    var copyButton = createEl('button', '', '复制链接');
+    copyButton.type = 'button';
+    copyButton.addEventListener('click', function copyPreviewLink(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      copyTextToClipboard(url).then(
+        function markCopied() { setPreviewActionText(copyButton, '已复制'); },
+        function markCopyFailed() { setPreviewActionText(copyButton, '复制失败'); }
+      );
+    });
+    actions.appendChild(copyButton);
+    panel.appendChild(actions);
+  }
+
+  function renderPreviewPanel(info, payload, event, state) {
     removeThreadPreview();
     var panel = createEl('div', 'spx-preview-popover');
     panel.id = 'spx-preview-popover';
     var title = createEl('h4', '', info.title || '帖子预览');
-    var meta = createEl('div', 'spx-preview-meta', (info.author ? '作者：' + info.author + ' · ' : '') + '悬停预览');
+    var meta = createEl('div', 'spx-preview-meta', getThreadPreviewMetaText(info, payload));
     var text = createEl('div', 'spx-preview-text', payload.text || '未提取到文字预览');
     panel.appendChild(title);
     panel.appendChild(meta);
+    appendPreviewActions(panel, info, state);
     panel.appendChild(text);
 
-    if (payload.images && payload.images.length) {
+    var previewImages = getThreadPreviewImageUrls(payload);
+    if (previewImages.length) {
       var grid = createEl('div', 'spx-preview-images');
-      payload.images.forEach(function appendPreviewImage(url) {
+      previewImages.forEach(function appendPreviewImage(url) {
         var link = createEl('a');
         link.href = url;
         link.target = '_blank';
@@ -5559,13 +6541,13 @@
         var image = createEl('img');
         image.src = url;
         image.loading = 'lazy';
+        image.decoding = 'async';
         link.appendChild(image);
         grid.appendChild(link);
       });
       panel.appendChild(grid);
-    } else {
-      panel.appendChild(createEl('div', 'spx-preview-status', '没有可预览图片'));
     }
+    panel.appendChild(createEl('div', 'spx-preview-status', getThreadPreviewImageSummary(payload)));
 
     panel.addEventListener('mouseleave', removeThreadPreview);
     document.body.appendChild(panel);
@@ -5591,24 +6573,49 @@
     };
   }
 
-  function attachThreadHoverPreview(info) {
+  function attachThreadHoverPreview(info, settings, state) {
     if (!info || !info.titleLink || info.titleLink.dataset.spxPreviewReady) return;
     info.titleLink.dataset.spxPreviewReady = '1';
     var timer = null;
+    var previewToken = 0;
     info.titleLink.addEventListener('mouseenter', function schedulePreview(event) {
+      previewToken += 1;
+      var currentToken = previewToken;
+      var url = info.titleLink.href;
+      var cached = getCachedThreadPreview(url);
+      if (cached) {
+        cached.cached = true;
+        renderPreviewPanel(info, cached, event, state);
+        return;
+      }
       timer = window.setTimeout(function loadPreview() {
-        var url = info.titleLink.href;
-        renderPreviewPanel(info, { text: '正在加载预览...', images: [] }, event);
-        window.fetch(url, { credentials: 'include' })
+        if (currentToken !== previewToken) return;
+        if (isScriptRequestCoolingDown()) {
+          renderPreviewPanel(info, { text: '站点提示操作频繁，悬停预览已临时暂停。', images: [], status: '请求冷却中' }, event, state);
+          return;
+        }
+        var previewPolicy = {
+          mode: 'preview',
+          label: '悬停预览',
+          networkFriendly: isNetworkFriendlyMode(settings),
+        };
+        renderPreviewPanel(info, { text: '正在加载预览...', images: [], status: '加载中' }, event, state);
+        requestWithPolicy(url, { credentials: 'include' }, previewPolicy)
           .then(function parseResponse(response) {
-            return response.text();
+            return readScriptResponseText(response, previewPolicy);
           })
           .then(function renderHtml(html) {
+            if (currentToken !== previewToken) return;
             var doc = new DOMParser().parseFromString(html, 'text/html');
-            renderPreviewPanel(info, extractPreviewPayloadFromDocument(doc, url), event);
+            var payload = extractPreviewPayloadFromDocument(doc, url);
+            rememberThreadPreview(url, payload);
+            renderPreviewPanel(info, payload, event, state);
           })
           .catch(function showPreviewError() {
-            renderPreviewPanel(info, { text: '预览加载失败', images: [] }, event);
+            if (currentToken !== previewToken) return;
+            var failurePayload = { text: '预览加载失败，已短暂缓存失败状态，避免重复请求同一主题。', images: [], status: '加载失败' };
+            rememberThreadPreview(url, failurePayload, undefined, THREAD_PREVIEW_FAILURE_TTL);
+            renderPreviewPanel(info, failurePayload, event, state);
           });
       }, 420);
     });
@@ -5617,9 +6624,14 @@
       if (panel) positionPreviewPanel(panel, event);
     });
     info.titleLink.addEventListener('mouseleave', function cancelPreview() {
+      previewToken += 1;
       if (timer) window.clearTimeout(timer);
       timer = null;
-      window.setTimeout(removeThreadPreview, 120);
+      window.setTimeout(function removePreviewIfPanelInactive() {
+        var panel = qs('#spx-preview-popover');
+        if (panel && panel.matches && panel.matches(':hover')) return;
+        removeThreadPreview();
+      }, 160);
     });
   }
 
@@ -5742,7 +6754,7 @@
       tools.appendChild(hideRowButton);
       if (info.author) tools.appendChild(hideAuthorPageButton);
       info.titleLink.insertAdjacentElement('afterend', tools);
-      attachThreadHoverPreview(info);
+      attachThreadHoverPreview(info, settings, state);
 
       info.titleLink.addEventListener('click', function markRead() {
         state.read[info.id] = Date.now();
@@ -6462,20 +7474,28 @@
     status.classList.toggle('spx-error', !!isError);
   }
 
-  function fetchCurrentUserSpBalance() {
+  function fetchCurrentUserSpBalance(settings) {
+    var cachedBalance = getCachedUserSpBalance();
+    if (cachedBalance !== null) return Promise.resolve(cachedBalance);
     var url = new URL('/userpay.php', location.href).href;
-    return window.fetch(url, {
+    var balancePolicy = {
+      mode: 'interactive',
+      label: 'SP 余额检查',
+      networkFriendly: isNetworkFriendlyMode(settings),
+    };
+    return requestWithPolicy(url, {
       credentials: 'include',
       cache: 'no-store',
-    })
+    }, balancePolicy)
       .then(function readBalanceResponse(response) {
         if (!response.ok) throw new Error('读取 SP 余额失败');
-        return response.text();
+        return readScriptResponseText(response, balancePolicy);
       })
       .then(function parseBalancePage(html) {
         var doc = new DOMParser().parseFromString(html, 'text/html');
         var balance = parseUserSpBalance(doc.body ? doc.body.textContent : '');
         if (balance === null) throw new Error('未识别到 SP 余额');
+        rememberUserSpBalance(balance);
         return balance;
       });
   }
@@ -6509,6 +7529,7 @@
       pageRoot: document.documentElement,
       target: target,
       attemptKey: attemptKey,
+      networkFriendly: isNetworkFriendlyMode(settings),
       previousAttempt: attemptKey ? attempts[attemptKey] : null,
     };
   }
@@ -6563,25 +7584,36 @@
       false
     );
 
-    return window.fetch(context.target.url, {
+    var purchasePolicy = {
+      mode: 'action',
+      label: '自动购买',
+      networkFriendly: context.networkFriendly,
+    };
+    return requestWithPolicy(context.target.url, {
       credentials: 'include',
       redirect: 'follow',
       cache: 'no-store',
-    }).then(function readPurchaseResponse(response) {
+    }, purchasePolicy).then(function readPurchaseResponse(response) {
       if (!response.ok) throw new Error('购买请求失败');
-      return response.text();
+      clearUserSpBalanceCache();
+      return readScriptResponseText(response, purchasePolicy);
     });
   }
 
-  function reloadAutoBuyThreadHtml(purchaseResult) {
+  function reloadAutoBuyThreadHtml(context, purchaseResult) {
     if (purchaseResult === null) return null;
-    return window.fetch(location.href, {
+    var reloadPolicy = {
+      mode: 'interactive',
+      label: '自动购买后刷新帖子',
+      networkFriendly: context && context.networkFriendly,
+    };
+    return requestWithPolicy(location.href, {
       credentials: 'include',
       cache: 'no-store',
-    })
+    }, reloadPolicy)
       .then(function readRefreshedThread(response) {
         if (!response.ok) throw new Error('重新加载帖子失败');
-        return response.text();
+        return readScriptResponseText(response, reloadPolicy);
       });
   }
 
@@ -6643,14 +7675,16 @@
     if (blockAutoBuyContext(context)) return;
     markAutoBuyChecking(context);
 
-    fetchCurrentUserSpBalance()
+    fetchCurrentUserSpBalance(settings)
       .then(function purchaseWhenAffordable(balance) {
         if (!shouldAutoBuyPost(settings, context.target.price, balance)) {
           return skipAutoBuyContext(context, balance);
         }
         return requestAutoBuyPurchase(context, balance);
       })
-      .then(reloadAutoBuyThreadHtml)
+      .then(function reloadPurchasedThread(purchaseResult) {
+        return reloadAutoBuyThreadHtml(context, purchaseResult);
+      })
       .then(function applyRefreshedThread(html) {
         applyAutoBuySuccess(context, settings, state, html);
       })
@@ -7727,6 +8761,19 @@
     return tid ? buildQuickReplyLastPageUrl(responseUrl || baseUrl, tid) : baseUrl;
   }
 
+  function shouldUseQuickReplySubmitHtml(html, submitResponse) {
+    var text = String(html || '');
+    if (!text) return false;
+    var responseUrl = '';
+    try {
+      responseUrl = submitResponse && submitResponse.url ? String(submitResponse.url) : '';
+    } catch (error) {
+      responseUrl = '';
+    }
+    if (responseUrl && detectPageType(responseUrl) === 'read') return true;
+    return /(?:\bjs-post\b|\btpc_content\b|id=["']read_tpc["'])/i.test(text);
+  }
+
   function performQuickReplySubmit(options) {
     if (
       !options ||
@@ -7765,16 +8812,27 @@
             refreshUrl = typeof options.resolveRefreshUrl === 'function'
               ? options.resolveRefreshUrl(response)
               : resolveQuickReplyRefreshUrl(options.pageUrl, options.request, response);
+            if (typeof response.text !== 'function') return false;
+            return readScriptResponseText(response, { mode: 'action', label: '快捷回复' })
+              .then(function applySubmitHtml(html) {
+                if (!shouldUseQuickReplySubmitHtml(html, response)) return false;
+                return options.applyHtml(html, refreshUrl || options.pageUrl) !== false;
+              });
+          })
+          .then(function reloadThreadWhenSubmitHtmlUnavailable(appliedSubmitHtml) {
+            if (appliedSubmitHtml) return true;
             return options.fetch(refreshUrl || options.pageUrl, {
               credentials: 'include',
               cache: 'no-store',
             });
           })
           .then(function checkReloadResponse(response) {
+            if (response === true) return true;
             if (!response || response.ok !== true) throw new Error('重新加载帖子失败');
-            return response.text();
+            return readScriptResponseText(response, { mode: 'action', label: '快捷回复刷新' });
           })
           .then(function applyReloadedHtml(html) {
+            if (html === true) return true;
             if (options.applyHtml(html, refreshUrl || options.pageUrl) === false) throw new Error('无法更新帖子内容');
             return true;
           });
@@ -7893,18 +8951,26 @@
     setQuickReplyPanelPending(panel, pending);
   }
 
-  function setQuickReplyPanelError(panel) {
+  function setQuickReplyPanelError(panel, error) {
     if (!panel) return;
     var status = qs('.spx-quick-reply-status', panel);
     if (!status) return;
     status.classList.add('spx-error');
-    status.textContent = '提交失败，内容已保留，请重试。';
+    status.textContent = error && error.spxRateLimited
+      ? '站点提示操作频繁，内容已保留，请稍后重试。'
+      : '提交失败，内容已保留，请重试。';
   }
 
   function submitQuickReplyAjax(editor, form, submitter, settings, state, panel) {
     if (!editor || !form) return false;
     var fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function'
-      ? window.fetch.bind(window)
+      ? function queueQuickReplyFetch(url, options) {
+        return requestWithPolicy(url, options, {
+          mode: 'action',
+          label: '快捷回复',
+          networkFriendly: isNetworkFriendlyMode(settings),
+        });
+      }
       : null;
     var FormDataCtor = typeof FormData === 'function' ? FormData : null;
     var request = createQuickReplyRequest(
@@ -7953,8 +9019,8 @@
         }
         return false;
       },
-      onError: function onError() {
-        setQuickReplyPanelError(panel);
+      onError: function onError(error) {
+        setQuickReplyPanelError(panel, error);
       },
     });
   }
@@ -8074,6 +9140,7 @@
       compactRead: '阅读页紧凑',
       foldQuotes: '折叠长引用',
       hideUserProfile: '隐藏头像资料',
+      networkFriendly: '网络友好模式',
       autoBuyPost: '自动购买低价帖子',
       unreadOnly: '列表只看未读',
       onlyOriginalAuthor: '阅读页只看楼主',
@@ -8107,6 +9174,11 @@
       ['cleanMode', 'unreadOnly'],
       '控制列表页和通用页面的低频内容、未读筛选。'
     );
+    var networkControls = renderSettingsSection(
+      '网络请求',
+      ['networkFriendly'],
+      '限制脚本后台请求频率，缓存悬停预览和导航刷新，遇到 504 或操作频繁提示时自动冷却。'
+    );
     var autoBuyControls = settingKeys.indexOf('autoBuyPost') !== -1 ? [
       '<section class="spx-settings-section">',
       '<h4>自动购买</h4>',
@@ -8136,7 +9208,7 @@
       '<p class="spx-settings-subtitle">按场景分组管理阅读、列表、购买和本地数据。</p>',
       '</div>',
       '<div class="spx-settings-body">',
-    ].concat(readingControls, listControls, navigationControls, autoBuyControls, [
+    ].concat(readingControls, listControls, networkControls, navigationControls, autoBuyControls, [
       '<section class="spx-settings-section">',
       '<h4>本地屏蔽</h4>',
       '<div class="spx-help">标题和作者关键词每行一个，保存后立即应用到当前页面。</div>',
@@ -9094,6 +10166,7 @@
     restoreModuleNavigation();
     applySiteShellLayout(document);
     enhanceSiteNavigation(document);
+    enhanceFavoriteNavigation(settings, state, document);
     enhanceAccountNavigation(document);
     enhanceAdBlock(settings);
     enhanceHome(settings);
@@ -9227,6 +10300,16 @@
     normalizeNavigationPinMap: normalizeNavigationPinMap,
     getModuleNavigationConfigPinKey: getModuleNavigationConfigPinKey,
     withPinnedModuleNavigationConfigs: withPinnedModuleNavigationConfigs,
+    getFavoriteNavUrl: getFavoriteNavUrl,
+    formatFavoriteNavCount: formatFavoriteNavCount,
+    inferFavoriteNavTags: inferFavoriteNavTags,
+    parseFavoriteSavedAt: parseFavoriteSavedAt,
+    applyFavoriteNavSeenTimes: applyFavoriteNavSeenTimes,
+    getFavoriteNavEntrySearchText: getFavoriteNavEntrySearchText,
+    filterFavoriteNavEntries: filterFavoriteNavEntries,
+    sortFavoriteNavEntries: sortFavoriteNavEntries,
+    parseFavoriteReplyCount: parseFavoriteReplyCount,
+    getFavoriteNavWatchEntries: getFavoriteNavWatchEntries,
     normalizeNavigationCollapseState: normalizeNavigationCollapseState,
     isModuleNavigationGroupCollapsed: isModuleNavigationGroupCollapsed,
     isModuleNavigationConfigActive: isModuleNavigationConfigActive,
@@ -9234,12 +10317,22 @@
     hasPreviewGalleryImages: hasPreviewGalleryImages,
     shouldShowToolbarAction: shouldShowToolbarAction,
     getSettingsPanelKeys: getSettingsPanelKeys,
+    isNetworkFriendlyMode: isNetworkFriendlyMode,
+    getScriptRequestPolicyConfig: getScriptRequestPolicyConfig,
+    isScriptRateLimitStatus: isScriptRateLimitStatus,
+    isScriptRateLimitHtml: isScriptRateLimitHtml,
+    getScriptRequestDelay: getScriptRequestDelay,
+    getNavigationRefreshKey: getNavigationRefreshKey,
+    getThreadPreviewMetaText: getThreadPreviewMetaText,
+    getThreadPreviewImageUrls: getThreadPreviewImageUrls,
+    getThreadPreviewImageSummary: getThreadPreviewImageSummary,
     createQuickReplyRequest: createQuickReplyRequest,
     isQuickReplySubmitter: isQuickReplySubmitter,
     getQuickReplySubmitter: getQuickReplySubmitter,
     isQuickReplyEditorCandidate: isQuickReplyEditorCandidate,
     performQuickReplySubmit: performQuickReplySubmit,
     resolveQuickReplyRefreshUrl: resolveQuickReplyRefreshUrl,
+    shouldUseQuickReplySubmitHtml: shouldUseQuickReplySubmitHtml,
     buildPageUrl: buildPageUrl,
     detectPageType: detectPageType,
     getInjectedStyleText: getInjectedStyleText,

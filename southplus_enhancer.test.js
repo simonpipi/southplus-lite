@@ -3,8 +3,9 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.2\.12/);
+assert.match(source, /@version\s+0\.3\.2/);
 const defaultSettings = enhancer.getDefaultSettings();
+assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.moduleNavDensity, 'comfortable');
 assert.equal(enhancer.normalizeModuleNavDensity('compact'), 'compact');
 assert.equal(enhancer.normalizeModuleNavDensity('standard'), 'standard');
@@ -20,6 +21,35 @@ assert.equal(
   }),
   '站点导航|茶馆|https://south-plus.org/thread.php?fid-9.html'
 );
+assert.equal(enhancer.getFavoriteNavUrl('42', 'https://south-plus.org'), 'https://south-plus.org/u.php?action-favor-uid-42.html');
+assert.equal(enhancer.getFavoriteNavUrl('uid-42', 'https://south-plus.org/'), 'https://south-plus.org/u.php?action-favor-uid-42.html');
+assert.equal(enhancer.formatFavoriteNavCount(1200), '999+');
+assert.equal(enhancer.formatFavoriteNavCount(9, true), '...');
+assert.deepEqual(enhancer.inferFavoriteNavTags('AI 图片资源合集', ''), ['资源', '图片', 'AI']);
+assert.equal(
+  enhancer.parseFavoriteSavedAt('收藏时间 2026-08-06 08:12', new Date(2026, 7, 6, 9, 0).getTime()),
+  new Date(2026, 7, 6, 8, 12).getTime()
+);
+assert.equal(
+  enhancer.parseFavoriteSavedAt('08-05 21:34', new Date(2026, 7, 6, 9, 0).getTime()),
+  new Date(2026, 7, 5, 21, 34).getTime()
+);
+const seenResult = enhancer.applyFavoriteNavSeenTimes(
+  [{ source: 'site', id: '2929020', title: '收藏帖', savedAt: 0 }],
+  {},
+  new Date(2026, 7, 6, 8, 20).getTime()
+);
+assert.equal(seenResult.changed, true);
+assert.equal(seenResult.map['2929020'], new Date(2026, 7, 6, 8, 20).getTime());
+const favoriteEntries = [
+  { title: 'AI 交流', author: 'alice', tags: ['AI'], tagText: 'AI', savedAt: 10, progressAt: 2, replies: 1, read: false },
+  { title: '网盘资源', author: 'bob', tags: ['资源'], tagText: '资源', savedAt: 20, progressAt: 1, replies: 8, read: true },
+  { title: '图片预览', author: 'carol', tags: ['图片'], tagText: '图片', savedAt: 5, progressAt: 9, replies: 3, read: false },
+];
+assert.deepEqual(enhancer.filterFavoriteNavEntries(favoriteEntries, { filter: 'resource' }).map((entry) => entry.title), ['网盘资源']);
+assert.deepEqual(enhancer.filterFavoriteNavEntries(favoriteEntries, { query: 'carol' }).map((entry) => entry.title), ['图片预览']);
+assert.deepEqual(enhancer.sortFavoriteNavEntries(favoriteEntries, 'reply').map((entry) => entry.title), ['网盘资源', '图片预览', 'AI 交流']);
+assert.equal(enhancer.parseFavoriteReplyCount('作者 bob 回复 128 最后发表'), 128);
 assert.match(source, /South Plus 工具箱/);
 assert.match(source, /spx-toolbox-action/);
 assert.match(source, /--spx-page-max:1480px/);
@@ -47,11 +77,15 @@ assert.match(source, /--spx-module-item-height:44px/);
 assert.match(source, /max-height:calc\(100vh - var\(--spx-module-max-offset\)\)!important/);
 assert.match(source, /setProperty\('--spx-module-item-height', navDensity\.itemHeight \+ 'px'\)/);
 assert.match(source, /data-choice="moduleNavDensity"/);
+assert.match(source, /networkFriendly: true/);
 assert.match(source, /select\[data-choice\]/);
 assert.match(source, /spx-module-nav-search/);
 assert.match(source, /filterModuleNavigation/);
 assert.match(source, /spx-module-nav-pin/);
 assert.match(source, /NAVIGATION_PIN_KEY = APP \+ ':navigationPins:v1'/);
+assert.match(source, /NAVIGATION_REFRESH_KEY = APP \+ ':navigationRefresh:v1'/);
+assert.match(source, /网络友好模式/);
+assert.match(source, /requestWithPolicy/);
 assert.match(source, /normalizeNavigationPinMap/);
 assert.match(source, /section: '置顶导航'/);
 assert.match(source, /withPinnedModuleNavigationConfigs/);
@@ -102,6 +136,20 @@ assert.match(source, /AI交流/);
 assert.match(source, /最新帖子/);
 assert.match(source, /spx-nav-brand/);
 assert.match(source, /South Plus \+\+\+/);
+assert.match(source, /spx-favorite-nav/);
+assert.match(source, /spx-favorite-nav-panel/);
+assert.match(source, /我的收藏/);
+assert.match(source, /FAVORITE_NAV_BATCH_SIZE = 50/);
+assert.match(source, /FAVORITE_NAV_SEEN_KEY = APP \+ ':favoriteNavSeen:v1'/);
+assert.match(source, /width:min\(720px,calc\(100vw - 72px\)\)/);
+assert.match(source, /parseFavoriteNavEntriesFromDocument/);
+assert.match(source, /enhanceFavoriteNavigation\(settings, state, document\)/);
+assert.match(source, /spx-favorite-item-title\{[^}]*font-size:14px!important/);
+assert.match(source, /spx-favorite-meta\{[^}]*font-size:13px!important/);
+assert.match(source, /spx-favorite-nav-panel a\.spx-favorite-item-title/);
+assert.match(source, /opacity:1!important;filter:none!important/);
+assert.match(source, /#mainNav \.spx-favorite-nav-panel a\.spx-favorite-item-title/);
+assert.match(source, /color:#182230!important/);
 assert.match(source, /spx-home-dashboard \.spx-home-module\{[^}]*width:100%!important;max-width:100%!important;min-width:0!important/);
 assert.match(source, /spx-home-dashboard \.spx-home-module tr\.tr2\{grid-template-columns:minmax\(360px,620px\) 96px minmax\(180px,260px\)!important;justify-content:start!important;\}/);
 assert.match(source, /spx-home-dashboard \.spx-home-module tr\.tr2>td:last-child,\.spx-home-dashboard \.spx-home-module tr\.tr3>td:last-child\{display:none!important;\}/);
@@ -219,6 +267,9 @@ assert.match(source, /设置/);
 assert.match(source, /setImportantStyle\(post, 'width', '100%'\)/);
 assert.doesNotMatch(source, /setImportantStyle\(post, 'width', 'min\(1680px, calc\(100vw - 64px\)\)'\)/);
 assert.match(source, /spx-theme-night \.spx-preview-popover \.spx-preview-text/);
+assert.match(source, /spx-preview-popover-actions/);
+assert.match(source, /THREAD_PREVIEW_FAILURE_TTL = 3 \* 60 \* 1000/);
+assert.match(source, /THREAD_PREVIEW_IMAGE_LIMIT = 6/);
 const emptyRoot = { querySelector: function querySelector() { return null; }, querySelectorAll: function querySelectorAll() { return []; } };
 const threadListRoot = {
   querySelectorAll: function querySelectorAll(selector) {
@@ -302,9 +353,50 @@ assert.equal(enhancer.isVisibleThreadRow({ offsetParent: null, classList: makeCl
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('adBlock'), false);
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('homeDashboard'), false);
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('nightMode'));
+assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('networkFriendly'));
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/thread.php?fid-9.html').includes('autoBuyPost'));
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/read.php?tid=1', emptyRoot).includes('autoBuyPost'));
 assert.match(source, /data-number="autoBuyMaxSp"/);
+
+assert.equal(enhancer.isNetworkFriendlyMode({ networkFriendly: false }), false);
+assert.equal(enhancer.isNetworkFriendlyMode({ networkFriendly: true }), true);
+assert.equal(enhancer.getScriptRequestPolicyConfig({ mode: 'background' }).minDelay, 1500);
+assert.equal(enhancer.getScriptRequestPolicyConfig({ mode: 'action' }).priority, 30);
+assert.equal(enhancer.getScriptRequestPolicyConfig({ mode: 'preview', networkFriendly: false }).minDelay, 500);
+assert.equal(enhancer.isScriptRateLimitStatus(504), true);
+assert.equal(enhancer.isScriptRateLimitStatus(200), false);
+assert.equal(enhancer.isScriptRateLimitHtml('<html>1秒内操作频繁</html>'), true);
+assert.equal(enhancer.isScriptRateLimitHtml('<main>正常帖子</main>'), false);
+assert.equal(
+  enhancer.getScriptRequestDelay({ mode: 'preview', minDelay: 1200 }, { lastStartedAt: 1000, cooldownUntil: 0 }, 1500),
+  700
+);
+assert.equal(
+  enhancer.getScriptRequestDelay({ mode: 'background', minDelay: 1000 }, { lastStartedAt: 0, cooldownUntil: 3000 }, 2000),
+  1000
+);
+assert.equal(
+  enhancer.getNavigationRefreshKey(['https://south-plus.org/thread.php?fid-9.html#top', 'https://south-plus.org/index.php']),
+  'https://south-plus.org/thread.php?fid-9.html|https://south-plus.org/index.php'
+);
+assert.equal(
+  enhancer.getThreadPreviewMetaText({ author: 'alice' }, { cached: true }),
+  '作者：alice · 已缓存'
+);
+assert.equal(
+  enhancer.getThreadPreviewMetaText({}, { status: '加载失败' }),
+  '加载失败'
+);
+assert.deepEqual(
+  enhancer.getThreadPreviewImageUrls({ images: ['1', '2', '3', '4', '5', '6', '7'] }),
+  ['1', '2', '3', '4', '5', '6']
+);
+assert.equal(enhancer.getThreadPreviewImageSummary({ images: [] }), '没有可预览图片');
+assert.equal(enhancer.getThreadPreviewImageSummary({ images: ['1', '2'] }), '共 2 张预览图');
+assert.equal(
+  enhancer.getThreadPreviewImageSummary({ images: ['1', '2', '3', '4', '5', '6', '7', '8'] }),
+  '已显示前 6 张，打开帖子查看其余 2 张'
+);
 
 assert.equal(enhancer.parsePostPrice('本帖售价：5 SP币'), 5);
 assert.equal(enhancer.parsePostPrice('购买需要 12.5 SP'), 12.5);
@@ -1096,6 +1188,14 @@ assert.equal(
   ),
   'https://south-plus.org/read.php?tid=123&page=e#a'
 );
+assert.equal(
+  enhancer.shouldUseQuickReplySubmitHtml('<table class="js-post"><td class="tpc_content">new reply</td></table>', { url: 'https://south-plus.org/post.php?' }),
+  true
+);
+assert.equal(
+  enhancer.shouldUseQuickReplySubmitHtml('<main id="main">发帖成功</main>', { url: 'https://south-plus.org/post.php?' }),
+  false
+);
 
 function createFakeSubmitter(tagName, type, name, value) {
   return {
@@ -1169,7 +1269,7 @@ async function testQuickReplySubmissionFlow() {
       return {
         ok: true,
         text: async function textStub() {
-          return '<main id="main">new reply</main>';
+          return '<table class="js-post"><td class="tpc_content">new reply</td></table>';
         },
       };
     },
@@ -1190,15 +1290,8 @@ async function testQuickReplySubmissionFlow() {
   assert.equal(success, true);
   assert.equal(successCalls[0].url, request.url);
   assert.strictEqual(successCalls[0].options, request.options);
-  assert.deepEqual(successCalls[1], {
-    url: 'https://south-plus.org/read.php?tid=123&page=e#a',
-    options: {
-      credentials: 'include',
-      cache: 'no-store',
-    },
-  });
-  assert.equal(successCalls[1].options.body, undefined);
-  assert.equal(appliedHtml, '<main id="main">new reply</main>');
+  assert.equal(successCalls.length, 1);
+  assert.equal(appliedHtml, '<table class="js-post"><td class="tpc_content">new reply</td></table>');
   assert.equal(appliedRefreshUrl, 'https://south-plus.org/read.php?tid=123&page=e#a');
   assert.deepEqual(successPendingCalls, [true, false]);
   assert.equal(successPending, false);
@@ -1455,6 +1548,43 @@ async function testQuickReplySubmissionFlow() {
   assert.equal(applyFailureCount, 1);
   assert.deepEqual(applyFailurePendingCalls, [true, false]);
   assert.equal(applyFailurePending, false);
+
+  const rateLimitPendingCalls = [];
+  let rateLimitPending = false;
+  let rateLimitError = null;
+  let rateLimitApplyCount = 0;
+  const rateLimitResult = await enhancer.performQuickReplySubmit({
+    request,
+    pageUrl,
+    fetch: async function rateLimitedFetch() {
+      return {
+        ok: true,
+        text: async function textStub() {
+          return '<html><body>1秒内操作频繁，请稍后再试</body></html>';
+        },
+      };
+    },
+    isPending: function isPending() {
+      return rateLimitPending;
+    },
+    setPending: function setPending(value) {
+      rateLimitPendingCalls.push(value);
+      rateLimitPending = value;
+    },
+    applyHtml: function applyHtml() {
+      rateLimitApplyCount += 1;
+      return true;
+    },
+    onError: function onError(error) {
+      rateLimitError = error;
+    },
+  });
+
+  assert.equal(rateLimitResult, false);
+  assert.equal(rateLimitError.spxRateLimited, true);
+  assert.equal(rateLimitApplyCount, 0);
+  assert.deepEqual(rateLimitPendingCalls, [true, false]);
+  assert.equal(rateLimitPending, false);
 }
 
 testQuickReplySubmissionFlow()
