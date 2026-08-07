@@ -1,6 +1,35 @@
 # Changelog
 
-## 0.3.5 - 2026-08-07
+## 0.3.9 - 2026-08-07
+
+### Changed
+
+- `我的收藏` 徽标新增站内收藏数量短期缓存，页面刷新时优先显示缓存数量，缓存过期后才后台刷新收藏页，降低连续刷新时的额外请求。
+- 网络友好模式将 Cloudflare 520 错误纳入脚本请求冷却识别，遇到源站短暂异常时暂停后台增强请求并保留旧缓存数量。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
+## 0.3.8 - 2026-08-07
+
+### Added
+
+- `我的收藏` 展开面板新增站内收藏删除能力，支持单条删除和勾选后批量删除站内收藏，删除请求会同步到原站收藏夹并刷新面板统计。
+
+### Fixed
+
+- 修复站内收藏删除请求误用原站默认 `job=change`，导致只从面板临时移除、刷新后收藏又出现的问题；现在删除会提交原站 `job=clear`。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
+## 0.3.5-0.3.7 - 2026-08-07
 
 ### Fixed
 

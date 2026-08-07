@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.3\.5/);
+assert.match(source, /@version\s+0\.3\.9/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.moduleNavDensity, 'comfortable');
@@ -44,6 +44,81 @@ assert.equal(enhancer.getThreadFavoriteResultText('请先登录后再收藏'), '
 assert.equal(enhancer.getThreadFavoriteResultText('非法请求，请返回重试!'), '收藏失败');
 assert.equal(enhancer.isNewThreadFavoriteResult('帖子收藏成功!'), true);
 assert.equal(enhancer.isNewThreadFavoriteResult('您已经收藏过该主题'), false);
+assert.equal(enhancer.getSiteFavoriteDeleteResultText('收藏删除成功'), '已删除');
+assert.equal(enhancer.getSiteFavoriteDeleteResultText('非法请求，请返回重试!'), '删除失败');
+assert.deepEqual(
+  enhancer.buildFavoriteDeleteRequest(
+    '/u.php?action=favor&job=del',
+    'POST',
+    [{ name: 'selid[]', value: '3373' }, { name: 'step', value: '2' }],
+    'https://south-plus.org/u.php?action-favor-uid-42.html'
+  ),
+  {
+    url: 'https://south-plus.org/u.php?action=favor&job=del',
+    method: 'POST',
+    body: 'selid%5B%5D=3373&step=2',
+    contentType: 'application/x-www-form-urlencoded;charset=UTF-8',
+  }
+);
+assert.deepEqual(
+  enhancer.normalizeFavoriteDeleteFields([
+    { name: 'verify', value: '77492139' },
+    { name: 'selid[]', value: '2930554' },
+    { name: 'job', value: 'change' },
+    { name: 'type', value: '0' }
+  ]),
+  [
+    { name: 'verify', value: '77492139' },
+    { name: 'selid[]', value: '2930554' },
+    { name: 'job', value: 'clear' }
+  ]
+);
+assert.deepEqual(
+  enhancer.buildFavoriteDeleteRequest(
+    '/u.php?action=favor&',
+    'POST',
+    enhancer.normalizeFavoriteDeleteFields([
+      { name: 'verify', value: '77492139' },
+      { name: 'selid[]', value: '2930554' },
+      { name: 'job', value: 'change' },
+      { name: 'type', value: '0' }
+    ]),
+    'https://south-plus.org/u.php?action-favor-uid-947000.html'
+  ),
+  {
+    url: 'https://south-plus.org/u.php?action=favor&',
+    method: 'POST',
+    body: 'verify=77492139&selid%5B%5D=2930554&job=clear',
+    contentType: 'application/x-www-form-urlencoded;charset=UTF-8',
+  }
+);
+assert.deepEqual(
+  enhancer.buildFavoriteDeleteRequest(
+    '/u.php?action=favor&job=del',
+    'GET',
+    [{ name: 'selid[]', value: '3373' }],
+    'https://south-plus.org/u.php?action-favor-uid-42.html'
+  ),
+  {
+    url: 'https://south-plus.org/u.php?action=favor&job=del&selid%5B%5D=3373',
+    method: 'GET',
+    body: '',
+  }
+);
+assert.equal(
+  enhancer.getFavoriteNavDeleteKey({ source: 'site', id: '3373', url: 'https://south-plus.org/read.php?tid-3373.html', index: 2 }),
+  'site|3373|https://south-plus.org/read.php?tid-3373.html|2'
+);
+assert.deepEqual(
+  enhancer.getSelectedSiteFavoriteEntries(
+    [
+      { source: 'site', id: '3373', url: 'https://south-plus.org/read.php?tid-3373.html', index: 2, deleteRequest: { url: 'https://south-plus.org/u.php?action=favor&job=del' } },
+      { source: 'site', id: '3374', url: 'https://south-plus.org/read.php?tid-3374.html', index: 3, deleteRequest: { url: 'https://south-plus.org/u.php?action=favor&job=del' } },
+    ],
+    { 'site|3374|https://south-plus.org/read.php?tid-3374.html|3': true }
+  ).map((entry) => entry.id),
+  ['3374']
+);
 assert.deepEqual(
   enhancer.createFavoriteNavEntryFromThreadInfo({
     id: '3373',
@@ -79,6 +154,12 @@ assert.deepEqual(
 );
 assert.equal(enhancer.formatFavoriteNavCount(1200), '999+');
 assert.equal(enhancer.formatFavoriteNavCount(9, true), '...');
+const freshFavoriteCountCache = enhancer.normalizeFavoriteNavCountCacheEntry({ count: 12, updatedAt: 1000 }, 1000 + 60 * 1000);
+assert.equal(freshFavoriteCountCache.count, 12);
+assert.equal(freshFavoriteCountCache.fresh, true);
+assert.equal(enhancer.shouldRefreshFavoriteNavCountCache({ count: 12, updatedAt: 1000 }, 1000 + 60 * 1000), false);
+assert.equal(enhancer.shouldRefreshFavoriteNavCountCache({ count: 12, updatedAt: 1000 }, 1000 + 3 * 60 * 1000), true);
+assert.equal(enhancer.shouldRefreshFavoriteNavCountCache({ nextRefreshAt: 5000 }, 4000), false);
 assert.deepEqual(enhancer.inferFavoriteNavTags('AI 图片资源合集', ''), ['资源', '图片', 'AI']);
 assert.equal(
   enhancer.parseFavoriteSavedAt('收藏时间 2026-08-06 08:12', new Date(2026, 7, 6, 9, 0).getTime()),
@@ -212,13 +293,26 @@ assert.match(source, /收藏到站内收藏夹/);
 assert.match(source, /syncFavoriteNavAfterSiteFavorite/);
 assert.match(source, /updateFavoriteNavTrigger\(wrapper, panelState, state\)/);
 assert.match(source, /bumpFavoriteNavTriggerCount\(wrapper, panelState, state\)/);
-assert.match(source, /spx-favorite-nav-count', formatFavoriteNavCount\(0, true\)/);
+assert.match(source, /createSiteFavoriteDeleteRequest\(row, pageUrl\)/);
+assert.match(source, /delete-selected-favorite-site/);
+assert.match(source, /toggle-visible-favorite-site/);
+assert.match(source, /spx-favorite-group-actions/);
+assert.match(source, /删除所选/);
+assert.match(source, /全选本页/);
+assert.match(source, /删除收藏/);
+assert.match(source, /job', value: 'clear'/);
+assert.doesNotMatch(source, /delete-visible-favorite-site/);
+assert.doesNotMatch(source, /删除本次显示/);
+assert.match(source, /FAVORITE_NAV_COUNT_CACHE_TTL = 2 \* 60 \* 1000/);
+assert.match(source, /spx-favorite-nav-count', formatFavoriteNavCount\(Object\.keys\(\(state && state\.watch\) \|\| \{\}\)\.length, false\)/);
 assert.match(source, /正在读取站内收藏数量/);
+assert.match(source, /显示短期缓存/);
+assert.match(source, /shouldRefreshFavoriteNavCountCache\(countCacheSource\)/);
 assert.match(source, /var totalCount = siteCount \+ watchCount/);
 assert.match(source, /我的收藏已读取/);
 assert.match(source, /站内 ' \+ siteCount \+ '，稍后看 ' \+ watchCount/);
 assert.match(source, /loadFavoriteNavSiteEntries\(panel, settings, state, wrapper\);/);
-assert.doesNotMatch(source, /本地稍后看 ' \+ watchCount/);
+assert.match(source, /仅显示本地稍后看 ' \+ watchCount/);
 assert.match(source, /bindNativeReadFavoriteSync\(settings, state, tid, originalAuthor\)/);
 assert.match(source, /a\[onclick\*="action=favor"\]\[onclick\*="tid"\]/);
 assert.match(source, /isNewThreadFavoriteResult\(guideText\)/);
@@ -446,8 +540,10 @@ assert.equal(enhancer.isNetworkFriendlyMode({ networkFriendly: true }), true);
 assert.equal(enhancer.getScriptRequestPolicyConfig({ mode: 'background' }).minDelay, 1500);
 assert.equal(enhancer.getScriptRequestPolicyConfig({ mode: 'action' }).priority, 30);
 assert.equal(enhancer.getScriptRequestPolicyConfig({ mode: 'preview', networkFriendly: false }).minDelay, 500);
+assert.equal(enhancer.isScriptRateLimitStatus(520), true);
 assert.equal(enhancer.isScriptRateLimitStatus(504), true);
 assert.equal(enhancer.isScriptRateLimitStatus(200), false);
+assert.equal(enhancer.isScriptRateLimitHtml('<title>520 Web server is returning an unknown error</title>'), true);
 assert.equal(enhancer.isScriptRateLimitHtml('<html>1秒内操作频繁</html>'), true);
 assert.equal(enhancer.isScriptRateLimitHtml('<main>正常帖子</main>'), false);
 assert.equal(

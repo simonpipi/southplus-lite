@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.3.5
+// @version      0.3.9
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -59,12 +59,15 @@
   var NAVIGATION_COLLAPSE_KEY = APP + ':navigationCollapse:v1';
   var NAVIGATION_PIN_KEY = APP + ':navigationPins:v1';
   var NAVIGATION_REFRESH_KEY = APP + ':navigationRefresh:v1';
+  var FAVORITE_NAV_COUNT_CACHE_KEY = APP + ':favoriteNavCountCache:v1';
   var FAVORITE_NAV_SEEN_KEY = APP + ':favoriteNavSeen:v1';
   var AUTO_BUY_CHECK_TTL = 10 * 60 * 1000;
   var AUTO_BUY_ATTEMPT_LIMIT = 100;
   var RESOURCE_LIMIT = 500;
   var NAVIGATION_POOL_LIMIT = 160;
   var NAVIGATION_REFRESH_TTL = 6 * 60 * 60 * 1000;
+  var FAVORITE_NAV_COUNT_CACHE_TTL = 2 * 60 * 1000;
+  var FAVORITE_NAV_COUNT_RETRY_TTL = 60 * 1000;
   var READ_PROGRESS_LIMIT = 200;
   var STALE_PROGRESS_MAX_AGE = 180 * 24 * 60 * 60 * 1000;
   var LOCAL_STORAGE_WARNING_BYTES = 4 * 1024 * 1024;
@@ -1763,12 +1766,12 @@
 
   function isScriptRateLimitStatus(status) {
     var code = Number(status);
-    return code === 429 || code === 503 || code === 504;
+    return code === 429 || code === 503 || code === 504 || code === 520;
   }
 
   function isScriptRateLimitHtml(html) {
     var text = String(html || '').replace(/\s+/g, ' ').slice(0, 4000);
-    return /(?:1\s*秒内操作频繁|操作频繁|访问过于频繁|请求过于频繁|系统繁忙|504\s*Gateway|Gateway\s*Timeout|HTTP\s*504)/i.test(text);
+    return /(?:1\s*秒内操作频繁|操作频繁|访问过于频繁|请求过于频繁|系统繁忙|504\s*Gateway|Gateway\s*Timeout|HTTP\s*504|Error\s*code\s*520|HTTP\s*520|Web\s*server\s*is\s*returning\s*an\s*unknown\s*error)/i.test(text);
   }
 
   function createScriptRateLimitError(message) {
@@ -2773,11 +2776,11 @@
       '.spx-favorite-nav-panel[hidden]{display:none!important;}',
       '.spx-favorite-head{display:flex!important;align-items:flex-start!important;justify-content:space-between!important;gap:12px!important;padding:14px 14px 10px!important;border-bottom:1px solid #fde4bd!important;background:linear-gradient(180deg,#fff7ed 0%,var(--spx-panel) 100%)!important;}',
       '.spx-favorite-title h3{margin:0!important;color:var(--spx-strong)!important;font-size:15px!important;line-height:1.3!important;font-weight:900!important;}.spx-favorite-summary{margin-top:4px!important;color:#7c2d12!important;font-size:12px!important;font-weight:700!important;}',
-      '.spx-favorite-open{display:inline-flex!important;align-items:center!important;min-height:30px!important;padding:0 10px!important;border-radius:8px!important;background:var(--spx-warn)!important;color:#fff!important;text-decoration:none!important;font-size:12px!important;font-weight:900!important;white-space:nowrap!important;}',
+      '.spx-favorite-open{display:inline-flex!important;align-items:center!important;min-height:30px!important;padding:0 10px!important;border-radius:8px!important;background:var(--spx-warn)!important;color:#fff!important;text-decoration:none!important;font-size:12px!important;font-weight:900!important;white-space:nowrap!important;}.spx-favorite-head-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;gap:8px!important;flex-wrap:wrap!important;}.spx-favorite-selected-count{color:#7c2d12!important;font-size:12px!important;font-weight:900!important;white-space:nowrap!important;}',
       '.spx-favorite-stats{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:8px!important;padding:12px 14px 0!important;}.spx-favorite-stat{min-width:0!important;padding:9px 10px!important;border:1px solid #fde4bd!important;border-radius:10px!important;background:#fffaf3!important;}.spx-favorite-stat strong{display:block!important;color:#7c2d12!important;font-size:16px!important;line-height:1.2!important;font-variant-numeric:tabular-nums!important;}.spx-favorite-stat span{display:block!important;margin-top:3px!important;color:var(--spx-sub)!important;font-size:11px!important;font-weight:800!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
       '.spx-favorite-search{box-sizing:border-box!important;width:calc(100% - 28px)!important;min-height:34px!important;margin:12px 14px 8px!important;padding:0 11px!important;border:1px solid var(--spx-line)!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;color:var(--spx-text)!important;font-size:13px!important;outline:none!important;}.spx-favorite-search:focus{border-color:var(--spx-warn)!important;box-shadow:0 0 0 3px rgba(217,119,6,.14)!important;}',
       '.spx-favorite-tabs,.spx-favorite-tools{display:flex!important;align-items:center!important;gap:8px!important;padding:0 14px 10px!important;}.spx-favorite-tools{justify-content:space-between!important;}.spx-favorite-chips{display:flex!important;gap:6px!important;min-width:0!important;overflow-x:auto!important;scrollbar-width:thin!important;}.spx-favorite-tab,.spx-favorite-chip{flex:none!important;min-height:28px!important;padding:0 10px!important;border:1px solid var(--spx-line)!important;border-radius:999px!important;background:var(--spx-panel)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;cursor:pointer!important;}.spx-favorite-tab.spx-active,.spx-favorite-chip.spx-active{border-color:var(--spx-warn)!important;background:#ffedd5!important;color:#7c2d12!important;}.spx-favorite-sort{width:116px!important;height:30px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:800!important;}',
-      '.spx-favorite-list{display:grid!important;gap:8px!important;max-height:360px!important;overflow:auto!important;padding:0 14px 14px!important;}.spx-favorite-group{position:sticky!important;top:0!important;z-index:1!important;display:flex!important;justify-content:space-between!important;gap:10px!important;min-height:28px!important;padding:4px 2px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;}.spx-favorite-item{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:12px!important;min-height:64px!important;padding:11px 12px!important;border:1px solid var(--spx-line)!important;border-radius:10px!important;background:var(--spx-panel)!important;}.spx-favorite-item-title{display:-webkit-box!important;min-width:0!important;color:var(--spx-strong)!important;font-size:14px!important;font-weight:900!important;line-height:1.38!important;white-space:normal!important;overflow:hidden!important;text-overflow:ellipsis!important;-webkit-line-clamp:2!important;-webkit-box-orient:vertical!important;}.spx-favorite-meta{margin-top:5px!important;color:var(--spx-text)!important;font-size:13px!important;line-height:1.42!important;white-space:normal!important;overflow:hidden!important;text-overflow:ellipsis!important;}.spx-favorite-actions{display:flex!important;gap:6px!important;align-items:center!important;}.spx-favorite-actions a,.spx-favorite-actions button,.spx-favorite-load-more{min-width:52px!important;height:28px!important;padding:0 8px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;text-decoration:none!important;cursor:pointer!important;}.spx-favorite-actions .spx-primary{border-color:var(--spx-accent)!important;background:var(--spx-accent)!important;color:#fff!important;}.spx-favorite-load{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;min-height:42px!important;padding:8px 10px!important;border:1px dashed #f3c27a!important;border-radius:10px!important;background:#fffaf3!important;color:#7c2d12!important;font-size:12px!important;font-weight:900!important;}.spx-favorite-empty{padding:18px 14px 20px!important;color:var(--spx-sub)!important;font-size:13px!important;font-weight:700!important;text-align:center!important;}',
+      '.spx-favorite-list{display:grid!important;gap:8px!important;max-height:360px!important;overflow:auto!important;padding:0 14px 14px!important;}.spx-favorite-group{position:sticky!important;top:0!important;z-index:1!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;min-height:30px!important;padding:4px 2px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;}.spx-favorite-group-main{display:flex!important;align-items:center!important;gap:8px!important;min-width:0!important;}.spx-favorite-group-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;gap:6px!important;flex-wrap:wrap!important;}.spx-favorite-group-actions button{min-height:26px!important;padding:0 8px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;cursor:pointer!important;}.spx-favorite-group-actions .spx-danger{border-color:#fecaca!important;background:var(--spx-danger-soft)!important;color:var(--spx-danger)!important;}.spx-favorite-item{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:12px!important;min-height:64px!important;padding:11px 12px!important;border:1px solid var(--spx-line)!important;border-radius:10px!important;background:var(--spx-panel)!important;}.spx-favorite-body-head{display:flex!important;align-items:flex-start!important;gap:8px!important;min-width:0!important;}.spx-favorite-select{flex:none!important;width:16px!important;height:16px!important;margin:2px 0 0!important;accent-color:var(--spx-warn)!important;}.spx-favorite-item-title{display:-webkit-box!important;min-width:0!important;color:var(--spx-strong)!important;font-size:14px!important;font-weight:900!important;line-height:1.38!important;white-space:normal!important;overflow:hidden!important;text-overflow:ellipsis!important;-webkit-line-clamp:2!important;-webkit-box-orient:vertical!important;}.spx-favorite-meta{margin-top:5px!important;color:var(--spx-text)!important;font-size:13px!important;line-height:1.42!important;white-space:normal!important;overflow:hidden!important;text-overflow:ellipsis!important;}.spx-favorite-actions{display:flex!important;gap:6px!important;align-items:center!important;}.spx-favorite-actions a,.spx-favorite-actions button,.spx-favorite-load-more{min-width:52px!important;height:28px!important;padding:0 8px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;text-decoration:none!important;cursor:pointer!important;}.spx-favorite-actions .spx-primary{border-color:var(--spx-accent)!important;background:var(--spx-accent)!important;color:#fff!important;}.spx-favorite-actions .spx-danger{border-color:#fecaca!important;background:var(--spx-danger-soft)!important;color:var(--spx-danger)!important;}.spx-favorite-load{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;min-height:42px!important;padding:8px 10px!important;border:1px dashed #f3c27a!important;border-radius:10px!important;background:#fffaf3!important;color:#7c2d12!important;font-size:12px!important;font-weight:900!important;}.spx-favorite-empty{padding:18px 14px 20px!important;color:var(--spx-sub)!important;font-size:13px!important;font-weight:700!important;text-align:center!important;}',
       '.spx-favorite-nav-panel a.spx-favorite-item-title,.spx-favorite-nav-panel a.spx-favorite-item-title:link,.spx-favorite-nav-panel a.spx-favorite-item-title:visited{color:var(--spx-strong)!important;text-decoration:none!important;text-shadow:none!important;opacity:1!important;filter:none!important;}.spx-favorite-nav-panel .spx-favorite-meta{color:var(--spx-text)!important;text-shadow:none!important;opacity:1!important;filter:none!important;}',
       '.spx-site-shell #mainNav .spx-favorite-nav-panel a.spx-favorite-item-title,.spx-site-shell #mainNav .spx-favorite-nav-panel a.spx-favorite-item-title:link,.spx-site-shell #mainNav .spx-favorite-nav-panel a.spx-favorite-item-title:visited{display:-webkit-box!important;color:#182230!important;text-decoration:none!important;text-shadow:none!important;font-size:14px!important;font-weight:900!important;line-height:1.38!important;opacity:1!important;filter:none!important;}.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-meta{color:#1f2937!important;font-size:13px!important;line-height:1.42!important;opacity:1!important;filter:none!important;}.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-open,.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-actions a.spx-primary{color:#fff!important;line-height:28px!important;}.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-actions a:not(.spx-primary){color:#1f2937!important;line-height:28px!important;}',
       '.spx-site-shell #guide .spx-peacemaker-nav{position:relative!important;width:auto!important;min-width:max-content!important;overflow:visible!important;}',
@@ -3499,6 +3502,167 @@
     return /success|成功|收藏/.test(value);
   }
 
+  function getSiteFavoriteDeleteResultText(text) {
+    var value = compactText(String(text || '').replace(/^<\?xml[^>]*>/i, '').replace(/<ajax><!\[CDATA\[|\]\]><\/ajax>/gi, ''));
+    if (/登录|权限|失败|错误|非法|重试/.test(value)) return '删除失败';
+    if (/删除|取消|移除|success|成功/.test(value)) return '已删除';
+    return value ? '已提交' : '已删除';
+  }
+
+  function buildFavoriteDeleteRequest(action, method, fields, pageUrl) {
+    var targetUrl = normalizeNavigationHref(action || '', pageUrl || location.href);
+    if (!targetUrl) return null;
+    var requestMethod = String(method || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET';
+    var params = new URLSearchParams();
+    (fields || []).forEach(function appendFavoriteDeleteField(field) {
+      if (!field || !field.name) return;
+      params.append(field.name, field.value == null ? '' : String(field.value));
+    });
+    var body = params.toString();
+    if (requestMethod === 'GET') {
+      if (body) targetUrl += (targetUrl.indexOf('?') === -1 ? '?' : '&') + body;
+      return { url: targetUrl, method: 'GET', body: '' };
+    }
+    return {
+      url: targetUrl,
+      method: 'POST',
+      body: body,
+      contentType: 'application/x-www-form-urlencoded;charset=UTF-8',
+    };
+  }
+
+  function normalizeFavoriteDeleteFields(fields) {
+    var result = [];
+    var hasJob = false;
+    (fields || []).forEach(function keepFavoriteDeleteField(field) {
+      if (!field || !field.name) return;
+      if (field.name === 'job') {
+        if (!hasJob) {
+          result.push({ name: 'job', value: 'clear' });
+          hasJob = true;
+        }
+        return;
+      }
+      if (field.name === 'type') return;
+      result.push(field);
+    });
+    if (!hasJob) result.push({ name: 'job', value: 'clear' });
+    return result;
+  }
+
+  function isFavoriteDeleteControl(node) {
+    if (!node) return false;
+    var text = [
+      node.textContent,
+      node.value,
+      node.title,
+      node.getAttribute && node.getAttribute('href'),
+      node.getAttribute && node.getAttribute('onclick'),
+    ].join(' ');
+    return /删除|取消收藏|移除|delete|del/i.test(text) && /收藏|favor|selid|delete|del/i.test(text);
+  }
+
+  function getFavoriteDeleteUrlFromLink(node, pageUrl) {
+    if (!isFavoriteDeleteControl(node)) return '';
+    var values = [
+      node.getAttribute && node.getAttribute('href'),
+      node.getAttribute && node.getAttribute('onclick'),
+    ];
+    var candidates = [];
+    values.forEach(function collectFavoriteDeleteCandidate(value) {
+      var text = String(value || '').replace(/&amp;/g, '&').trim();
+      if (!text) return;
+      if (!/^javascript:/i.test(text)) candidates.push(text);
+      var match;
+      var quotedUrlRe = /['"]([^'"]*(?:u\.php|pw_ajax\.php|action[=-]favor|selid|delete|del)[^'"]*)['"]/ig;
+      while ((match = quotedUrlRe.exec(text))) {
+        candidates.push(match[1].replace(/&amp;/g, '&'));
+      }
+    });
+    for (var index = 0; index < candidates.length; index += 1) {
+      var candidate = candidates[index];
+      if (!/(?:favor|selid|delete|del)/i.test(candidate)) continue;
+      var url = normalizeNavigationHref(candidate, pageUrl || location.href);
+      if (url) return url;
+    }
+    return '';
+  }
+
+  function collectFavoriteDeleteFormFields(form, targetControl, submitControl) {
+    var fields = [];
+    qsa('input,textarea,select', form).forEach(function collectFavoriteDeleteField(control) {
+      if (!control || control.disabled || !control.name) return;
+      var tag = String(control.tagName || '').toLowerCase();
+      var type = String(control.type || '').toLowerCase();
+      if (type === 'file' || type === 'reset' || type === 'button' || type === 'image') return;
+      if (type === 'submit') {
+        if (control === submitControl) fields.push({ name: control.name, value: control.value || '' });
+        return;
+      }
+      if (type === 'checkbox') {
+        if (control === targetControl) fields.push({ name: control.name, value: control.value || 'on' });
+        return;
+      }
+      if (type === 'radio') {
+        if (control.name === 'job' && control.value === 'clear') fields.push({ name: control.name, value: control.value });
+        else if (control === targetControl) fields.push({ name: control.name, value: control.value || 'on' });
+        return;
+      }
+      if (tag === 'select' && control.name !== 'type') {
+        qsa('option', control).forEach(function collectFavoriteSelectOption(option) {
+          if (option.selected) fields.push({ name: control.name, value: option.value });
+        });
+        return;
+      }
+      if (tag === 'select') return;
+      fields.push({ name: control.name, value: control.value || '' });
+    });
+    if (submitControl && submitControl.name && submitControl.type !== 'submit') {
+      fields.push({ name: submitControl.name, value: submitControl.value || submitControl.textContent || '' });
+    }
+    return fields;
+  }
+
+  function findFavoriteDeleteRequestFromForm(row, pageUrl) {
+    if (!row || !row.closest) return null;
+    var form = row.closest('form');
+    if (!form) return null;
+    var controls = qsa('input,button', form);
+    var targetControl = qsa('input[type="checkbox"],input[type="radio"]', row).filter(function keepFavoriteCheckbox(control) {
+      return /sel|id|favor|tid/i.test(control.name || '') || /\d+/.test(control.value || '');
+    })[0];
+    if (!targetControl) return null;
+    var submitControl = controls.filter(isFavoriteDeleteControl)[0] || null;
+    var fields = normalizeFavoriteDeleteFields(collectFavoriteDeleteFormFields(form, targetControl, submitControl));
+    return buildFavoriteDeleteRequest(form.getAttribute('action') || form.action || pageUrl, form.getAttribute('method') || form.method || 'GET', fields, pageUrl);
+  }
+
+  function findFavoriteDeleteRequestFromLinks(row, pageUrl) {
+    if (!row) return null;
+    var deleteUrl = '';
+    qsa('a[href],a[onclick],button[onclick],input[onclick]', row).some(function findFavoriteDeleteLink(node) {
+      deleteUrl = getFavoriteDeleteUrlFromLink(node, pageUrl);
+      return !!deleteUrl;
+    });
+    return deleteUrl ? buildFavoriteDeleteRequest(deleteUrl, 'GET', [], pageUrl) : null;
+  }
+
+  function getFavoriteNavDeleteKey(entry) {
+    var item = entry || {};
+    return [item.source || '', item.id || '', item.url || '', item.index == null ? '' : item.index].join('|');
+  }
+
+  function getSelectedSiteFavoriteEntries(entries, selectedMap) {
+    var selected = selectedMap || {};
+    return (entries || []).filter(function keepSelectedFavorite(entry) {
+      return !!(entry && entry.deleteRequest && selected[getFavoriteNavDeleteKey(entry)]);
+    });
+  }
+
+  function createSiteFavoriteDeleteRequest(row, pageUrl) {
+    return findFavoriteDeleteRequestFromLinks(row, pageUrl) || findFavoriteDeleteRequestFromForm(row, pageUrl);
+  }
+
   function markThreadFavoriteSeen(info) {
     var tid = parseThreadId(info && info.id);
     if (!tid) return false;
@@ -3593,6 +3757,74 @@
     if (!isFinite(value) || value < 0) return '-';
     if (value >= 1000) return '999+';
     return String(value);
+  }
+
+  function getFavoriteNavCountCacheKey(favoriteUrl) {
+    return String(favoriteUrl || '').replace(/#.*$/, '');
+  }
+
+  function normalizeFavoriteNavCountCacheEntry(entry, now) {
+    var source = entry || {};
+    var count = Number(source.count);
+    var updatedAt = Number(source.updatedAt);
+    var nextRefreshAt = Number(source.nextRefreshAt || 0);
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    if (!isFinite(count) || count < 0 || !isFinite(updatedAt) || updatedAt <= 0) return null;
+    return {
+      count: Math.floor(count),
+      updatedAt: updatedAt,
+      expiresAt: updatedAt + FAVORITE_NAV_COUNT_CACHE_TTL,
+      fresh: currentTime - updatedAt < FAVORITE_NAV_COUNT_CACHE_TTL,
+      nextRefreshAt: isFinite(nextRefreshAt) && nextRefreshAt > 0 ? nextRefreshAt : 0,
+      failedAt: Number(source.failedAt || 0) || 0,
+    };
+  }
+
+  function shouldRefreshFavoriteNavCountCache(entry, now) {
+    var cache = normalizeFavoriteNavCountCacheEntry(entry, now);
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    if (!cache) {
+      var nextRefreshAt = Number(entry && entry.nextRefreshAt || 0);
+      return !(isFinite(nextRefreshAt) && nextRefreshAt > currentTime);
+    }
+    if (cache.fresh) return false;
+    return !(cache.nextRefreshAt > currentTime);
+  }
+
+  function loadFavoriteNavCountCache(favoriteUrl, now) {
+    var key = getFavoriteNavCountCacheKey(favoriteUrl);
+    if (!key) return null;
+    return normalizeFavoriteNavCountCacheEntry(loadMap(FAVORITE_NAV_COUNT_CACHE_KEY)[key], now);
+  }
+
+  function saveFavoriteNavCountCache(favoriteUrl, count, now) {
+    var key = getFavoriteNavCountCacheKey(favoriteUrl);
+    var value = Number(count);
+    if (!key || !isFinite(value) || value < 0) return;
+    var data = loadMap(FAVORITE_NAV_COUNT_CACHE_KEY);
+    data[key] = {
+      count: Math.floor(value),
+      updatedAt: now === undefined ? Date.now() : Number(now),
+    };
+    var keys = Object.keys(data).sort(function sortFavoriteCountCache(left, right) {
+      return Number(data[right] && data[right].updatedAt || 0) - Number(data[left] && data[left].updatedAt || 0);
+    });
+    keys.slice(12).forEach(function pruneFavoriteCountCache(item) {
+      delete data[item];
+    });
+    saveMap(FAVORITE_NAV_COUNT_CACHE_KEY, data);
+  }
+
+  function delayFavoriteNavCountCacheRefresh(favoriteUrl, now) {
+    var key = getFavoriteNavCountCacheKey(favoriteUrl);
+    if (!key) return;
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    var data = loadMap(FAVORITE_NAV_COUNT_CACHE_KEY);
+    var entry = data[key] || {};
+    entry.failedAt = currentTime;
+    entry.nextRefreshAt = currentTime + FAVORITE_NAV_COUNT_RETRY_TTL;
+    data[key] = entry;
+    saveMap(FAVORITE_NAV_COUNT_CACHE_KEY, data);
   }
 
   function inferFavoriteNavTags(title, meta) {
@@ -3739,6 +3971,7 @@
     var author = compactText(authorLink ? authorLink.textContent : '');
     var tags = inferFavoriteNavTags(title, rowText);
     var savedAt = parseFavoriteSavedAt(rowText, now);
+    var deleteRequest = createSiteFavoriteDeleteRequest(row, pageUrl);
     return {
       source: 'site',
       id: String(id),
@@ -3754,6 +3987,7 @@
       tags: tags,
       tagText: formatTags(tags),
       index: index,
+      deleteRequest: deleteRequest,
     };
   }
 
@@ -3843,7 +4077,15 @@
     if (!isFinite(current)) current = Object.keys((state && state.watch) || {}).length;
     if (!isFinite(current)) return;
     var next = current + 1;
-    if (panelState) panelState.lastKnownCount = next;
+    if (panelState) {
+      var watchCount = Object.keys((state && state.watch) || {}).length;
+      var nextSiteCount = Math.max(0, next - watchCount);
+      panelState.cachedSiteCount = nextSiteCount;
+      panelState.cachedSiteCountUpdatedAt = Date.now();
+      panelState.cachedSiteCountFresh = true;
+      panelState.lastKnownCount = next;
+      saveFavoriteNavCountCache(panelState.favoriteUrl, nextSiteCount, panelState.cachedSiteCountUpdatedAt);
+    }
     countNode.textContent = formatFavoriteNavCount(next);
     countNode.title = '我的收藏已更新 ' + next + ' 条';
   }
@@ -3865,6 +4107,12 @@
           item.index = index;
           return item;
         });
+        if (panelState.siteLoaded) {
+          panelState.cachedSiteCount = panelState.siteEntries.length;
+          panelState.cachedSiteCountUpdatedAt = Date.now();
+          panelState.cachedSiteCountFresh = true;
+          saveFavoriteNavCountCache(panelState.favoriteUrl, panelState.siteEntries.length, panelState.cachedSiteCountUpdatedAt);
+        }
       }
       if (panelState.siteLoaded) {
         updateFavoriteNavTrigger(wrapper, panelState, state);
@@ -3873,6 +4121,86 @@
         bumpFavoriteNavTriggerCount(wrapper, panelState, state);
       }
     });
+  }
+
+  function deleteSiteFavoriteEntry(entry, settings) {
+    var request = entry && entry.deleteRequest;
+    if (!request || !request.url) return Promise.reject(new Error('缺少删除入口'));
+    var policy = {
+      mode: 'action',
+      label: '删除收藏',
+      networkFriendly: isNetworkFriendlyMode(settings),
+    };
+    var options = {
+      method: request.method || 'GET',
+      credentials: 'include',
+      cache: 'no-store',
+    };
+    if (request.method === 'POST') {
+      options.body = request.body || '';
+      options.headers = { 'Content-Type': request.contentType || 'application/x-www-form-urlencoded;charset=UTF-8' };
+    }
+    return requestWithPolicy(request.url, options, policy)
+      .then(function readFavoriteDeleteResponse(response) {
+        if (!response.ok) throw new Error('删除收藏失败');
+        return readScriptResponseText(response, policy);
+      })
+      .then(function resolveFavoriteDeleteText(html) {
+        var text = getSiteFavoriteDeleteResultText(html);
+        if (text === '删除失败') throw new Error('删除收藏失败');
+        return entry;
+      });
+  }
+
+  function deleteSiteFavoriteEntries(entries, settings) {
+    var result = { deleted: [], errors: [] };
+    return (entries || []).reduce(function queueFavoriteDelete(promise, entry) {
+      return promise.then(function deleteNextFavorite() {
+        return deleteSiteFavoriteEntry(entry, settings).then(
+          function markFavoriteDeleted(deletedEntry) {
+            result.deleted.push(deletedEntry);
+          },
+          function markFavoriteDeleteFailed(error) {
+            result.errors.push({ entry: entry, error: error });
+          }
+        );
+      });
+    }, Promise.resolve()).then(function returnFavoriteDeleteResult() {
+      return result;
+    });
+  }
+
+  function removeDeletedSiteFavoriteEntries(panelState, entries) {
+    if (!panelState || !entries || !entries.length) return;
+    var deleted = {};
+    entries.forEach(function collectDeletedFavorite(entry) {
+      deleted[getFavoriteNavDeleteKey(entry)] = true;
+    });
+    panelState.siteEntries = (panelState.siteEntries || []).filter(function keepSiteFavorite(entry) {
+      return !deleted[getFavoriteNavDeleteKey(entry)];
+    }).map(function reindexFavoriteEntry(entry, index) {
+      entry.index = index;
+      return entry;
+    });
+    panelState.cachedSiteCount = panelState.siteEntries.length;
+    panelState.cachedSiteCountUpdatedAt = Date.now();
+    panelState.cachedSiteCountFresh = true;
+    saveFavoriteNavCountCache(panelState.favoriteUrl, panelState.siteEntries.length, panelState.cachedSiteCountUpdatedAt);
+    panelState.lastKnownCount = null;
+    var seenMap = loadMap(FAVORITE_NAV_SEEN_KEY);
+    var changed = false;
+    entries.forEach(function removeDeletedFavoriteSeen(entry) {
+      if (entry && entry.id && seenMap[entry.id]) {
+        delete seenMap[entry.id];
+        changed = true;
+      }
+    });
+    if (changed) saveMap(FAVORITE_NAV_SEEN_KEY, seenMap);
+    if (panelState.selectedSiteFavorites) {
+      entries.forEach(function removeDeletedFavoriteSelection(entry) {
+        delete panelState.selectedSiteFavorites[getFavoriteNavDeleteKey(entry)];
+      });
+    }
   }
 
   function ensureFavoriteNavState(panel, favoriteUrl) {
@@ -3889,8 +4217,13 @@
         siteLoading: false,
         siteError: '',
         lastKnownCount: null,
+        cachedSiteCount: null,
+        cachedSiteCountUpdatedAt: 0,
+        cachedSiteCountFresh: false,
+        selectedSiteFavorites: {},
       };
     }
+    if (!panel.spxFavoriteNavState.selectedSiteFavorites) panel.spxFavoriteNavState.selectedSiteFavorites = {};
     if (favoriteUrl) panel.spxFavoriteNavState.favoriteUrl = favoriteUrl;
     return panel.spxFavoriteNavState;
   }
@@ -3899,6 +4232,8 @@
     var countNode = qs('.spx-favorite-nav-count', wrapper);
     if (!countNode) return;
     var siteCount = panelState && panelState.siteLoaded ? (panelState.siteEntries || []).length : 0;
+    var cachedSiteCount = Number(panelState && panelState.cachedSiteCount);
+    var hasCachedSiteCount = isFinite(cachedSiteCount) && cachedSiteCount >= 0;
     var watchCount = Object.keys((state && state.watch) || {}).length;
     var totalCount = siteCount + watchCount;
     var loading = !!(panelState && panelState.siteLoading);
@@ -3908,12 +4243,26 @@
       countNode.textContent = formatFavoriteNavCount(totalCount, false);
       countNode.title = '我的收藏已读取 ' + totalCount + ' 条（站内 ' + siteCount + '，稍后看 ' + watchCount + '）';
       panelState.lastKnownCount = totalCount;
+    } else if (hasCachedSiteCount) {
+      var cachedTotal = cachedSiteCount + watchCount;
+      countNode.textContent = formatFavoriteNavCount(cachedTotal, false);
+      if (loading) {
+        countNode.title = '显示短期缓存 ' + cachedTotal + ' 条（站内 ' + cachedSiteCount + '，稍后看 ' + watchCount + '），正在刷新站内收藏。';
+      } else if (hasError) {
+        countNode.title = '显示短期缓存 ' + cachedTotal + ' 条；站内收藏刷新失败：' + panelState.siteError;
+      } else {
+        countNode.title = '显示短期缓存 ' + cachedTotal + ' 条（站内 ' + cachedSiteCount + '，稍后看 ' + watchCount + '）。';
+      }
+      panelState.lastKnownCount = cachedTotal;
     } else if (hasError) {
       countNode.textContent = formatFavoriteNavCount(-1, false);
       countNode.title = '站内收藏读取失败：' + panelState.siteError;
-    } else {
+    } else if (loading) {
       countNode.textContent = formatFavoriteNavCount(0, true);
       countNode.title = '正在读取站内收藏数量';
+    } else {
+      countNode.textContent = formatFavoriteNavCount(watchCount, false);
+      countNode.title = '仅显示本地稍后看 ' + watchCount + ' 条；打开我的收藏面板后读取站内收藏。';
     }
   }
 
@@ -3922,19 +4271,31 @@
     button.type = 'button';
     button.dataset.action = action;
     if (value !== undefined) button.dataset.value = String(value);
+    if (/delete|remove|clear/.test(String(action || ''))) button.classList.add('spx-danger');
     return button;
   }
 
-  function appendFavoriteNavEntry(list, entry) {
+  function appendFavoriteNavEntry(list, entry, panelState) {
     var item = createEl('div', 'spx-favorite-item');
     item.dataset.source = entry.source || 'site';
     item.dataset.id = String(entry.id || '');
     var body = createEl('div');
+    var bodyHead = createEl('div', entry.source === 'site' && entry.deleteRequest ? 'spx-favorite-body-head' : '');
+    if (entry.source === 'site' && entry.deleteRequest) {
+      var select = createEl('input', 'spx-favorite-select');
+      select.type = 'checkbox';
+      select.title = '选择后可批量删除';
+      select.dataset.spxFavoriteSelect = '1';
+      select.dataset.value = getFavoriteNavDeleteKey(entry);
+      select.checked = !!(panelState && panelState.selectedSiteFavorites && panelState.selectedSiteFavorites[select.dataset.value]);
+      bodyHead.appendChild(select);
+    }
     var title = createEl('a', 'spx-favorite-item-title', entry.title || '未命名帖子');
     title.href = entry.url || '#';
     title.target = '_blank';
     title.rel = 'noreferrer';
-    body.appendChild(title);
+    bodyHead.appendChild(title);
+    body.appendChild(bodyHead);
     var metaParts = [];
     if (entry.author) metaParts.push(entry.author);
     if (entry.savedAt) metaParts.push((entry.savedAtLabel || '保存') + ' ' + formatShortTime(entry.savedAt));
@@ -3951,6 +4312,9 @@
     open.rel = 'noreferrer';
     actions.appendChild(open);
     actions.appendChild(createFavoriteNavAction('复制', 'copy-favorite', entry.url || '', false));
+    if (entry.source === 'site' && entry.deleteRequest) {
+      actions.appendChild(createFavoriteNavAction('删除', 'delete-favorite-site', getFavoriteNavDeleteKey(entry), false));
+    }
     if (entry.source === 'watch') actions.appendChild(createFavoriteNavAction('移除', 'remove-favorite-watch', entry.id, false));
     item.appendChild(actions);
     list.appendChild(item);
@@ -3960,11 +4324,20 @@
     var panelState = ensureFavoriteNavState(panel, panel && panel.dataset.favoriteUrl);
     var watchEntries = getFavoriteNavWatchEntries(state);
     var siteEntries = panelState.siteEntries || [];
+    var cachedSiteCount = Number(panelState.cachedSiteCount);
+    var hasCachedSiteCount = isFinite(cachedSiteCount) && cachedSiteCount >= 0;
+    var displaySiteCount = panelState.siteLoaded ? siteEntries.length : hasCachedSiteCount ? cachedSiteCount : siteEntries.length;
     var source = normalizeFavoriteNavSource(panelState.source);
     var sourceEntries = source === 'watch' ? watchEntries : siteEntries;
     var filtered = sortFavoriteNavEntries(filterFavoriteNavEntries(sourceEntries, panelState), panelState.sort);
     var visible = filtered.slice(0, Math.max(1, Number(panelState.limit) || FAVORITE_NAV_BATCH_SIZE));
     var isFiltered = !!(panelState.query || normalizeFavoriteNavFilter(panelState.filter) !== 'all');
+    var deletableVisible = source === 'site' ? visible.filter(function keepDeletableFavorite(entry) {
+      return !!(entry && entry.deleteRequest);
+    }) : [];
+    var selectedEntries = getSelectedSiteFavoriteEntries(siteEntries, panelState.selectedSiteFavorites);
+    var selectedVisibleCount = getSelectedSiteFavoriteEntries(visible, panelState.selectedSiteFavorites).length;
+    var allVisibleSelected = !!(deletableVisible.length && selectedVisibleCount === deletableVisible.length);
 
     panel.textContent = '';
 
@@ -3973,15 +4346,17 @@
     title.appendChild(createEl('h3', '', '我的收藏'));
     title.appendChild(createEl('div', 'spx-favorite-summary', panelState.siteLoading ? '正在读取站内收藏页...' : '主导航一键打开，站内收藏和稍后看分开管理'));
     header.appendChild(title);
+    var headerButtons = createEl('div', 'spx-favorite-head-actions');
     var openLink = createEl('a', 'spx-favorite-open', '打开收藏页');
     openLink.href = panelState.favoriteUrl || '#';
     openLink.target = '_blank';
     openLink.rel = 'noreferrer';
-    header.appendChild(openLink);
+    headerButtons.appendChild(openLink);
+    header.appendChild(headerButtons);
     panel.appendChild(header);
 
     var stats = createEl('div', 'spx-favorite-stats');
-    [['站内收藏', panelState.siteLoading ? '...' : siteEntries.length], ['本次显示', visible.length + ' / ' + filtered.length], ['稍后看', watchEntries.length]].forEach(function appendStat(item) {
+    [['站内收藏', panelState.siteLoading && !hasCachedSiteCount ? '...' : displaySiteCount], ['本次显示', visible.length + ' / ' + filtered.length], ['稍后看', watchEntries.length]].forEach(function appendStat(item) {
       var stat = createEl('div', 'spx-favorite-stat');
       stat.appendChild(createEl('strong', '', String(item[1])));
       stat.appendChild(createEl('span', '', item[0]));
@@ -3998,7 +4373,7 @@
 
     var tabs = createEl('div', 'spx-favorite-tabs');
     [
-      { value: 'site', label: '站内收藏 ' + (panelState.siteLoading ? '...' : siteEntries.length) },
+      { value: 'site', label: '站内收藏 ' + (panelState.siteLoading && !hasCachedSiteCount ? '...' : displaySiteCount) },
       { value: 'watch', label: '稍后看 ' + watchEntries.length },
     ].forEach(function appendTab(tab) {
       var button = createFavoriteNavAction(tab.label, 'favorite-source', tab.value, false);
@@ -4049,11 +4424,22 @@
       list.appendChild(createEl('div', 'spx-favorite-empty', '没有匹配的收藏。'));
     } else {
       var group = createEl('div', 'spx-favorite-group');
-      group.appendChild(createEl('span', '', source === 'site' ? '站内收藏' : '本地稍后看'));
-      group.appendChild(createEl('span', '', (isFiltered ? filtered.length + ' / ' : '') + sourceEntries.length + ' 条'));
+      var groupMain = createEl('div', 'spx-favorite-group-main');
+      groupMain.appendChild(createEl('span', '', source === 'site' ? '站内收藏' : '本地稍后看'));
+      groupMain.appendChild(createEl('span', '', (isFiltered ? filtered.length + ' / ' : '') + sourceEntries.length + ' 条'));
+      group.appendChild(groupMain);
+      var groupActions = createEl('div', 'spx-favorite-group-actions');
+      if (source === 'site' && deletableVisible.length) {
+        groupActions.appendChild(createFavoriteNavAction(allVisibleSelected ? '取消本页' : '全选本页', 'toggle-visible-favorite-site', allVisibleSelected ? 'off' : 'on', false));
+      }
+      if (source === 'site' && selectedEntries.length) {
+        groupActions.appendChild(createEl('span', 'spx-favorite-selected-count', '已选 ' + selectedEntries.length));
+        groupActions.appendChild(createFavoriteNavAction('删除所选', 'delete-selected-favorite-site', '', false));
+      }
+      group.appendChild(groupActions);
       list.appendChild(group);
       visible.forEach(function appendVisibleEntry(entry) {
-        appendFavoriteNavEntry(list, entry);
+        appendFavoriteNavEntry(list, entry, panelState);
       });
       if (filtered.length > visible.length) {
         var load = createEl('div', 'spx-favorite-load');
@@ -4096,10 +4482,15 @@
         );
         var seenResult = applyFavoriteNavSeenTimes(panelState.siteEntries, seenMap, Date.now());
         if (seenResult.changed) saveMap(FAVORITE_NAV_SEEN_KEY, seenResult.map);
+        panelState.cachedSiteCount = panelState.siteEntries.length;
+        panelState.cachedSiteCountUpdatedAt = Date.now();
+        panelState.cachedSiteCountFresh = true;
+        saveFavoriteNavCountCache(panelState.favoriteUrl, panelState.siteEntries.length, panelState.cachedSiteCountUpdatedAt);
         panelState.siteLoaded = true;
       })
       .catch(function handleFavoriteLoadError(error) {
         panelState.siteError = error && error.message ? error.message : '读取收藏页失败';
+        delayFavoriteNavCountCacheRefresh(panelState.favoriteUrl);
       })
       .then(function finishFavoriteLoad() {
         panelState.siteLoading = false;
@@ -4155,7 +4546,7 @@
       trigger.title = '打开我的收藏';
       trigger.appendChild(createEl('span', 'spx-favorite-nav-star', '★'));
       trigger.appendChild(createEl('span', '', '我的收藏'));
-      trigger.appendChild(createEl('span', 'spx-favorite-nav-count', formatFavoriteNavCount(0, true)));
+      trigger.appendChild(createEl('span', 'spx-favorite-nav-count', formatFavoriteNavCount(Object.keys((state && state.watch) || {}).length, false)));
       wrapper.appendChild(trigger);
 
       panel = createEl('section', 'spx-favorite-nav-panel');
@@ -4184,8 +4575,17 @@
       });
       panel.addEventListener('change', function handleFavoriteChange(event) {
         var target = event.target;
-        if (!target || !target.dataset || target.dataset.spxFavoriteSort !== '1') return;
         var panelState = ensureFavoriteNavState(panel, favoriteUrl);
+        if (!target || !target.dataset) return;
+        if (target.dataset.spxFavoriteSelect === '1') {
+          var selectionKey = target.dataset.value;
+          if (!selectionKey) return;
+          if (target.checked) panelState.selectedSiteFavorites[selectionKey] = true;
+          else delete panelState.selectedSiteFavorites[selectionKey];
+          renderFavoriteNavPanel(panel, settings, state, wrapper);
+          return;
+        }
+        if (target.dataset.spxFavoriteSort !== '1') return;
         panelState.sort = normalizeFavoriteNavSort(target.value);
         panelState.limit = FAVORITE_NAV_BATCH_SIZE;
         renderFavoriteNavPanel(panel, settings, state, wrapper);
@@ -4219,6 +4619,58 @@
           );
           return;
         }
+        if (action === 'toggle-visible-favorite-site') {
+          var shouldSelectVisible = target.dataset.value !== 'off';
+          var visibleForSelection = sortFavoriteNavEntries(
+            filterFavoriteNavEntries(panelState.siteEntries || [], panelState),
+            panelState.sort
+          ).slice(0, Math.max(1, Number(panelState.limit) || FAVORITE_NAV_BATCH_SIZE));
+          visibleForSelection.forEach(function toggleVisibleFavoriteSelection(entry) {
+            if (!entry || !entry.deleteRequest) return;
+            var key = getFavoriteNavDeleteKey(entry);
+            if (shouldSelectVisible) panelState.selectedSiteFavorites[key] = true;
+            else delete panelState.selectedSiteFavorites[key];
+          });
+          renderFavoriteNavPanel(panel, settings, state, wrapper);
+          return;
+        }
+        if (action === 'delete-favorite-site' || action === 'delete-selected-favorite-site') {
+          var entriesToDelete;
+          if (action === 'delete-selected-favorite-site') {
+            entriesToDelete = getSelectedSiteFavoriteEntries(panelState.siteEntries || [], panelState.selectedSiteFavorites);
+          } else {
+            entriesToDelete = (panelState.siteEntries || []).filter(function matchSiteFavorite(entry) {
+              return getFavoriteNavDeleteKey(entry) === target.dataset.value;
+            });
+          }
+          entriesToDelete = (entriesToDelete || []).filter(function keepDeletableSiteFavorite(entry) {
+            return !!(entry && entry.deleteRequest);
+          });
+          if (!entriesToDelete.length) return;
+          var confirmText = entriesToDelete.length > 1
+            ? '确定删除选中的 ' + entriesToDelete.length + ' 条站内收藏？此操作会同步到原站收藏夹。'
+            : '删除这个站内收藏？此操作会同步到原站收藏夹。';
+          if (typeof window.confirm === 'function' && !window.confirm(confirmText)) return;
+          var originalText = target.textContent || '删除';
+          target.disabled = true;
+          target.textContent = '删除中';
+          deleteSiteFavoriteEntries(entriesToDelete, settings).then(function handleFavoriteDeleteResult(result) {
+            if (result.deleted.length) {
+              removeDeletedSiteFavoriteEntries(panelState, result.deleted);
+              updateFavoriteNavTrigger(wrapper, panelState, state);
+              renderFavoriteNavPanel(panel, settings, state, wrapper);
+            }
+            if (result.errors.length && !result.deleted.length) {
+              target.disabled = false;
+              setTemporaryText(target, '删除失败', originalText);
+              return;
+            }
+            if (result.errors.length && typeof window.alert === 'function') {
+              window.alert('部分收藏删除失败：' + result.errors.length + ' 条');
+            }
+          });
+          return;
+        }
         if (action === 'remove-favorite-watch') {
           var id = target.dataset.value;
           if (!id || !state || !state.watch) return;
@@ -4239,9 +4691,19 @@
     }
 
     if (!wrapper.parentNode) host.appendChild(wrapper);
-    ensureFavoriteNavState(panel, favoriteUrl);
+    var panelState = ensureFavoriteNavState(panel, favoriteUrl);
+    var countCacheKey = getFavoriteNavCountCacheKey(favoriteUrl);
+    var countCacheSource = countCacheKey ? loadMap(FAVORITE_NAV_COUNT_CACHE_KEY)[countCacheKey] : null;
+    var countCache = loadFavoriteNavCountCache(favoriteUrl);
+    if (countCache) {
+      panelState.cachedSiteCount = countCache.count;
+      panelState.cachedSiteCountUpdatedAt = countCache.updatedAt;
+      panelState.cachedSiteCountFresh = countCache.fresh;
+    }
     updateFavoriteNavTrigger(wrapper, panel.spxFavoriteNavState, state);
-    loadFavoriteNavSiteEntries(panel, settings, state, wrapper);
+    if (shouldRefreshFavoriteNavCountCache(countCacheSource)) {
+      loadFavoriteNavSiteEntries(panel, settings, state, wrapper);
+    }
   }
 
   function enhanceAccountNavigation(root) {
@@ -10568,9 +11030,16 @@
     getThreadFavoriteUrl: getThreadFavoriteUrl,
     getThreadFavoriteResultText: getThreadFavoriteResultText,
     isNewThreadFavoriteResult: isNewThreadFavoriteResult,
+    getSiteFavoriteDeleteResultText: getSiteFavoriteDeleteResultText,
+    buildFavoriteDeleteRequest: buildFavoriteDeleteRequest,
+    normalizeFavoriteDeleteFields: normalizeFavoriteDeleteFields,
+    getFavoriteNavDeleteKey: getFavoriteNavDeleteKey,
+    getSelectedSiteFavoriteEntries: getSelectedSiteFavoriteEntries,
     createFavoriteNavEntryFromThreadInfo: createFavoriteNavEntryFromThreadInfo,
     createReadPageFavoriteInfo: createReadPageFavoriteInfo,
     formatFavoriteNavCount: formatFavoriteNavCount,
+    normalizeFavoriteNavCountCacheEntry: normalizeFavoriteNavCountCacheEntry,
+    shouldRefreshFavoriteNavCountCache: shouldRefreshFavoriteNavCountCache,
     inferFavoriteNavTags: inferFavoriteNavTags,
     parseFavoriteSavedAt: parseFavoriteSavedAt,
     applyFavoriteNavSeenTimes: applyFavoriteNavSeenTimes,
