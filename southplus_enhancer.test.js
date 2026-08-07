@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.3\.2/);
+assert.match(source, /@version\s+0\.3\.4/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.moduleNavDensity, 'comfortable');
@@ -23,6 +23,60 @@ assert.equal(
 );
 assert.equal(enhancer.getFavoriteNavUrl('42', 'https://south-plus.org'), 'https://south-plus.org/u.php?action-favor-uid-42.html');
 assert.equal(enhancer.getFavoriteNavUrl('uid-42', 'https://south-plus.org/'), 'https://south-plus.org/u.php?action-favor-uid-42.html');
+assert.equal(enhancer.extractSiteVerifyHashFromText("var imgpath = 'images';var verifyhash = '77492139';"), '77492139');
+assert.equal(enhancer.getSiteVerifyHash({
+  querySelectorAll: function querySelectorAll(selector) {
+    return selector === 'script' ? [{ textContent: "var verifyhash = '77492139';" }] : [];
+  },
+}), '77492139');
+assert.equal(
+  enhancer.getThreadFavoriteUrl('td_3373', 'https://south-plus.org', '77492139', 1785990000000),
+  'https://south-plus.org/pw_ajax.php?action=favor&tid=3373&nowtime=1785990000000&verify=77492139'
+);
+assert.equal(
+  enhancer.getThreadFavoriteUrl('3373', 'https://south-plus.org', '77492139', 1785990000000),
+  'https://south-plus.org/pw_ajax.php?action=favor&tid=3373&nowtime=1785990000000&verify=77492139'
+);
+assert.equal(enhancer.getThreadFavoriteResultText('success\t收藏成功'), '已收藏');
+assert.equal(enhancer.getThreadFavoriteResultText('<?xml version="1.0"?><ajax><![CDATA[帖子收藏成功!]]></ajax>'), '已收藏');
+assert.equal(enhancer.getThreadFavoriteResultText('您已经收藏过该主题'), '已收藏');
+assert.equal(enhancer.getThreadFavoriteResultText('请先登录后再收藏'), '收藏失败');
+assert.equal(enhancer.getThreadFavoriteResultText('非法请求，请返回重试!'), '收藏失败');
+assert.equal(enhancer.isNewThreadFavoriteResult('帖子收藏成功!'), true);
+assert.equal(enhancer.isNewThreadFavoriteResult('您已经收藏过该主题'), false);
+assert.deepEqual(
+  enhancer.createFavoriteNavEntryFromThreadInfo({
+    id: '3373',
+    title: 'AI 图片资源合集',
+    author: 'alice',
+    titleLink: { href: 'https://south-plus.org/read.php?tid-3373.html' },
+  }, 1785990000000),
+  {
+    source: 'site',
+    id: '3373',
+    title: 'AI 图片资源合集',
+    url: 'https://south-plus.org/read.php?tid-3373.html',
+    author: 'alice',
+    meta: 'AI 图片资源合集 alice',
+    savedAt: 1785990000000,
+    savedAtLabel: '收藏',
+    progressAt: 0,
+    replies: 0,
+    read: false,
+    tags: ['资源', '图片', 'AI'],
+    tagText: '资源 / 图片 / AI',
+    index: 0,
+  }
+);
+assert.deepEqual(
+  enhancer.createReadPageFavoriteInfo('3373', ' 阅读页标题 ', ' alice ', 'https://south-plus.org/read.php?tid-3373.html#tpc'),
+  {
+    id: '3373',
+    title: '阅读页标题',
+    author: 'alice',
+    url: 'https://south-plus.org/read.php?tid-3373.html',
+  }
+);
 assert.equal(enhancer.formatFavoriteNavCount(1200), '999+');
 assert.equal(enhancer.formatFavoriteNavCount(9, true), '...');
 assert.deepEqual(enhancer.inferFavoriteNavTags('AI 图片资源合集', ''), ['资源', '图片', 'AI']);
@@ -150,6 +204,26 @@ assert.match(source, /spx-favorite-nav-panel a\.spx-favorite-item-title/);
 assert.match(source, /opacity:1!important;filter:none!important/);
 assert.match(source, /#mainNav \.spx-favorite-nav-panel a\.spx-favorite-item-title/);
 assert.match(source, /color:#182230!important/);
+assert.match(source, /pw_ajax\.php\?action=favor&tid=/);
+assert.match(source, /getSiteVerifyHash\(document\)/);
+assert.match(source, /&nowtime=/);
+assert.match(source, /&verify=/);
+assert.match(source, /收藏到站内收藏夹/);
+assert.match(source, /syncFavoriteNavAfterSiteFavorite/);
+assert.match(source, /updateFavoriteNavTrigger\(wrapper, panelState, state\)/);
+assert.match(source, /bumpFavoriteNavTriggerCount\(wrapper, panelState, state\)/);
+assert.match(source, /spx-favorite-nav-count', formatFavoriteNavCount\(0, true\)/);
+assert.match(source, /正在读取站内收藏数量/);
+assert.match(source, /var totalCount = siteCount \+ watchCount/);
+assert.match(source, /我的收藏已读取/);
+assert.match(source, /站内 ' \+ siteCount \+ '，稍后看 ' \+ watchCount/);
+assert.match(source, /loadFavoriteNavSiteEntries\(panel, settings, state, wrapper\);/);
+assert.doesNotMatch(source, /本地稍后看 ' \+ watchCount/);
+assert.match(source, /bindNativeReadFavoriteSync\(settings, state, tid, originalAuthor\)/);
+assert.match(source, /a\[onclick\*="action=favor"\]\[onclick\*="tid"\]/);
+assert.match(source, /isNewThreadFavoriteResult\(guideText\)/);
+assert.match(source, /spx-preview-popover-actions[\s\S]*收藏/);
+assert.doesNotMatch(source, /createEl\('button', '', '本页屏人'\)/);
 assert.match(source, /spx-home-dashboard \.spx-home-module\{[^}]*width:100%!important;max-width:100%!important;min-width:0!important/);
 assert.match(source, /spx-home-dashboard \.spx-home-module tr\.tr2\{grid-template-columns:minmax\(360px,620px\) 96px minmax\(180px,260px\)!important;justify-content:start!important;\}/);
 assert.match(source, /spx-home-dashboard \.spx-home-module tr\.tr2>td:last-child,\.spx-home-dashboard \.spx-home-module tr\.tr3>td:last-child\{display:none!important;\}/);

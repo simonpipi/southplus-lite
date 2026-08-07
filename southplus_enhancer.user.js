@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.3.2
+// @version      0.3.4
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -173,6 +173,7 @@
   function parseThreadId(value) {
     var text = String(value || '');
     var match =
+      text.match(/^(\d+)$/) ||
       text.match(/(?:^|[_-])(?:td|ajax)_(\d+)(?:\D|$)/) ||
       text.match(/(?:td|a_ajax)_(\d+)/) ||
       text.match(/[?&]tid=(\d+)/) ||
@@ -3442,6 +3443,132 @@
     return base + '/u.php?action-favor-uid-' + uid + '.html';
   }
 
+  function extractSiteVerifyHashFromText(text) {
+    var value = String(text || '');
+    var markerIndex = value.indexOf('verifyhash');
+    if (markerIndex < 0) return '';
+    var assignIndex = value.indexOf('=', markerIndex);
+    if (assignIndex < 0) return '';
+    var rest = value.slice(assignIndex + 1).replace(/^\s+/, '');
+    var quote = rest.charAt(0);
+    if (quote !== "'" && quote !== '"') return '';
+    var endIndex = rest.indexOf(quote, 1);
+    return endIndex > 0 ? rest.slice(1, endIndex) : '';
+  }
+
+  function getSiteVerifyHash(root) {
+    if (typeof verifyhash !== 'undefined' && verifyhash) return String(verifyhash);
+    if (typeof window !== 'undefined' && window.verifyhash) return String(window.verifyhash);
+    var scope = root || (typeof document !== 'undefined' ? document : null);
+    var scripts = scope && scope.querySelectorAll ? qsa('script', scope) : [];
+    for (var i = 0; i < scripts.length; i += 1) {
+      var scriptMatch = extractSiteVerifyHashFromText(scripts[i].textContent || '');
+      if (scriptMatch) return scriptMatch;
+    }
+    var html = scope && scope.documentElement ? scope.documentElement.outerHTML : '';
+    return extractSiteVerifyHashFromText(html);
+  }
+
+  function getThreadFavoriteUrl(threadId, origin, verify, now) {
+    var tid = parseThreadId(threadId);
+    if (!tid) return '';
+    var base = String(origin || location.origin || '').replace(/\/+$/, '');
+    var url = base + '/pw_ajax.php?action=favor&tid=' + encodeURIComponent(tid);
+    var timestamp = now === undefined ? Date.now() : Number(now);
+    url += '&nowtime=' + encodeURIComponent(isFinite(timestamp) ? timestamp : Date.now());
+    if (verify) url += '&verify=' + encodeURIComponent(verify);
+    return url;
+  }
+
+  function getThreadFavoriteResultText(text) {
+    var value = compactText(String(text || '').replace(/^<\?xml[^>]*>/i, '').replace(/<ajax><!\[CDATA\[|\]\]><\/ajax>/gi, ''));
+    if (!value) return '已收藏';
+    if (/登录|权限|失败|错误|非法|重试/.test(value)) return '收藏失败';
+    if (/已经|已收藏|重复/.test(value)) return '已收藏';
+    if (/success|成功|收藏/.test(value)) return '已收藏';
+    return '已提交';
+  }
+
+  function isNewThreadFavoriteResult(text) {
+    var value = compactText(String(text || '').replace(/^<\?xml[^>]*>/i, '').replace(/<ajax><!\[CDATA\[|\]\]><\/ajax>/gi, ''));
+    if (!value || /已经|已收藏|重复/.test(value)) return false;
+    return /success|成功|收藏/.test(value);
+  }
+
+  function markThreadFavoriteSeen(info) {
+    var tid = parseThreadId(info && info.id);
+    if (!tid) return false;
+    var seenMap = loadMap(FAVORITE_NAV_SEEN_KEY);
+    if (seenMap[tid]) return false;
+    seenMap[tid] = Date.now();
+    saveMap(FAVORITE_NAV_SEEN_KEY, seenMap);
+    return true;
+  }
+
+  function isThreadFavoriteSeen(threadId) {
+    var tid = parseThreadId(threadId);
+    if (!tid) return false;
+    return !!loadMap(FAVORITE_NAV_SEEN_KEY)[tid];
+  }
+
+  function saveThreadSiteFavorite(info, settings) {
+    var verify = getSiteVerifyHash(document);
+    var url = getThreadFavoriteUrl(info && info.id, location.origin, verify, Date.now());
+    if (!url) return Promise.reject(new Error('缺少帖子ID'));
+    if (!verify) return Promise.reject(new Error('缺少站点校验参数'));
+    var policy = {
+      mode: 'action',
+      label: '收藏帖子',
+      networkFriendly: isNetworkFriendlyMode(settings),
+    };
+    return requestWithPolicy(url, { credentials: 'include', cache: 'no-store' }, policy)
+      .then(function readFavoriteResponse(response) {
+        if (!response.ok) throw new Error('收藏失败');
+        return readScriptResponseText(response, policy);
+      })
+      .then(function resolveFavoriteText(html) {
+        var text = getThreadFavoriteResultText(html);
+        if (text === '收藏失败') throw new Error('收藏失败');
+        return {
+          text: text,
+          added: isNewThreadFavoriteResult(html) && markThreadFavoriteSeen(info),
+        };
+      });
+  }
+
+  function runThreadFavoriteAction(info, settings, state, button, doneText) {
+    if (!button) return;
+    var originalText = button.dataset.spxFavoriteOriginalText || button.textContent || '收藏';
+    button.dataset.spxFavoriteOriginalText = originalText;
+    button.disabled = true;
+    button.textContent = '收藏中';
+    saveThreadSiteFavorite(info, settings).then(
+      function markFavoriteDone(result) {
+        delete button.dataset.spxFavoriteOriginalText;
+        button.textContent = doneText || result.text || '已收藏';
+        syncFavoriteNavAfterSiteFavorite(info, settings, state, !!(result && result.added));
+      },
+      function markFavoriteFailed(error) {
+        var message = error && error.message ? error.message : '收藏失败';
+        button.dataset.spxFavoriteError = message;
+        button.title = message;
+        button.textContent = '收藏失败';
+        if (typeof window === 'undefined' || typeof window.setTimeout !== 'function') {
+          button.disabled = false;
+          button.textContent = originalText;
+          delete button.dataset.spxFavoriteOriginalText;
+          return;
+        }
+        window.setTimeout(function restoreFavoriteButton() {
+          if ('isConnected' in button && !button.isConnected) return;
+          button.disabled = false;
+          button.textContent = originalText;
+          delete button.dataset.spxFavoriteOriginalText;
+        }, 1400);
+      }
+    );
+  }
+
   function normalizeFavoriteNavSource(value) {
     return value === 'watch' ? 'watch' : 'site';
   }
@@ -3664,6 +3791,86 @@
     });
   }
 
+  function createFavoriteNavEntryFromThreadInfo(info, now) {
+    if (!info) return null;
+    var tid = parseThreadId(info.id);
+    var url = info.titleLink && info.titleLink.href ? info.titleLink.href : getThreadPreviewUrl(info);
+    var title = compactText(info.title || (info.titleLink && info.titleLink.textContent) || '');
+    if (!tid || !url || !title) return null;
+    var timestamp = now === undefined ? Date.now() : Number(now);
+    var savedAt = isFinite(timestamp) ? timestamp : Date.now();
+    var rowText = compactText([title, info.author].filter(Boolean).join(' '));
+    var tags = inferFavoriteNavTags(title, rowText);
+    return {
+      source: 'site',
+      id: tid,
+      title: title,
+      url: url,
+      author: info.author || '',
+      meta: rowText,
+      savedAt: savedAt,
+      savedAtLabel: '收藏',
+      progressAt: 0,
+      replies: parseFavoriteReplyCount(rowText),
+      read: false,
+      tags: tags,
+      tagText: formatTags(tags),
+      index: 0,
+    };
+  }
+
+  function createReadPageFavoriteInfo(tid, title, author, url) {
+    var id = parseThreadId(tid);
+    if (!id) return null;
+    return {
+      id: id,
+      title: compactText(title) || '未命名帖子',
+      author: compactText(author),
+      url: String(url || location.href || '').split('#')[0],
+    };
+  }
+
+  function bumpFavoriteNavTriggerCount(wrapper, panelState, state) {
+    var countNode = qs('.spx-favorite-nav-count', wrapper);
+    if (!countNode) return;
+    var current = panelState && isFinite(Number(panelState.lastKnownCount))
+      ? Number(panelState.lastKnownCount)
+      : parseInt(countNode.textContent, 10);
+    if (!isFinite(current)) current = Object.keys((state && state.watch) || {}).length;
+    if (!isFinite(current)) return;
+    var next = current + 1;
+    if (panelState) panelState.lastKnownCount = next;
+    countNode.textContent = formatFavoriteNavCount(next);
+    countNode.title = '我的收藏已更新 ' + next + ' 条';
+  }
+
+  function syncFavoriteNavAfterSiteFavorite(info, settings, state, added) {
+    if (!added) return;
+    var entry = createFavoriteNavEntryFromThreadInfo(info, Date.now());
+    if (!entry) return;
+    qsa('#spx-favorite-nav').forEach(function syncFavoriteWrapper(wrapper) {
+      var panel = qs('.spx-favorite-nav-panel', wrapper);
+      if (!panel) return;
+      var panelState = ensureFavoriteNavState(panel, panel.dataset.favoriteUrl || wrapper.dataset.favoriteUrl);
+      var siteEntries = panelState.siteEntries || [];
+      var exists = siteEntries.some(function matchFavoriteEntry(item) {
+        return String(item.id || '') === entry.id || (item.url && item.url === entry.url);
+      });
+      if (!exists) {
+        panelState.siteEntries = [entry].concat(siteEntries).map(function reindexFavoriteEntry(item, index) {
+          item.index = index;
+          return item;
+        });
+      }
+      if (panelState.siteLoaded) {
+        updateFavoriteNavTrigger(wrapper, panelState, state);
+        if (!panel.hidden) renderFavoriteNavPanel(panel, settings, state, wrapper);
+      } else {
+        bumpFavoriteNavTriggerCount(wrapper, panelState, state);
+      }
+    });
+  }
+
   function ensureFavoriteNavState(panel, favoriteUrl) {
     if (!panel.spxFavoriteNavState) {
       panel.spxFavoriteNavState = {
@@ -3677,6 +3884,7 @@
         siteLoaded: false,
         siteLoading: false,
         siteError: '',
+        lastKnownCount: null,
       };
     }
     if (favoriteUrl) panel.spxFavoriteNavState.favoriteUrl = favoriteUrl;
@@ -3686,11 +3894,23 @@
   function updateFavoriteNavTrigger(wrapper, panelState, state) {
     var countNode = qs('.spx-favorite-nav-count', wrapper);
     if (!countNode) return;
-    var siteCount = panelState && panelState.siteLoaded ? (panelState.siteEntries || []).length : null;
+    var siteCount = panelState && panelState.siteLoaded ? (panelState.siteEntries || []).length : 0;
     var watchCount = Object.keys((state && state.watch) || {}).length;
+    var totalCount = siteCount + watchCount;
     var loading = !!(panelState && panelState.siteLoading);
-    countNode.textContent = formatFavoriteNavCount(siteCount === null ? watchCount : siteCount, loading);
-    countNode.title = siteCount === null ? ('本地稍后看 ' + watchCount + ' 条') : ('站内收藏已读取 ' + siteCount + ' 条');
+    var hasSiteCount = !!(panelState && panelState.siteLoaded);
+    var hasError = !!(panelState && panelState.siteError);
+    if (hasSiteCount) {
+      countNode.textContent = formatFavoriteNavCount(totalCount, false);
+      countNode.title = '我的收藏已读取 ' + totalCount + ' 条（站内 ' + siteCount + '，稍后看 ' + watchCount + '）';
+      panelState.lastKnownCount = totalCount;
+    } else if (hasError) {
+      countNode.textContent = formatFavoriteNavCount(-1, false);
+      countNode.title = '站内收藏读取失败：' + panelState.siteError;
+    } else {
+      countNode.textContent = formatFavoriteNavCount(0, true);
+      countNode.title = '正在读取站内收藏数量';
+    }
   }
 
   function createFavoriteNavAction(text, action, value, primary) {
@@ -3931,7 +4151,7 @@
       trigger.title = '打开我的收藏';
       trigger.appendChild(createEl('span', 'spx-favorite-nav-star', '★'));
       trigger.appendChild(createEl('span', '', '我的收藏'));
-      trigger.appendChild(createEl('span', 'spx-favorite-nav-count', formatFavoriteNavCount(Object.keys((state && state.watch) || {}).length)));
+      trigger.appendChild(createEl('span', 'spx-favorite-nav-count', formatFavoriteNavCount(0, true)));
       wrapper.appendChild(trigger);
 
       panel = createEl('section', 'spx-favorite-nav-panel');
@@ -4017,6 +4237,7 @@
     if (!wrapper.parentNode) host.appendChild(wrapper);
     ensureFavoriteNavState(panel, favoriteUrl);
     updateFavoriteNavTrigger(wrapper, panel.spxFavoriteNavState, state);
+    loadFavoriteNavSiteEntries(panel, settings, state, wrapper);
   }
 
   function enhanceAccountNavigation(root) {
@@ -6479,7 +6700,7 @@
     }, 1400);
   }
 
-  function appendPreviewActions(panel, info, state) {
+  function appendPreviewActions(panel, info, state, settings) {
     var url = getThreadPreviewUrl(info);
     if (!url) return;
     var actions = createEl('div', 'spx-preview-popover-actions');
@@ -6504,6 +6725,17 @@
     });
     actions.appendChild(watchButton);
 
+    var favoriteButton = createEl('button', '', isThreadFavoriteSeen(info && info.id) ? '已收藏' : '收藏');
+    favoriteButton.type = 'button';
+    favoriteButton.title = '收藏到站内收藏夹';
+    favoriteButton.disabled = isThreadFavoriteSeen(info && info.id);
+    favoriteButton.addEventListener('click', function addPreviewFavorite(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      runThreadFavoriteAction(info, settings, state, favoriteButton, '已收藏');
+    });
+    actions.appendChild(favoriteButton);
+
     var copyButton = createEl('button', '', '复制链接');
     copyButton.type = 'button';
     copyButton.addEventListener('click', function copyPreviewLink(event) {
@@ -6518,7 +6750,7 @@
     panel.appendChild(actions);
   }
 
-  function renderPreviewPanel(info, payload, event, state) {
+  function renderPreviewPanel(info, payload, event, state, settings) {
     removeThreadPreview();
     var panel = createEl('div', 'spx-preview-popover');
     panel.id = 'spx-preview-popover';
@@ -6527,7 +6759,7 @@
     var text = createEl('div', 'spx-preview-text', payload.text || '未提取到文字预览');
     panel.appendChild(title);
     panel.appendChild(meta);
-    appendPreviewActions(panel, info, state);
+    appendPreviewActions(panel, info, state, settings);
     panel.appendChild(text);
 
     var previewImages = getThreadPreviewImageUrls(payload);
@@ -6585,13 +6817,13 @@
       var cached = getCachedThreadPreview(url);
       if (cached) {
         cached.cached = true;
-        renderPreviewPanel(info, cached, event, state);
+        renderPreviewPanel(info, cached, event, state, settings);
         return;
       }
       timer = window.setTimeout(function loadPreview() {
         if (currentToken !== previewToken) return;
         if (isScriptRequestCoolingDown()) {
-          renderPreviewPanel(info, { text: '站点提示操作频繁，悬停预览已临时暂停。', images: [], status: '请求冷却中' }, event, state);
+          renderPreviewPanel(info, { text: '站点提示操作频繁，悬停预览已临时暂停。', images: [], status: '请求冷却中' }, event, state, settings);
           return;
         }
         var previewPolicy = {
@@ -6599,7 +6831,7 @@
           label: '悬停预览',
           networkFriendly: isNetworkFriendlyMode(settings),
         };
-        renderPreviewPanel(info, { text: '正在加载预览...', images: [], status: '加载中' }, event, state);
+        renderPreviewPanel(info, { text: '正在加载预览...', images: [], status: '加载中' }, event, state, settings);
         requestWithPolicy(url, { credentials: 'include' }, previewPolicy)
           .then(function parseResponse(response) {
             return readScriptResponseText(response, previewPolicy);
@@ -6609,13 +6841,13 @@
             var doc = new DOMParser().parseFromString(html, 'text/html');
             var payload = extractPreviewPayloadFromDocument(doc, url);
             rememberThreadPreview(url, payload);
-            renderPreviewPanel(info, payload, event, state);
+            renderPreviewPanel(info, payload, event, state, settings);
           })
           .catch(function showPreviewError() {
             if (currentToken !== previewToken) return;
             var failurePayload = { text: '预览加载失败，已短暂缓存失败状态，避免重复请求同一主题。', images: [], status: '加载失败' };
             rememberThreadPreview(url, failurePayload, undefined, THREAD_PREVIEW_FAILURE_TTL);
-            renderPreviewPanel(info, failurePayload, event, state);
+            renderPreviewPanel(info, failurePayload, event, state, settings);
           });
       }, 420);
     });
@@ -6683,13 +6915,14 @@
       var titleBlockButton = createEl('button', '', '屏题');
       var authorBlockButton = createEl('button', '', '屏人');
       var hideRowButton = createEl('button', '', '隐藏');
-      var hideAuthorPageButton = createEl('button', '', '本页屏人');
+      var favoriteButton = createEl('button', '', isThreadFavoriteSeen(info.id) ? '已收藏' : '收藏');
 
       watchButton.title = '切换本地稍后看';
       titleBlockButton.title = '把标题加入本地屏蔽关键词';
       authorBlockButton.title = '把作者加入本地屏蔽关键词';
       hideRowButton.title = '临时隐藏当前行';
-      hideAuthorPageButton.title = '临时隐藏本页同作者帖子';
+      favoriteButton.title = '收藏到站内收藏夹';
+      favoriteButton.disabled = isThreadFavoriteSeen(info.id);
 
       watchButton.addEventListener('click', function toggleWatch(event) {
         event.preventDefault();
@@ -6737,22 +6970,17 @@
         setThreadRowHiddenClass(info.row, 'spx-filter-hidden', true);
       });
 
-      hideAuthorPageButton.addEventListener('click', function hideSameAuthorOnPage(event) {
+      favoriteButton.addEventListener('click', function favoriteCurrentThread(event) {
         event.preventDefault();
         event.stopPropagation();
-        findThreadIdsByAuthor(items, info.author).forEach(function hideThreadId(id) {
-          var item = items.filter(function matchId(candidate) {
-            return candidate.id === id;
-          })[0];
-          if (item && item.row) setThreadRowHiddenClass(item.row, 'spx-filter-hidden', true);
-        });
+        runThreadFavoriteAction(info, settings, state, favoriteButton, '已收藏');
       });
 
       tools.appendChild(watchButton);
       tools.appendChild(titleBlockButton);
       if (info.author) tools.appendChild(authorBlockButton);
       tools.appendChild(hideRowButton);
-      if (info.author) tools.appendChild(hideAuthorPageButton);
+      tools.appendChild(favoriteButton);
       info.titleLink.insertAdjacentElement('afterend', tools);
       attachThreadHoverPreview(info, settings, state);
 
@@ -6835,6 +7063,35 @@
       qs('h1', scope) ||
       qs('title', scope);
     return compactText(titleNode && titleNode.textContent) || compactText(document.title) || '未命名帖子';
+  }
+
+  function syncNativeReadFavoriteFromGuide(info, settings, state, attemptsLeft) {
+    var guide = qs('#ajax_guide');
+    var guideText = compactText(guide && guide.textContent);
+    if (guideText) {
+      if (isNewThreadFavoriteResult(guideText)) {
+        var added = markThreadFavoriteSeen(info);
+        syncFavoriteNavAfterSiteFavorite(info, settings, state, added);
+      }
+      if (getThreadFavoriteResultText(guideText) !== '已提交') return;
+    }
+    if (!attemptsLeft) return;
+    window.setTimeout(function retryNativeFavoriteSync() {
+      syncNativeReadFavoriteFromGuide(info, settings, state, attemptsLeft - 1);
+    }, 800);
+  }
+
+  function bindNativeReadFavoriteSync(settings, state, tid, originalAuthor) {
+    if (!tid) return;
+    var nativeFavorite = qs('a[onclick*="action=favor"][onclick*="tid"],a[title*="收藏该主题"]');
+    if (!nativeFavorite || nativeFavorite.dataset.spxNativeFavoriteSync === '1') return;
+    nativeFavorite.dataset.spxNativeFavoriteSync = '1';
+    nativeFavorite.addEventListener('click', function syncNativeFavoriteAfterClick() {
+      var info = createReadPageFavoriteInfo(tid, getReadPageTitle(document), originalAuthor, location.href);
+      window.setTimeout(function syncNativeFavoriteFromGuide() {
+        syncNativeReadFavoriteFromGuide(info, settings, state, 3);
+      }, 1800);
+    }, true);
   }
 
   function getCurrentResourceSourceMeta() {
@@ -7706,6 +7963,7 @@
 
     var posts = qsa('table.js-post');
     var originalAuthor = posts.length ? getPostAuthor(posts[0]) : '';
+    bindNativeReadFavoriteSync(settings, state, tid, originalAuthor);
 
     posts.forEach(function enhancePost(post, index) {
       var author = getPostAuthor(post);
@@ -10301,6 +10559,13 @@
     getModuleNavigationConfigPinKey: getModuleNavigationConfigPinKey,
     withPinnedModuleNavigationConfigs: withPinnedModuleNavigationConfigs,
     getFavoriteNavUrl: getFavoriteNavUrl,
+    extractSiteVerifyHashFromText: extractSiteVerifyHashFromText,
+    getSiteVerifyHash: getSiteVerifyHash,
+    getThreadFavoriteUrl: getThreadFavoriteUrl,
+    getThreadFavoriteResultText: getThreadFavoriteResultText,
+    isNewThreadFavoriteResult: isNewThreadFavoriteResult,
+    createFavoriteNavEntryFromThreadInfo: createFavoriteNavEntryFromThreadInfo,
+    createReadPageFavoriteInfo: createReadPageFavoriteInfo,
     formatFavoriteNavCount: formatFavoriteNavCount,
     inferFavoriteNavTags: inferFavoriteNavTags,
     parseFavoriteSavedAt: parseFavoriteSavedAt,
