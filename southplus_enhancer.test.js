@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.3\.4/);
+assert.match(source, /@version\s+0\.3\.5/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.moduleNavDensity, 'comfortable');
@@ -308,6 +308,15 @@ assert.match(source, /spx-module-nav-ready\.spx-reader \.spx-module-body>\.bdbA/
 assert.match(source, /spx-module-nav-ready\.spx-reader \.spx-module-body #breadcrumbs/);
 assert.match(source, /spx-module-nav-ready\.spx-reader \.spx-module-body table\.js-post/);
 assert.match(source, /spx-module-nav-ready\.spx-reader \.spx-module-body \.spx-post-tools/);
+assert.match(source, /spx-search-page \.spx-module-body input\[type="search"\]/);
+assert.match(source, /input\.spx-module-nav-search\{[^}]*min-width:0!important;max-width:100%!important/);
+assert.match(source, /className: 'spx-module-nav-search-page'/);
+assert.doesNotMatch(source, /className: 'spx-module-nav-search'/);
+assert.match(source, /spx-module-nav-ready\.spx-search-page \.spx-module-body form\{display:block!important;box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important/);
+assert.match(source, /spx-module-nav-ready\.spx-search-page \.spx-module-body form>\.t,[^{}]*form \.t\{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin-left:0!important;margin-right:0!important/);
+assert.match(source, /spx-module-nav-ready\.spx-search-page \.spx-module-body table,[^{}]*\{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed!important/);
+assert.doesNotMatch(source, /spx-clean #infobox/);
+assert.doesNotMatch(source, /spx-immersive-read #[^{}']*infobox[^{}']*\{display:none!important/);
 assert.match(source, /spx-module-nav-ready\.spx-home-dashboard \.spx-module-body #spx-home-grid/);
 assert.match(source, /spx-module-nav-ready\.spx-home-dashboard \.spx-module-body \.spx-home-module/);
 assert.match(source, /spx-task-page #main\{display:block!important;width:calc\(100vw - 40px\)!important/);

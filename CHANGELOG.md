@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.5 - 2026-08-07
+
+### Fixed
+
+- 修复帖子详情页在清爽 / 沉浸阅读模式下隐藏顶部个人信息区，导致头像、等级、帖子数和“我的主题 / 我的回复”缺失的问题。
+- 修复搜索页正文输入框和左侧 `导航中心` 搜索框共用样式，导致导航搜索框变宽、字号变大并撑出页面安全范围的问题。
+- 修复搜索页左侧 `导航中心` 的“搜索”导航项和顶部导航过滤输入框共用 `spx-module-nav-search` 类名，导致输入框 / 导航项样式互相污染的问题。
+- 搜索页正文表格增加 `width:100%`、`min-width:0` 和固定布局约束，避免原站表格或输入框继续撑出右侧内容列。
+- 修复搜索页真实 DOM 中搜索表格被包在 `display:inline` 的 `form` 内，导致 `.t` 卡片按外层 1480px 宽度计算并撑出右侧正文列的问题。
+- 搜索页正文 `form`、`form > .t` 和表格统一收束到导航中心右侧内容列，移除异常右侧负边距，避免页面出现横向滚动。
+
+### Verified
+
+- 当前已打开的 Chrome 搜索页现场验证：临时注入同等 CSS 后，`.spx-module-body` / `form` / `.t` 宽度均为 1206px，`documentElement.scrollWidth` 从 1854px 回到 1680px。
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.3.4 - 2026-08-07
 
 ### Fixed
