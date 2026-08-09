@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.3.9
+// @version      0.4.0
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -145,6 +145,7 @@
     immersiveFontSize: 16,
     unifiedPreviewGallery: true,
     homeDashboard: true,
+    forumDashboard: true,
     moduleNavDensity: 'comfortable',
     adBlock: true,
     compactRead: true,
@@ -468,6 +469,285 @@
       .sort(function sortByUpdatedAt(left, right) {
         return (right.updatedAt || 0) - (left.updatedAt || 0);
       });
+  }
+
+  function getDayStart(timestamp) {
+    var date = new Date(Number(timestamp) || Date.now());
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  }
+
+  function isTimestampToday(timestamp, now) {
+    var value = Number(timestamp) || 0;
+    return value >= getDayStart(now || Date.now());
+  }
+
+  function getForumDashboardTopicKey(item) {
+    var source = item || {};
+    var id = parseThreadId(source.id || source.url || source.progressUrl || source.sourceUrl || '');
+    if (id) return 'tid:' + id;
+    var baseUrl = typeof location !== 'undefined' ? location.href : 'https://south-plus.org/';
+    var url = normalizeNavigationHref(source.url || source.progressUrl || source.sourceUrl || '', baseUrl);
+    if (url) return 'url:' + url.replace(/#.*$/, '').toLowerCase();
+    var title = compactText(source.title || source.sourceTitle || '');
+    return title ? 'title:' + title.toLowerCase() : '';
+  }
+
+  function getForumDashboardTopicTags(item) {
+    var tags = mergeTagLists(item && item.tags, item && item.resourceTags);
+    var text = [item && item.title, item && item.meta, item && item.sourceText].filter(Boolean).join(' ');
+    inferFavoriteNavTags(text, '').forEach(function appendInferredTag(tag) {
+      if (tags.indexOf(tag) === -1) tags.push(tag);
+    });
+    return tags;
+  }
+
+  function mergeForumDashboardTopic(target, source) {
+    var next = source || {};
+    if (!target.title && next.title) target.title = next.title;
+    if (!target.url && next.url) target.url = next.url;
+    if (!target.author && next.author) target.author = next.author;
+    if (!target.meta && next.meta) target.meta = next.meta;
+    target.savedAt = Math.max(Number(target.savedAt) || 0, Number(next.savedAt) || 0);
+    target.progressAt = Math.max(Number(target.progressAt) || 0, Number(next.progressAt) || 0);
+    target.favoriteAt = Math.max(Number(target.favoriteAt) || 0, Number(next.favoriteAt) || 0);
+    target.resourceAt = Math.max(Number(target.resourceAt) || 0, Number(next.resourceAt) || 0);
+    target.progressPercent = Math.max(Number(target.progressPercent) || 0, Number(next.progressPercent) || 0);
+    target.isCompleted = !!(target.isCompleted || next.isCompleted);
+    target.hasWatch = !!(target.hasWatch || next.hasWatch);
+    target.hasHistory = !!(target.hasHistory || next.hasHistory);
+    target.hasSiteFavorite = !!(target.hasSiteFavorite || next.hasSiteFavorite);
+    target.resourceCount = (Number(target.resourceCount) || 0) + (Number(next.resourceCount) || 0);
+    target.tags = mergeTagLists(target.tags, getForumDashboardTopicTags(next));
+    target.lastAt = Math.max(target.savedAt || 0, target.progressAt || 0, target.favoriteAt || 0, target.resourceAt || 0);
+    return target;
+  }
+
+  function addForumDashboardTopic(map, item) {
+    var key = getForumDashboardTopicKey(item);
+    if (!key) return null;
+    if (!map[key]) {
+      map[key] = {
+        key: key,
+        id: parseThreadId(item && (item.id || item.url || item.progressUrl || item.sourceUrl)),
+        title: '',
+        url: '',
+        author: '',
+        meta: '',
+        savedAt: 0,
+        progressAt: 0,
+        favoriteAt: 0,
+        resourceAt: 0,
+        progressPercent: 0,
+        isCompleted: false,
+        hasWatch: false,
+        hasHistory: false,
+        hasSiteFavorite: false,
+        resourceCount: 0,
+        tags: [],
+        lastAt: 0,
+      };
+    }
+    return mergeForumDashboardTopic(map[key], item);
+  }
+
+  function getForumDashboardTopicScore(item, now) {
+    var topic = item || {};
+    var currentTime = Number(now) || Date.now();
+    var score = 0;
+    if (topic.hasSiteFavorite && !topic.isCompleted) score += 30;
+    if (topic.hasWatch && !topic.isCompleted) score += 25;
+    if (topic.progressAt >= currentTime - 7 * 24 * 60 * 60 * 1000) score += 18;
+    if (topic.progressPercent > 0 && topic.progressPercent < 100) score += 16;
+    if (topic.resourceCount > 0) score += 15 + Math.min(10, topic.resourceCount * 2);
+    if (isTimestampToday(topic.savedAt, currentTime) || isTimestampToday(topic.favoriteAt, currentTime)) score += 12;
+    if (topic.tags && topic.tags.length) score += Math.min(12, topic.tags.length * 3);
+    if (topic.isCompleted) score -= 18;
+    if (topic.lastAt && topic.lastAt < currentTime - 30 * 24 * 60 * 60 * 1000) score -= 10;
+    return score;
+  }
+
+  function formatForumDashboardRelativeTime(timestamp, now) {
+    var value = Number(timestamp) || 0;
+    if (!value) return '';
+    var diff = Math.max(0, (Number(now) || Date.now()) - value);
+    if (diff < 60 * 1000) return '刚刚';
+    if (diff < 60 * 60 * 1000) return Math.max(1, Math.round(diff / 60 / 1000)) + ' 分钟前';
+    if (diff < 24 * 60 * 60 * 1000) return Math.max(1, Math.round(diff / 60 / 60 / 1000)) + ' 小时前';
+    if (diff < 30 * 24 * 60 * 60 * 1000) return Math.max(1, Math.round(diff / 24 / 60 / 60 / 1000)) + ' 天前';
+    return formatShortTime(value);
+  }
+
+  function getForumDashboardRequestSummary(requestState, now) {
+    var source = requestState || scriptRequestState || {};
+    var queueCount = Array.isArray(source.queue) ? source.queue.length : Math.max(0, Number(source.queueCount) || 0);
+    var cooldownRemainingMs = Math.max(0, Number(source.cooldownUntil || 0) - (Number(now) || Date.now()));
+    return {
+      queueCount: queueCount,
+      cooldownRemainingMs: cooldownRemainingMs,
+      status: cooldownRemainingMs > 0 ? '冷却中' : (queueCount > 0 || source.running ? '排队中' : '正常'),
+      detail: '队列 ' + queueCount + ' / 冷却 ' + Math.ceil(cooldownRemainingMs / 1000) + ' 秒',
+    };
+  }
+
+  function getForumDashboardActivityItems(report, now) {
+    var items = [];
+    (report.worthReviewing || []).slice(0, 2).forEach(function appendWorthActivity(topic) {
+      items.push({
+        type: topic.resourceCount ? 'resource' : 'progress',
+        title: (topic.progressPercent ? '继续阅读 ' : '回看 ') + topic.title,
+        meta: topic.meta || topic.reason || '',
+        time: formatForumDashboardRelativeTime(topic.lastAt, now),
+      });
+    });
+    (report.resources || []).slice(0, 2).forEach(function appendResourceActivity(entry) {
+      items.push({
+        type: 'resource',
+        title: '资源待处理：' + (entry.sourceTitle || entry.label || '未命名资源'),
+        meta: [entry.label, entry.provider, entry.statusLabel].filter(Boolean).join(' · '),
+        time: formatForumDashboardRelativeTime(entry.updatedAt || entry.savedAt, now),
+      });
+    });
+    if (report.request.status !== '正常') {
+      items.push({ type: 'request', title: '后台请求' + report.request.status, meta: report.request.detail, time: '现在' });
+    }
+    return items.slice(0, 4);
+  }
+
+  function getForumDashboardTagStats(topics, resources) {
+    var counts = {};
+    (topics || []).forEach(function collectTopicTags(topic) {
+      (topic.tags || []).forEach(function countTag(tag) {
+        counts[tag] = (counts[tag] || 0) + 1;
+      });
+    });
+    (resources || []).forEach(function collectResourceTag(entry) {
+      var label = entry.type === 'cloud' ? '网盘' : entry.label;
+      if (label) counts[label] = (counts[label] || 0) + 1;
+    });
+    return Object.keys(counts).map(function mapTagStat(tag) {
+      return { label: tag, count: counts[tag] };
+    }).sort(function sortTagStats(left, right) {
+      return right.count - left.count || left.label.localeCompare(right.label, 'zh-Hans-CN');
+    }).slice(0, 4);
+  }
+
+  function collectForumDashboardReport(data, now) {
+    var source = data || {};
+    var currentTime = Number(now) || Date.now();
+    var origin = typeof location !== 'undefined' && location.origin ? location.origin : 'https://south-plus.org';
+    var todayStart = getDayStart(currentTime);
+    var readMap = source.read || {};
+    var progressMap = source.progress || {};
+    var watchMap = source.watch || {};
+    var favoriteSeen = normalizeFavoriteNavSeenMap(source.favoriteSeen || {});
+    var resources = getResourceCenterEntries(source.resources || {});
+    var topics = {};
+
+    getWatchCenterEntries(watchMap, progressMap).forEach(function collectWatchTopic(entry) {
+      addForumDashboardTopic(topics, Object.assign({}, entry, {
+        hasWatch: true,
+        url: entry.progressUrl || entry.url,
+        meta: [entry.progressText, entry.nextFloorLabel ? '续读 ' + entry.nextFloorLabel : '', entry.tagText].filter(Boolean).join(' · '),
+      }));
+    });
+
+    getHistoryCenterEntries(progressMap).forEach(function collectHistoryTopic(entry) {
+      addForumDashboardTopic(topics, Object.assign({}, entry, {
+        hasHistory: true,
+        url: entry.url,
+        meta: [entry.progressText, entry.nextFloorLabel ? '续读 ' + entry.nextFloorLabel : '', entry.tagText].filter(Boolean).join(' · '),
+      }));
+    });
+
+    resources.forEach(function collectResourceTopic(entry) {
+      addForumDashboardTopic(topics, {
+        id: parseThreadId(entry.sourceUrl),
+        title: entry.sourceTitle || entry.sourceUrl || entry.label,
+        url: entry.sourceUrl || entry.url,
+        author: entry.author,
+        sourceText: entry.sourceText,
+        resourceTags: entry.tags,
+        resourceCount: 1,
+        resourceAt: entry.updatedAt || entry.savedAt,
+        meta: [entry.label, entry.provider, entry.statusLabel].filter(Boolean).join(' · '),
+      });
+    });
+
+    Object.keys(favoriteSeen).forEach(function markFavoriteTopic(id) {
+      addForumDashboardTopic(topics, {
+        id: id,
+        hasSiteFavorite: true,
+        favoriteAt: favoriteSeen[id],
+      });
+    });
+
+    var topicList = Object.keys(topics).map(function finalizeTopic(key) {
+      var topic = topics[key];
+      topic.title = topic.title || (topic.id ? '收藏主题 #' + topic.id : '未命名主题');
+      topic.url = topic.url || (topic.id ? origin + '/read.php?tid-' + topic.id + '.html' : '');
+      topic.score = getForumDashboardTopicScore(topic, currentTime);
+      var reasons = [];
+      if (topic.hasSiteFavorite) reasons.push('站内收藏');
+      if (topic.hasWatch) reasons.push('稍后看');
+      if (topic.resourceCount) reasons.push('资源 ' + topic.resourceCount);
+      if (topic.progressPercent) reasons.push('进度 ' + topic.progressPercent + '%');
+      if (topic.tags && topic.tags.length) reasons.push('标签 ' + formatTags(topic.tags.slice(0, 3)));
+      topic.reason = reasons.join(' · ') || '本地记录';
+      return topic;
+    }).filter(function keepScoredTopic(topic) {
+      return topic.score > 0 && topic.title;
+    }).sort(function sortDashboardTopics(left, right) {
+      return right.score - left.score || right.lastAt - left.lastAt || String(left.title).localeCompare(String(right.title), 'zh-Hans-CN');
+    });
+
+    var todayViewed = {};
+    Object.keys(readMap).forEach(function collectReadToday(id) {
+      if (Number(readMap[id]) >= todayStart) todayViewed[id] = true;
+    });
+    Object.keys(progressMap).forEach(function collectProgressToday(id) {
+      if (Number(progressMap[id] && progressMap[id].updatedAt) >= todayStart) todayViewed[id] = true;
+    });
+
+    var watchEntries = getWatchCenterEntries(watchMap, progressMap);
+    var siteFavoriteToday = Object.keys(favoriteSeen).filter(function countFavoriteToday(id) {
+      return Number(favoriteSeen[id]) >= todayStart;
+    }).length;
+    var watchToday = watchEntries.filter(function countWatchToday(entry) {
+      return Number(entry.savedAt) >= todayStart;
+    }).length;
+    var unreadFavorites = topicList.filter(function countUnreadFavorite(topic) {
+      return (topic.hasSiteFavorite || topic.hasWatch) && !topic.isCompleted;
+    }).length;
+    var watchBacklog = watchEntries.filter(function countWatchBacklog(entry) {
+      return !entry.isCompleted;
+    }).length;
+    var resourceToday = resources.filter(function countResourceToday(entry) {
+      return Math.max(Number(entry.updatedAt) || 0, Number(entry.savedAt) || 0) >= todayStart;
+    }).length;
+    var request = getForumDashboardRequestSummary(source.requestState, currentTime);
+    var tagStats = getForumDashboardTagStats(topicList, resources);
+    var report = {
+      stats: {
+        todayViewed: Object.keys(todayViewed).length,
+        favoriteAdded: siteFavoriteToday + watchToday,
+        unreadFavorites: unreadFavorites,
+        resourceAdded: resourceToday,
+        watchBacklog: watchBacklog,
+        requestStatus: request.status,
+      },
+      request: request,
+      worthReviewing: topicList.slice(0, 5),
+      resources: resources.slice(0, 4),
+      tagStats: tagStats,
+      backlogStats: [
+        { label: '稍后看', count: watchBacklog },
+        { label: '未读收藏', count: unreadFavorites },
+        { label: '待处理资源', count: resources.filter(function countTodoResource(entry) { return entry.status === 'todo' || entry.status === 'saved'; }).length },
+        { label: '失败请求', count: getAutoBuyCenterEntries(source.autoBuyAttempts || {}).filter(function countFailedAttempt(entry) { return entry.status === 'failed'; }).length },
+      ],
+    };
+    report.activities = getForumDashboardActivityItems(report, currentTime);
+    return report;
   }
 
   function normalizeCenterSearchQuery(value) {
@@ -896,7 +1176,12 @@
     }
     if (/^\/\//.test(text)) text = 'https:' + text;
     try {
-      return new URL(text, pageUrl || 'https://south-plus.org/').href;
+      var fallbackBase = 'https://south-plus.org/';
+      var base = pageUrl || (typeof location !== 'undefined' ? location.href : fallbackBase);
+      if (base && !/^[a-z][a-z0-9+.-]*:/i.test(String(base))) {
+        base = new URL(String(base), fallbackBase).href;
+      }
+      return new URL(text, base || fallbackBase).href;
     } catch (error) {
       return '';
     }
@@ -1679,6 +1964,7 @@
       'immersiveRead',
       'nightMode',
       'unifiedPreviewGallery',
+      'forumDashboard',
       'compactRead',
       'foldQuotes',
       'hideUserProfile',
@@ -1694,6 +1980,7 @@
       if (key === 'immersiveRead' && shouldShowToolbarAction('immersiveRead', url, root)) keys.push(key);
       if (key === 'nightMode') keys.push(key);
       if (key === 'unifiedPreviewGallery' && shouldShowToolbarAction('previewGallery', url, root)) keys.push(key);
+      if (key === 'forumDashboard' && shouldShowToolbarAction('homeDashboard', url, root)) keys.push(key);
       if (key === 'compactRead' && detectPageType(url) === 'read') keys.push(key);
       if (key === 'foldQuotes' && detectPageType(url) === 'read') keys.push(key);
       if (key === 'hideUserProfile' && detectPageType(url) === 'read') keys.push(key);
@@ -2749,7 +3036,7 @@
       '.spx-adblock a[href*="taobao"],.spx-adblock a[href*="tmall"],.spx-adblock a[href*="alimama"]{display:none!important;}',
       '.spx-adblock img[src*="taobao"],.spx-adblock img[src*="tmall"],.spx-adblock img[src*="alimama"]{display:none!important;}',
       '.spx-adblock #banner{min-height:0!important;}',
-      '.spx-site-shell,.spx-site-shell body{width:100%!important;min-width:0!important;background:var(--spx-page-bg)!important;color:var(--spx-text)!important;font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
+      '.spx-site-shell,.spx-site-shell body{width:100%!important;min-width:0!important;margin:0!important;background:var(--spx-page-bg)!important;color:var(--spx-text)!important;font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
       '.spx-site-shell a{color:var(--spx-link)!important;text-decoration:none!important;}',
       '.spx-site-shell a:hover{text-decoration:underline!important;}',
       '.spx-site-shell #wrapA,.spx-site-shell #main{box-sizing:border-box!important;width:100%!important;max-width:none!important;background:var(--spx-page-bg)!important;}',
@@ -2790,6 +3077,19 @@
       '.spx-site-shell #peacemakerconfig>div:not([hidden]){box-sizing:border-box!important;display:block!important;position:absolute!important;top:30px!important;right:0!important;left:auto!important;z-index:10000!important;width:148px!important;min-width:148px!important;margin:0!important;padding:5px!important;border:1px solid #334155!important;border-radius:8px!important;background:#f8fafc!important;color:#0f172a!important;box-shadow:0 12px 28px rgba(15,23,42,.22)!important;font:700 13px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
       '.spx-site-shell #peacemakerconfig>div:not([hidden])>div{box-sizing:border-box!important;display:block!important;min-height:28px!important;margin:0!important;padding:5px 8px!important;background:#f8fafc!important;color:#0f172a!important;text-align:left!important;font:inherit!important;line-height:18px!important;border-radius:5px!important;}',
       '.spx-site-shell #peacemakerconfig>div:not([hidden])>div:hover{background:#e0f2fe!important;}',
+      '.spx-forum-dashboard-panel{box-sizing:border-box!important;grid-column:1/-1!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0!important;padding:14px!important;border:1px solid var(--spx-line)!important;border-radius:12px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;overflow:hidden!important;}',
+      '.spx-forum-dashboard-head{display:flex!important;align-items:flex-end!important;justify-content:space-between!important;gap:14px!important;margin:0 0 12px!important;}.spx-forum-dashboard-head h2{margin:0!important;color:var(--spx-strong)!important;font-size:20px!important;line-height:1.25!important;font-weight:900!important;}.spx-forum-dashboard-head p{margin:4px 0 0!important;color:var(--spx-sub)!important;font-size:13px!important;line-height:1.45!important;}',
+      '.spx-forum-dashboard-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;gap:8px!important;flex-wrap:wrap!important;}.spx-forum-dashboard-actions button{min-height:32px!important;padding:0 11px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel-muted)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;cursor:pointer!important;}.spx-forum-dashboard-actions button.spx-primary{border-color:var(--spx-accent)!important;background:var(--spx-accent)!important;color:#fff!important;}',
+      '.spx-forum-dashboard-stats{display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:10px!important;margin:0 0 12px!important;}.spx-forum-dashboard-stat{box-sizing:border-box!important;min-width:0!important;padding:11px!important;border:1px solid var(--spx-line)!important;border-radius:10px!important;background:var(--spx-panel-muted)!important;}.spx-forum-dashboard-stat-label{display:block!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}.spx-forum-dashboard-stat strong{display:block!important;margin:7px 0 0!important;color:var(--spx-strong)!important;font-size:22px!important;line-height:1.1!important;font-weight:900!important;font-variant-numeric:tabular-nums!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}.spx-forum-dashboard-stat small{display:block!important;margin:5px 0 0!important;color:var(--spx-muted)!important;font-size:12px!important;font-weight:800!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
+      '.spx-forum-dashboard-stat.spx-blue{border-color:#bfdbfe!important;background:#eff6ff!important;}.spx-forum-dashboard-stat.spx-amber{border-color:#fed7aa!important;background:#fff7ed!important;}.spx-forum-dashboard-stat.spx-rose{border-color:#fecdd3!important;background:#fff1f2!important;}.spx-forum-dashboard-stat.spx-green{border-color:#bbf7d0!important;background:#f0fdf4!important;}.spx-forum-dashboard-stat.spx-violet{border-color:#ddd6fe!important;background:#f5f3ff!important;}',
+      '.spx-forum-dashboard-grid{display:grid!important;grid-template-columns:minmax(0,1.08fr) minmax(340px,.92fr)!important;gap:12px!important;align-items:start!important;}.spx-forum-dashboard-stack{display:grid!important;gap:12px!important;min-width:0!important;}.spx-forum-dashboard-split{display:grid!important;grid-template-columns:1fr 1fr!important;gap:12px!important;}.spx-forum-dashboard-card{box-sizing:border-box!important;min-width:0!important;padding:12px!important;border:1px solid var(--spx-line)!important;border-radius:10px!important;background:var(--spx-panel)!important;box-shadow:none!important;overflow:hidden!important;}.spx-forum-dashboard-card h3{margin:0 0 10px!important;color:var(--spx-strong)!important;font-size:14px!important;font-weight:900!important;line-height:1.3!important;}',
+      '.spx-forum-dashboard-topic-list,.spx-forum-dashboard-resource-list,.spx-forum-dashboard-activity-list{display:grid!important;gap:8px!important;}.spx-forum-dashboard-topic,.spx-forum-dashboard-resource,.spx-forum-dashboard-activity{box-sizing:border-box!important;display:grid!important;grid-template-columns:minmax(0,1fr) 54px auto!important;gap:10px!important;align-items:center!important;min-height:54px!important;padding:9px 10px!important;border:1px solid var(--spx-line-soft)!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;}.spx-forum-dashboard-resource{grid-template-columns:minmax(0,1fr) auto!important;}.spx-forum-dashboard-activity{grid-template-columns:auto minmax(0,1fr) auto!important;}',
+      '.spx-forum-dashboard-topic-title,.spx-forum-dashboard-resource-title{display:block!important;min-width:0!important;color:var(--spx-strong)!important;font-size:13px!important;font-weight:900!important;line-height:1.35!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;text-decoration:none!important;}.spx-forum-dashboard-topic-meta{margin-top:3px!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:700!important;line-height:1.35!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}.spx-forum-dashboard-score{color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;text-align:right!important;font-variant-numeric:tabular-nums!important;}',
+      '.spx-forum-dashboard-chips{display:flex!important;align-items:center!important;justify-content:flex-end!important;gap:5px!important;flex-wrap:wrap!important;}.spx-forum-dashboard-chip{display:inline-flex!important;align-items:center!important;justify-content:center!important;height:22px!important;padding:0 7px!important;border-radius:999px!important;background:var(--spx-accent-soft)!important;color:var(--spx-accent)!important;font-size:11px!important;font-weight:900!important;white-space:nowrap!important;}.spx-forum-dashboard-chip.spx-green{background:#dcfce7!important;color:#047857!important;}.spx-forum-dashboard-chip.spx-amber{background:#ffedd5!important;color:#92400e!important;}.spx-forum-dashboard-chip.spx-violet{background:#ede9fe!important;color:#6d28d9!important;}',
+      '.spx-forum-dashboard-ranks{display:grid!important;gap:7px!important;}.spx-forum-dashboard-rank{display:grid!important;grid-template-columns:70px minmax(0,1fr) 34px!important;gap:8px!important;align-items:center!important;min-height:28px!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;}.spx-forum-dashboard-rank>b{display:block!important;height:8px!important;border-radius:999px!important;background:var(--spx-line-soft)!important;overflow:hidden!important;}.spx-forum-dashboard-rank>b>i{display:block!important;height:100%!important;border-radius:inherit!important;background:var(--spx-accent)!important;}.spx-forum-dashboard-rank>strong{text-align:right!important;color:var(--spx-strong)!important;font-variant-numeric:tabular-nums!important;}',
+      '.spx-forum-dashboard-activity-mark{width:9px!important;height:36px!important;border-radius:999px!important;background:var(--spx-accent)!important;}.spx-forum-dashboard-activity.spx-resource .spx-forum-dashboard-activity-mark{background:#059669!important;}.spx-forum-dashboard-activity.spx-request .spx-forum-dashboard-activity-mark{background:#d97706!important;}.spx-forum-dashboard-activity time{color:var(--spx-muted)!important;font-size:12px!important;font-weight:900!important;white-space:nowrap!important;}.spx-forum-dashboard-empty{padding:12px!important;color:var(--spx-sub)!important;font-size:13px!important;font-weight:700!important;text-align:center!important;}',
+      '@media(max-width:1180px){.spx-forum-dashboard-stats{grid-template-columns:repeat(3,minmax(0,1fr))!important}.spx-forum-dashboard-grid{grid-template-columns:minmax(0,1fr)!important}}',
+      '@media(max-width:900px){.spx-forum-dashboard-panel{padding:10px!important}.spx-forum-dashboard-head{align-items:flex-start!important;flex-direction:column!important}.spx-forum-dashboard-actions{justify-content:flex-start!important}.spx-forum-dashboard-stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}.spx-forum-dashboard-split{grid-template-columns:minmax(0,1fr)!important}.spx-forum-dashboard-topic,.spx-forum-dashboard-resource,.spx-forum-dashboard-activity{grid-template-columns:minmax(0,1fr)!important}.spx-forum-dashboard-score{text-align:left!important}.spx-forum-dashboard-chips{justify-content:flex-start!important}}',
       '.spx-search-page #wrapA,.spx-search-page #main{box-sizing:border-box!important;max-width:none!important;background:var(--spx-page-bg)!important;}',
       '.spx-search-page #main{box-sizing:border-box!important;width:min(var(--spx-page-max),calc(100vw - var(--spx-page-space)))!important;margin:16px auto 42px!important;padding:0!important;display:block!important;}',
       '.spx-search-page .t{box-sizing:border-box!important;width:100%!important;margin:0 0 14px!important;background:#fff!important;border:1px solid #d7e1eb!important;border-radius:8px!important;box-shadow:0 6px 18px rgba(15,23,42,.06)!important;overflow:hidden!important;}',
@@ -3352,10 +3652,11 @@
       '.spx-toolbox-action.spx-active:before{background:var(--spx-accent)!important;}',
       '.spx-theme-night .spx-toolbar{background:rgba(24,29,26,.92)!important;box-shadow:0 18px 46px rgba(0,0,0,.42)!important;}',
       '.spx-theme-night.spx-home-dashboard .spx-home-module,.spx-theme-night.spx-home-dashboard #notice,.spx-theme-night.spx-home-dashboard .spx-home-quick a,.spx-theme-night.spx-forum-dashboard #content .t,.spx-theme-night.spx-forum-dashboard .spx-module-nav-host .t{background:#181d1a!important;border-color:#303a32!important;color:#edf4ec!important;box-shadow:0 10px 30px rgba(0,0,0,.28)!important;}',
+      '.spx-theme-night .spx-forum-dashboard-panel,.spx-theme-night .spx-forum-dashboard-card{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:0 10px 30px rgba(0,0,0,.28)!important;}.spx-theme-night .spx-forum-dashboard-stat,.spx-theme-night .spx-forum-dashboard-topic,.spx-theme-night .spx-forum-dashboard-resource,.spx-theme-night .spx-forum-dashboard-activity{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;}.spx-theme-night .spx-forum-dashboard-stat.spx-blue,.spx-theme-night .spx-forum-dashboard-stat.spx-amber,.spx-theme-night .spx-forum-dashboard-stat.spx-rose,.spx-theme-night .spx-forum-dashboard-stat.spx-green,.spx-theme-night .spx-forum-dashboard-stat.spx-violet{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;}',
       '.spx-theme-night.spx-home-dashboard .spx-home-module tr.tr2,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2,.spx-theme-night.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2{background:#202720!important;border-color:#303a32!important;color:#b7c8b7!important;}',
       '.spx-theme-night.spx-home-dashboard .spx-home-module tr.tr3,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3,.spx-theme-night.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3{background:#181d1a!important;border-color:#303a32!important;}',
       '.spx-theme-night.spx-home-dashboard .spx-home-module>h2,.spx-theme-night.spx-home-dashboard .spx-home-module .h,.spx-theme-night .spx-toolbox-header,.spx-theme-night .spx-settings-header,.spx-theme-night .spx-watch-center-header{background:var(--spx-panel)!important;}',
-      '@media(max-width:900px){:root,.spx-theme-clean,.spx-theme-night{--spx-page-space:16px}.spx-site-shell #mainNav,.spx-home-dashboard #mainNav,.spx-forum-dashboard #mainNav,.spx-immersive-read #mainNav{height:34px!important}.spx-site-shell #guide{height:34px!important;overflow-x:auto!important}.spx-site-shell #guide>li>a{height:26px!important}.spx-site-shell #spx-nav-brand{height:26px!important;line-height:26px!important}.spx-module-nav-ready .spx-module-nav-host{grid-template-columns:minmax(0,1fr)!important;gap:10px!important;width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready .spx-module-nav-host>*:not(.spx-module-nav),.spx-module-nav-ready .spx-module-body,.spx-module-nav{grid-column:1!important}.spx-module-nav{top:auto!important;position:static!important}.spx-module-nav-section{flex:none!important;margin:0 2px!important}.spx-home-dashboard .spx-home-module tr.tr2,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2{display:none!important}.spx-home-dashboard .spx-home-module tr.tr3,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3{grid-template-columns:1fr!important}}',
+      '@media(max-width:900px){:root,.spx-theme-clean,.spx-theme-night{--spx-page-space:16px}.spx-site-shell #mainNav,.spx-home-dashboard #mainNav,.spx-forum-dashboard #mainNav,.spx-immersive-read #mainNav{height:34px!important}.spx-site-shell #guide{height:34px!important;overflow-x:auto!important}.spx-site-shell #guide>li>a{height:26px!important}.spx-site-shell #spx-nav-brand{height:26px!important;line-height:26px!important}.spx-module-nav-ready.spx-home-dashboard #content,.spx-module-nav-ready.spx-forum-dashboard #content,.spx-module-nav-ready .spx-module-nav-host{grid-template-columns:minmax(0,1fr)!important;gap:10px!important;width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready .spx-module-nav-host>*:not(.spx-module-nav),.spx-module-nav-ready .spx-module-body,.spx-module-nav{grid-column:1!important;width:auto!important;max-width:100%!important}.spx-module-nav{top:auto!important;position:static!important}.spx-module-nav-section{flex:none!important;margin:0 2px!important}.spx-home-dashboard .spx-home-module tr.tr2,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr2,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr2{display:none!important}.spx-home-dashboard .spx-home-module tr.tr3,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3,.spx-forum-dashboard .spx-module-nav-host .t.spx-thread-list-table tr.tr3{grid-template-columns:1fr!important}}',
       '@media(max-width:900px){.spx-favorite-nav{margin-left:0!important;height:34px!important}.spx-favorite-nav-trigger{height:26px!important;line-height:26px!important}.spx-favorite-nav-panel{top:38px!important;right:auto!important;left:0!important;width:min(720px,calc(100vw - 24px))!important;max-height:calc(100vh - 84px)!important}.spx-favorite-stats{grid-template-columns:repeat(3,minmax(96px,1fr))!important;overflow-x:auto!important}.spx-favorite-item{grid-template-columns:minmax(0,1fr)!important}.spx-favorite-actions{justify-content:flex-start!important}.spx-favorite-tools{align-items:flex-start!important;flex-direction:column!important}.spx-favorite-sort{width:100%!important}}',
       '@media(max-width:900px){.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host{grid-template-columns:minmax(0,1fr)!important;width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-search-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-search-page #content.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-profile-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-profile-page #content.spx-module-nav-host>.spx-module-body{grid-column:1!important;width:auto!important;max-width:100%!important}}',
       '@media(max-width:900px){.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host{grid-template-columns:minmax(0,1fr)!important;width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-body{grid-column:1!important;width:auto!important;max-width:100%!important}.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-body.spx-task-layout-body,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-body.spx-task-layout-body{grid-template-columns:minmax(0,1fr)!important}.spx-module-nav-ready.spx-task-page .spx-task-side-stack,.spx-module-nav-ready.spx-task-page .spx-task-main-stack{grid-column:1!important}}',
@@ -9861,6 +10162,7 @@
       immersiveRead: '帖子页沉浸全屏',
       nightMode: '夜间模式',
       unifiedPreviewGallery: '预览图集中显示',
+      forumDashboard: '论坛仪表盘',
       compactRead: '阅读页紧凑',
       foldQuotes: '折叠长引用',
       hideUserProfile: '隐藏头像资料',
@@ -9895,8 +10197,8 @@
     );
     var listControls = renderSettingsSection(
       '列表增强',
-      ['cleanMode', 'unreadOnly'],
-      '控制列表页和通用页面的低频内容、未读筛选。'
+      ['cleanMode', 'unreadOnly', 'forumDashboard'],
+      '控制列表页、首页仪表盘和通用页面的低频内容、未读筛选。'
     );
     var networkControls = renderSettingsSection(
       '网络请求',
@@ -10248,6 +10550,7 @@
       { show: true, group: '阅读模式', key: 'nightMode', text: '夜', label: '夜间模式', title: '切换夜间模式', description: '切换深色影院式阅读和图集界面' },
       { show: shouldShowToolbarAction('adBlock', url, root), group: '阅读模式', key: 'adBlock', text: '广', label: '隐藏广告', title: '切换隐藏广告', description: '隐藏广告链接、图片和容器' },
       { show: shouldShowToolbarAction('homeDashboard', url, root), group: '阅读模式', key: 'homeDashboard', text: '模', label: '首页模块', title: '切换首页模块全屏', description: '以网格方式整理首页板块' },
+      { show: shouldShowToolbarAction('homeDashboard', url, root), group: '阅读模式', key: 'forumDashboard', text: '盘', label: '论坛仪表盘', title: '切换首页论坛仪表盘', description: '展示浏览、收藏、资源和本地积压摘要' },
       { show: shouldShowToolbarAction('immersiveRead', url, root), group: '阅读模式', key: 'immersiveRead', text: '屏', label: '沉浸阅读', title: '切换帖子页沉浸全屏', description: '放大帖子内容并弱化周边' },
       { show: shouldShowToolbarAction('previewGallery', url, root), group: '阅读模式', key: 'unifiedPreviewGallery', text: '图', label: '预览图集', title: '切换预览图集中显示', description: '集中查看当前页正文图片' },
       { show: shouldShowToolbarAction('unreadOnly', url, root), group: '阅读模式', key: 'unreadOnly', text: '未', label: '只看未读', title: '只看未读', description: '论坛列表隐藏已读主题' },
@@ -10599,9 +10902,231 @@
     return link;
   }
 
-  function enhanceHome(settings) {
+  function getCurrentForumDashboardPayload(settings, state) {
+    return {
+      settings: settings,
+      read: state && state.read,
+      watch: state && state.watch,
+      progress: state && state.progress,
+      resources: state && state.resources,
+      autoBuyAttempts: loadAutoBuyAttempts(),
+      favoriteSeen: loadMap(FAVORITE_NAV_SEEN_KEY),
+      requestState: scriptRequestState,
+    };
+  }
+
+  function formatForumDashboardDigest(report) {
+    var data = report || collectForumDashboardReport({});
+    var stats = data.stats || {};
+    var lines = [
+      'South Plus +++ 论坛仪表盘',
+      '今日浏览：' + (stats.todayViewed || 0),
+      '收藏新增：' + (stats.favoriteAdded || 0),
+      '未读收藏：' + (stats.unreadFavorites || 0),
+      '资源新增：' + (stats.resourceAdded || 0),
+      '稍后看积压：' + (stats.watchBacklog || 0),
+      '请求状态：' + (stats.requestStatus || '正常'),
+      '',
+      '值得回看：',
+    ];
+    (data.worthReviewing || []).forEach(function appendWorthTopic(topic, index) {
+      lines.push((index + 1) + '. ' + topic.title + ' - ' + (topic.reason || topic.meta || '本地记录'));
+    });
+    return lines.join('\n');
+  }
+
+  function createForumDashboardStat(label, value, note, className) {
+    var card = createEl('article', 'spx-forum-dashboard-stat' + (className ? ' ' + className : ''));
+    card.appendChild(createEl('span', 'spx-forum-dashboard-stat-label', label));
+    card.appendChild(createEl('strong', '', String(value == null ? 0 : value)));
+    card.appendChild(createEl('small', '', note || ''));
+    return card;
+  }
+
+  function createForumDashboardChip(text, className) {
+    return createEl('span', 'spx-forum-dashboard-chip' + (className ? ' ' + className : ''), text);
+  }
+
+  function createForumDashboardTopicRow(topic) {
+    var row = createEl('article', 'spx-forum-dashboard-topic');
+    var body = createEl('div', 'spx-forum-dashboard-topic-main');
+    var title = createEl(topic.url ? 'a' : 'span', 'spx-forum-dashboard-topic-title', topic.title || '未命名主题');
+    if (topic.url) title.href = topic.url;
+    body.appendChild(title);
+    body.appendChild(createEl('div', 'spx-forum-dashboard-topic-meta', topic.reason || topic.meta || '本地记录'));
+    row.appendChild(body);
+    row.appendChild(createEl('div', 'spx-forum-dashboard-score', String(Math.max(0, Math.round(topic.score || 0)))));
+    var chips = createEl('div', 'spx-forum-dashboard-chips');
+    if (topic.resourceCount) chips.appendChild(createForumDashboardChip('资源 ' + topic.resourceCount, 'spx-green'));
+    if (topic.hasWatch) chips.appendChild(createForumDashboardChip('稍后', 'spx-violet'));
+    if (topic.hasSiteFavorite) chips.appendChild(createForumDashboardChip('收藏', 'spx-amber'));
+    if (topic.progressPercent) chips.appendChild(createForumDashboardChip(topic.progressPercent + '%', ''));
+    row.appendChild(chips);
+    return row;
+  }
+
+  function createForumDashboardRankRows(items, emptyText) {
+    var list = createEl('div', 'spx-forum-dashboard-ranks');
+    var source = (items || []).filter(function keepRankItem(item) { return item && item.count > 0; }).slice(0, 4);
+    var max = source.reduce(function maxRankValue(value, item) { return Math.max(value, Number(item.count) || 0); }, 1);
+    if (!source.length) {
+      list.appendChild(createEl('div', 'spx-forum-dashboard-empty', emptyText || '暂无数据'));
+      return list;
+    }
+    source.forEach(function appendRank(item) {
+      var row = createEl('div', 'spx-forum-dashboard-rank');
+      row.appendChild(createEl('span', '', item.label));
+      var bar = createEl('b', '');
+      var fill = createEl('i', '');
+      fill.style.width = Math.max(8, Math.round((Number(item.count) || 0) / max * 100)) + '%';
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      row.appendChild(createEl('strong', '', String(item.count)));
+      list.appendChild(row);
+    });
+    return list;
+  }
+
+  function createForumDashboardResourceRow(entry) {
+    var row = createEl('article', 'spx-forum-dashboard-resource');
+    var body = createEl('div');
+    var title = createEl(entry.sourceUrl ? 'a' : 'span', 'spx-forum-dashboard-resource-title', entry.sourceTitle || entry.label || '未命名资源');
+    if (entry.sourceUrl) title.href = entry.sourceUrl;
+    body.appendChild(title);
+    body.appendChild(createEl('div', 'spx-forum-dashboard-topic-meta', [entry.label, entry.provider, entry.statusLabel].filter(Boolean).join(' · ') || '资源记录'));
+    row.appendChild(body);
+    row.appendChild(createForumDashboardChip(entry.type === 'cloud' ? '网盘' : entry.label, 'spx-green'));
+    return row;
+  }
+
+  function createForumDashboardActivityRow(item) {
+    var row = createEl('article', 'spx-forum-dashboard-activity spx-' + (item.type || 'progress'));
+    row.appendChild(createEl('span', 'spx-forum-dashboard-activity-mark'));
+    var body = createEl('div');
+    body.appendChild(createEl('div', 'spx-forum-dashboard-topic-title', item.title || '本地动态'));
+    body.appendChild(createEl('div', 'spx-forum-dashboard-topic-meta', item.meta || ''));
+    row.appendChild(body);
+    row.appendChild(createEl('time', '', item.time || ''));
+    return row;
+  }
+
+  function renderForumDashboardPanel(panel, settings, state) {
+    if (!panel) return;
+    var report = collectForumDashboardReport(getCurrentForumDashboardPayload(settings, state));
+    panel.textContent = '';
+    var header = createEl('div', 'spx-forum-dashboard-head');
+    var title = createEl('div');
+    title.appendChild(createEl('h2', '', '论坛仪表盘'));
+    title.appendChild(createEl('p', '', '浏览、收藏、资源和本地积压的首页总览。'));
+    header.appendChild(title);
+    var actions = createEl('div', 'spx-forum-dashboard-actions');
+    [['refresh-dashboard', '刷新摘要'], ['open-watch-backlog', '只看未读'], ['copy-dashboard-digest', '复制日报']].forEach(function appendAction(item) {
+      var button = createEl('button', item[0] === 'refresh-dashboard' ? 'spx-primary' : '', item[1]);
+      button.type = 'button';
+      button.dataset.action = item[0];
+      actions.appendChild(button);
+    });
+    header.appendChild(actions);
+    panel.appendChild(header);
+
+    var stats = createEl('div', 'spx-forum-dashboard-stats');
+    stats.appendChild(createForumDashboardStat('今日浏览', report.stats.todayViewed, '本地已读 / 阅读进度', 'spx-blue'));
+    stats.appendChild(createForumDashboardStat('收藏新增', report.stats.favoriteAdded, '站内收藏 + 稍后看', 'spx-amber'));
+    stats.appendChild(createForumDashboardStat('未读收藏', report.stats.unreadFavorites, '未完成的收藏主题', 'spx-rose'));
+    stats.appendChild(createForumDashboardStat('资源新增', report.stats.resourceAdded, '今日保存资源', 'spx-green'));
+    stats.appendChild(createForumDashboardStat('稍后看积压', report.stats.watchBacklog, '未读完稍后看', 'spx-violet'));
+    stats.appendChild(createForumDashboardStat('请求状态', report.stats.requestStatus, report.request.detail, report.request.status === '正常' ? 'spx-green' : 'spx-amber'));
+    panel.appendChild(stats);
+
+    var grid = createEl('div', 'spx-forum-dashboard-grid');
+    var left = createEl('div', 'spx-forum-dashboard-stack');
+    var topicsPanel = createEl('section', 'spx-forum-dashboard-card spx-forum-dashboard-wide');
+    topicsPanel.appendChild(createEl('h3', '', '值得回看的主题'));
+    var topicList = createEl('div', 'spx-forum-dashboard-topic-list');
+    if (report.worthReviewing.length) {
+      report.worthReviewing.slice(0, 3).forEach(function appendTopic(topic) {
+        topicList.appendChild(createForumDashboardTopicRow(topic));
+      });
+    } else {
+      topicList.appendChild(createEl('div', 'spx-forum-dashboard-empty', '暂无需要回看的主题。'));
+    }
+    topicsPanel.appendChild(topicList);
+    left.appendChild(topicsPanel);
+
+    var split = createEl('div', 'spx-forum-dashboard-split');
+    var tagPanel = createEl('section', 'spx-forum-dashboard-card');
+    tagPanel.appendChild(createEl('h3', '', '高频标签'));
+    tagPanel.appendChild(createForumDashboardRankRows(report.tagStats, '暂无标签统计'));
+    split.appendChild(tagPanel);
+    var backlogPanel = createEl('section', 'spx-forum-dashboard-card');
+    backlogPanel.appendChild(createEl('h3', '', '本地积压'));
+    backlogPanel.appendChild(createForumDashboardRankRows(report.backlogStats, '暂无积压'));
+    split.appendChild(backlogPanel);
+    left.appendChild(split);
+    grid.appendChild(left);
+
+    var right = createEl('div', 'spx-forum-dashboard-stack');
+    var activityPanel = createEl('section', 'spx-forum-dashboard-card');
+    activityPanel.appendChild(createEl('h3', '', '最近动态'));
+    var activityList = createEl('div', 'spx-forum-dashboard-activity-list');
+    if (report.activities.length) {
+      report.activities.forEach(function appendActivity(item) {
+        activityList.appendChild(createForumDashboardActivityRow(item));
+      });
+    } else {
+      activityList.appendChild(createEl('div', 'spx-forum-dashboard-empty', '暂无本地动态。'));
+    }
+    activityPanel.appendChild(activityList);
+    right.appendChild(activityPanel);
+
+    var resourcePanel = createEl('section', 'spx-forum-dashboard-card');
+    resourcePanel.appendChild(createEl('h3', '', '资源速览'));
+    var resourceList = createEl('div', 'spx-forum-dashboard-resource-list');
+    if (report.resources.length) {
+      report.resources.slice(0, 3).forEach(function appendResource(entry) {
+        resourceList.appendChild(createForumDashboardResourceRow(entry));
+      });
+    } else {
+      resourceList.appendChild(createEl('div', 'spx-forum-dashboard-empty', '资源工作台暂无记录。'));
+    }
+    resourcePanel.appendChild(resourceList);
+    right.appendChild(resourcePanel);
+    grid.appendChild(right);
+    panel.appendChild(grid);
+
+    panel.spxDashboardReport = report;
+  }
+
+  function createForumDashboardPanel(settings, state) {
+    var panel = createEl('section', 'spx-forum-dashboard-panel spx-home-module');
+    panel.id = 'spx-forum-dashboard-panel';
+    panel.dataset.spxLarge = '1';
+    renderForumDashboardPanel(panel, settings, state);
+    panel.addEventListener('click', function handleDashboardClick(event) {
+      var target = event.target;
+      var action = target && target.dataset && target.dataset.action;
+      if (!action) return;
+      if (action === 'refresh-dashboard') {
+        renderForumDashboardPanel(panel, settings, state);
+        setTemporaryText(target, '已刷新', '刷新摘要');
+      }
+      if (action === 'open-watch-backlog') {
+        var watchPanel = createWatchCenterPanel(settings, state);
+        setCenterPanelHidden(watchPanel, false, '[data-spx-watch-center-button="1"]');
+      }
+      if (action === 'copy-dashboard-digest') {
+        copyTextToClipboard(formatForumDashboardDigest(panel.spxDashboardReport)).then(
+          function showCopySuccess() { setTemporaryText(target, '已复制', '复制日报'); },
+          function showCopyFailure() { setTemporaryText(target, '复制失败', '复制日报'); }
+        );
+      }
+    });
+    return panel;
+  }
+
+  function enhanceHome(settings, state) {
     if (detectPageType(location.href) !== 'home') return;
-    enhanceHomeDashboard(settings);
+    enhanceHomeDashboard(settings, state);
     if (!settings.cleanMode) {
       qsa('[data-spx-home-hidden="1"]').forEach(function showTable(table) {
         table.style.display = '';
@@ -10617,7 +11142,7 @@
     });
   }
 
-  function enhanceHomeDashboard(settings) {
+  function enhanceHomeDashboard(settings, state) {
     restoreHomeDashboard();
     if (!shouldUseHomeDashboard(settings, location.href)) return;
 
@@ -10627,6 +11152,21 @@
     var grid = createEl('div');
     grid.id = 'spx-home-grid';
     modules[0].parentNode.insertBefore(grid, modules[0]);
+
+    if (settings.forumDashboard !== false) {
+      var dashboard = createForumDashboardPanel(settings, state);
+      grid.appendChild(dashboard);
+      queueModuleNavigationConfigs([{
+        section: '站点导航',
+        label: '论坛仪表盘',
+        href: getHomeNavigationBaseUrl(location.origin) + '#spx-forum-dashboard-panel',
+        title: '论坛仪表盘',
+        target: dashboard,
+        active: true,
+        alwaysShow: true,
+        navigationOnly: true,
+      }]);
+    }
 
     modules.forEach(function markModule(module) {
       var marker = createEl('span');
@@ -10893,7 +11433,7 @@
     enhanceFavoriteNavigation(settings, state, document);
     enhanceAccountNavigation(document);
     enhanceAdBlock(settings);
-    enhanceHome(settings);
+    enhanceHome(settings, state);
     enhanceThreadList(settings, state);
     enhanceReadPage(settings, state);
     enhanceQuickReply(settings, state);
@@ -10951,6 +11491,9 @@
     getWatchCenterEntries: getWatchCenterEntries,
     getHistoryCenterEntries: getHistoryCenterEntries,
     getAutoBuyCenterEntries: getAutoBuyCenterEntries,
+    collectForumDashboardReport: collectForumDashboardReport,
+    getForumDashboardTopicScore: getForumDashboardTopicScore,
+    formatForumDashboardDigest: formatForumDashboardDigest,
     filterWatchCenterEntries: filterWatchCenterEntries,
     filterHistoryCenterEntries: filterHistoryCenterEntries,
     filterAutoBuyCenterEntries: filterAutoBuyCenterEntries,

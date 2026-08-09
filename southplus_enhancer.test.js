@@ -3,9 +3,10 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.3\.9/);
+assert.match(source, /@version\s+0\.4\.0/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
+assert.equal(defaultSettings.forumDashboard, true);
 assert.equal(defaultSettings.moduleNavDensity, 'comfortable');
 assert.equal(enhancer.normalizeModuleNavDensity('compact'), 'compact');
 assert.equal(enhancer.normalizeModuleNavDensity('standard'), 'standard');
@@ -185,6 +186,84 @@ assert.deepEqual(enhancer.filterFavoriteNavEntries(favoriteEntries, { filter: 'r
 assert.deepEqual(enhancer.filterFavoriteNavEntries(favoriteEntries, { query: 'carol' }).map((entry) => entry.title), ['图片预览']);
 assert.deepEqual(enhancer.sortFavoriteNavEntries(favoriteEntries, 'reply').map((entry) => entry.title), ['网盘资源', '图片预览', 'AI 交流']);
 assert.equal(enhancer.parseFavoriteReplyCount('作者 bob 回复 128 最后发表'), 128);
+const dashboardNow = new Date(2026, 7, 9, 12, 0).getTime();
+const dashboardReport = enhancer.collectForumDashboardReport({
+  read: {
+    1002: dashboardNow - 30 * 60 * 1000,
+    old: dashboardNow - 3 * 24 * 60 * 60 * 1000,
+  },
+  watch: {
+    1001: {
+      title: 'AI 图片资源整理楼',
+      url: 'https://south-plus.org/read.php?tid-1001.html',
+      savedAt: dashboardNow - 60 * 60 * 1000,
+      tags: ['AI'],
+    },
+    1002: {
+      title: '已读完的稍后看',
+      url: 'https://south-plus.org/read.php?tid-1002.html',
+      savedAt: dashboardNow - 40 * 24 * 60 * 60 * 1000,
+    },
+  },
+  progress: {
+    1001: {
+      title: 'AI 图片资源整理楼',
+      url: 'https://south-plus.org/read.php?tid-1001.html',
+      progress: 0.42,
+      updatedAt: dashboardNow - 20 * 60 * 1000,
+      nextFloorLabel: '第 36 楼',
+    },
+    1002: {
+      title: '已读完的稍后看',
+      url: 'https://south-plus.org/read.php?tid-1002.html',
+      progress: 1,
+      updatedAt: dashboardNow - 30 * 60 * 1000,
+    },
+  },
+  resources: {
+    'cloud|https://pan.baidu.com/s/abc': {
+      url: 'https://pan.baidu.com/s/abc',
+      type: 'cloud',
+      sourceTitle: 'AI 图片资源整理楼',
+      sourceUrl: 'https://south-plus.org/read.php?tid-1001.html',
+      status: 'todo',
+      updatedAt: dashboardNow - 10 * 60 * 1000,
+    },
+  },
+  favoriteSeen: {
+    1001: dashboardNow - 60 * 60 * 1000,
+    1003: dashboardNow - 2 * 60 * 60 * 1000,
+  },
+  autoBuyAttempts: {
+    failed: { status: 'failed', updatedAt: dashboardNow - 2 * 60 * 60 * 1000 },
+  },
+  requestState: {
+    queueCount: 2,
+    cooldownUntil: dashboardNow + 5000,
+  },
+}, dashboardNow);
+assert.equal(dashboardReport.stats.todayViewed, 2);
+assert.equal(dashboardReport.stats.favoriteAdded, 3);
+assert.equal(dashboardReport.stats.resourceAdded, 1);
+assert.equal(dashboardReport.stats.watchBacklog, 1);
+assert.equal(dashboardReport.request.status, '冷却中');
+assert.equal(dashboardReport.worthReviewing[0].id, '1001');
+assert.equal(dashboardReport.worthReviewing[0].resourceCount, 1);
+assert.equal(dashboardReport.worthReviewing[0].hasSiteFavorite, true);
+assert.match(enhancer.formatForumDashboardDigest(dashboardReport), /值得回看：\n1\. AI 图片资源整理楼/);
+const relativeResourceDashboard = enhancer.collectForumDashboardReport({
+  resources: {
+    'cloud|https://pan.baidu.com/s/relative': {
+      url: 'https://pan.baidu.com/s/relative',
+      type: 'cloud',
+      sourceTitle: '相对来源资源帖',
+      sourceUrl: '/read.php?tid-2001.html',
+      updatedAt: dashboardNow - 5 * 60 * 1000,
+    },
+  },
+}, dashboardNow);
+assert.equal(relativeResourceDashboard.stats.resourceAdded, 1);
+assert.equal(relativeResourceDashboard.resources[0].sourceUrl, '/read.php?tid-2001.html');
 assert.match(source, /South Plus 工具箱/);
 assert.match(source, /spx-toolbox-action/);
 assert.match(source, /--spx-page-max:1480px/);
