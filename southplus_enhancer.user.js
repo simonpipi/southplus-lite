@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.4.1
+// @version      0.4.2
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -81,6 +81,7 @@
   var SP_BALANCE_CACHE_TTL = 90 * 1000;
   var TOOLBOX_BUTTON_SELECTOR = '[data-spx-toolbox-button="1"]';
   var SETTINGS_BUTTON_SELECTOR = '[data-spx-settings-button="1"]';
+  var COMMAND_PALETTE_BUTTON_SELECTOR = '[data-spx-command-palette-button="1"]';
   var THREAD_ROW_HIDDEN_CLASSES = ['spx-filter-hidden', 'spx-hidden-rule', 'spx-unread-hidden', 'spx-thread-row-hidden'];
   var pendingModuleNavigationConfigs = [];
   var scriptRequestState = {
@@ -827,6 +828,262 @@
       if (filter === 'all') return true;
       return entry.status === filter;
     });
+  }
+
+  function normalizeCommandPaletteFilter(value) {
+    var text = String(value || 'all');
+    return /^(all|navigate|center|resource|setting|action)$/.test(text) ? text : 'all';
+  }
+
+  function getCommandPaletteCategoryLabel(value) {
+    var labels = {
+      navigate: '导航',
+      center: '我的中心',
+      resource: '资源',
+      setting: '设置',
+      action: '页面动作',
+    };
+    return labels[normalizeCommandPaletteFilter(value)] || '全部';
+  }
+
+  function getCommandPaletteSourceLabel(entry) {
+    var item = entry || {};
+    return item.source || getCommandPaletteCategoryLabel(item.category);
+  }
+
+  function createCommandPaletteEntry(config) {
+    var source = config || {};
+    var title = compactText(source.title || source.label || '未命名命令');
+    if (!title) return null;
+    var category = normalizeCommandPaletteFilter(source.category);
+    var id = String(source.id || [category, title, source.href || source.key || source.panelId || source.recordId || ''].join('|'));
+    return {
+      id: id,
+      category: category,
+      icon: compactText(source.icon || title.slice(0, 1)).slice(0, 2),
+      title: title,
+      description: compactText(source.description || source.meta || getCommandPaletteCategoryLabel(category)),
+      meta: compactText(source.meta || ''),
+      source: compactText(source.source || getCommandPaletteCategoryLabel(category)),
+      target: compactText(source.target || ''),
+      risk: compactText(source.risk || '低'),
+      href: String(source.href || ''),
+      action: String(source.action || ''),
+      key: String(source.key || ''),
+      panelId: String(source.panelId || ''),
+      recordId: String(source.recordId || ''),
+      resourceKey: String(source.resourceKey || ''),
+      keywords: compactText(source.keywords || ''),
+      order: Number(source.order) || 0,
+      payload: source.payload || null,
+    };
+  }
+
+  function getCommandPaletteEntrySearchText(entry) {
+    var item = entry || {};
+    return compactText([
+      item.title,
+      item.description,
+      item.meta,
+      item.source,
+      item.target,
+      item.href,
+      item.keywords,
+      getCommandPaletteCategoryLabel(item.category),
+    ].join(' ')).toLowerCase();
+  }
+
+  function getCommandPaletteConfigCategory(config) {
+    var item = config || {};
+    if (item.panelId) return 'center';
+    if (item.key || item.kind === 'settings') return 'setting';
+    if (item.group === '页面导航' || item.href) return 'navigate';
+    return 'action';
+  }
+
+  function getCommandPaletteConfigAction(config) {
+    var item = config || {};
+    if (item.href) return 'open-url';
+    if (item.panelId) return 'open-panel';
+    if (item.kind === 'settings') return 'open-settings';
+    if (item.key) return 'toggle-setting';
+    if (typeof item.onClick === 'function') return 'run-action';
+    return '';
+  }
+
+  function createCommandPaletteEntryFromToolboxConfig(config, index) {
+    if (!config || config.show === false) return null;
+    var category = getCommandPaletteConfigCategory(config);
+    return createCommandPaletteEntry({
+      id: 'toolbox|' + (config.key || config.panelId || config.kind || config.href || config.label || index),
+      category: category,
+      icon: config.text || config.label,
+      title: config.label || config.title || config.text,
+      description: config.description || config.title || '',
+      source: config.group || getCommandPaletteCategoryLabel(category),
+      target: config.href || config.panelId || config.key || '',
+      risk: /清空|删除|购买/.test(config.label || config.title || '') ? '中' : '低',
+      href: config.href,
+      action: getCommandPaletteConfigAction(config),
+      key: config.key,
+      panelId: config.panelId,
+      keywords: [config.group, config.title, config.description].join(' '),
+      order: 100 + index,
+      payload: config,
+    });
+  }
+
+  function createCommandPaletteNavigationEntries(configs) {
+    var seen = {};
+    return (configs || []).map(function mapNavigationCommand(config, index) {
+      if (!config || !config.href || !config.label) return null;
+      var key = normalizeNavigationHref(config.href, typeof location !== 'undefined' ? location.href : 'https://south-plus.org/').replace(/#.*$/, '') + '|' + normalizeNavigationLabel(config.label);
+      if (seen[key]) return null;
+      seen[key] = true;
+      return createCommandPaletteEntry({
+        id: 'nav|' + key,
+        category: 'navigate',
+        icon: '导',
+        title: config.label,
+        description: [config.section || '导航中心', config.parentLabel, config.title && config.title !== config.label ? config.title : ''].filter(Boolean).join(' · '),
+        source: config.section || '导航中心',
+        target: config.href,
+        href: config.href,
+        action: 'open-url',
+        keywords: [config.parentLabel, config.title].join(' '),
+        order: 300 + index,
+      });
+    }).filter(Boolean);
+  }
+
+  function createCommandPaletteWatchEntries(watch, progress) {
+    return getWatchCenterEntries(watch, progress).slice(0, 40).map(function mapWatchCommand(entry, index) {
+      return createCommandPaletteEntry({
+        id: 'watch|' + entry.id,
+        category: 'center',
+        icon: '存',
+        title: entry.title,
+        description: ['稍后看', entry.progressText, entry.nextFloorLabel, entry.tagText].filter(Boolean).join(' · '),
+        source: '稍后看',
+        target: entry.progressUrl || entry.url,
+        href: entry.progressUrl || entry.url,
+        action: 'open-watch-entry',
+        recordId: entry.id,
+        keywords: [entry.floorLabel, entry.nextFloorLabel, entry.tagText].join(' '),
+        order: 500 + index,
+      });
+    });
+  }
+
+  function createCommandPaletteHistoryEntries(progress) {
+    return getHistoryCenterEntries(progress).slice(0, 40).map(function mapHistoryCommand(entry, index) {
+      return createCommandPaletteEntry({
+        id: 'history|' + entry.id,
+        category: 'center',
+        icon: '历',
+        title: entry.title,
+        description: ['最近浏览', entry.progressText, entry.nextFloorLabel, entry.tagText].filter(Boolean).join(' · '),
+        source: '最近浏览',
+        target: entry.url,
+        href: entry.url,
+        action: 'open-history-entry',
+        recordId: entry.id,
+        keywords: [entry.floorLabel, entry.nextFloorLabel, entry.tagText].join(' '),
+        order: 560 + index,
+      });
+    });
+  }
+
+  function createCommandPaletteResourceEntries(resources) {
+    return getResourceCenterEntries(resources).slice(0, 60).map(function mapResourceCommand(entry, index) {
+      return createCommandPaletteEntry({
+        id: 'resource|' + entry.key,
+        category: 'resource',
+        icon: '源',
+        title: entry.sourceTitle || entry.label || entry.url,
+        description: [entry.label, entry.provider, entry.statusLabel, entry.accessCode ? ('提取码 ' + entry.accessCode) : '', entry.tagText].filter(Boolean).join(' · '),
+        source: '资源工作台',
+        target: entry.url,
+        href: entry.url,
+        action: 'open-resource-url',
+        resourceKey: entry.key,
+        keywords: [entry.url, entry.sourceUrl, entry.floorLabel, entry.author, entry.note, entry.text, entry.tagText].join(' '),
+        order: 620 + index,
+      });
+    });
+  }
+
+  function createCommandPalettePageEntries(items) {
+    var seen = {};
+    return (items || []).map(function mapPageCommand(item, index) {
+      if (!item || !item.title || !item.href) return null;
+      var href = String(item.href || '');
+      var key = href.replace(/#.*$/, '') + '|' + item.title;
+      if (seen[key]) return null;
+      seen[key] = true;
+      return createCommandPaletteEntry({
+        id: 'page|' + key,
+        category: item.category || 'navigate',
+        icon: item.icon || '页',
+        title: item.title,
+        description: item.description || '当前页面结果',
+        source: item.source || '当前页面',
+        target: href,
+        href: href,
+        action: 'open-url',
+        keywords: item.keywords || '',
+        order: 700 + index,
+      });
+    }).filter(Boolean);
+  }
+
+  function collectCommandPaletteEntries(data) {
+    var source = data || {};
+    var entries = [];
+    (source.toolboxConfigs || []).forEach(function appendToolboxCommand(config, index) {
+      var entry = createCommandPaletteEntryFromToolboxConfig(config, index);
+      if (entry) entries.push(entry);
+    });
+    entries = entries
+      .concat(createCommandPaletteNavigationEntries(source.navigationConfigs || []))
+      .concat(createCommandPaletteWatchEntries(source.watch || {}, source.progress || {}))
+      .concat(createCommandPaletteHistoryEntries(source.progress || {}))
+      .concat(createCommandPaletteResourceEntries(source.resources || {}))
+      .concat(createCommandPalettePageEntries(source.pageItems || []));
+    return entries.filter(Boolean).sort(function sortCommandEntries(left, right) {
+      return (left.order || 0) - (right.order || 0) || left.title.localeCompare(right.title, 'zh-Hans-CN');
+    });
+  }
+
+  function getCommandPaletteQueryScore(entry, query) {
+    var term = normalizeCenterSearchQuery(query);
+    if (!term) return 0;
+    var title = String(entry && entry.title || '').toLowerCase();
+    if (title === term) return -30;
+    if (title.indexOf(term) === 0) return -20;
+    if (title.indexOf(term) >= 0) return -10;
+    return 0;
+  }
+
+  function filterCommandPaletteEntries(entries, options) {
+    var query = normalizeCenterSearchQuery(options && options.query);
+    var filter = normalizeCommandPaletteFilter(options && options.filter);
+    return (entries || []).filter(function matchCommandEntry(entry) {
+      if (filter !== 'all' && entry.category !== filter) return false;
+      return matchesCenterSearch(query, [getCommandPaletteEntrySearchText(entry)]);
+    }).sort(function sortFilteredCommandEntries(left, right) {
+      return getCommandPaletteQueryScore(left, query) - getCommandPaletteQueryScore(right, query) ||
+        (left.order || 0) - (right.order || 0) ||
+        left.title.localeCompare(right.title, 'zh-Hans-CN');
+    });
+  }
+
+  function formatCommandPaletteResultSummary(visibleEntries, allEntries, options) {
+    var visibleCount = (visibleEntries || []).length;
+    var allCount = (allEntries || []).length;
+    var filter = normalizeCommandPaletteFilter(options && options.filter);
+    var prefix = filter === 'all' ? '全部命令' : getCommandPaletteCategoryLabel(filter);
+    return prefix + ' · ' + visibleCount + ' / ' + allCount + ' 项';
   }
 
   function containsAny(value, needles) {
@@ -3346,6 +3603,18 @@
       '.spx-toolbar button,.spx-toolbar a{width:52px;height:36px;border:1px solid transparent;border-radius:12px;background:#fff;color:var(--spx-text);box-shadow:0 4px 12px rgba(15,23,42,.08);cursor:pointer;text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;padding:0;font-size:13px;font-weight:800;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease,box-shadow .16s ease;}',
       '.spx-toolbar button:hover,.spx-toolbar a:hover,.spx-toolbar button:focus-visible,.spx-toolbar a:focus-visible{border-color:var(--spx-accent);color:var(--spx-accent);box-shadow:0 7px 18px rgba(15,118,110,.16);outline:none;transform:translateY(-1px);}',
       '.spx-toolbar .spx-active{background:var(--spx-accent-soft);border-color:var(--spx-accent);color:var(--spx-accent);font-weight:bold;box-shadow:inset 0 0 0 1px rgba(15,118,110,.12),0 6px 16px rgba(15,118,110,.14);}',
+      '.spx-command-overlay{position:fixed!important;inset:0!important;z-index:100080!important;box-sizing:border-box!important;display:flex!important;align-items:flex-start!important;justify-content:center!important;padding:72px 24px 28px!important;background:rgba(15,23,42,.28)!important;backdrop-filter:blur(3px)!important;color:var(--spx-text)!important;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
+      '.spx-command-overlay[hidden]{display:none!important;}.spx-command-wrap{box-sizing:border-box!important;display:grid!important;grid-template-columns:minmax(0,720px) minmax(220px,300px)!important;gap:12px!important;width:min(1032px,calc(100vw - 72px))!important;align-items:start!important;}.spx-command-palette,.spx-command-detail{box-sizing:border-box!important;overflow:hidden!important;border:1px solid var(--spx-line)!important;border-radius:14px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-popover)!important;}.spx-command-palette{display:flex!important;flex-direction:column!important;max-height:calc(100vh - 112px)!important;}',
+      '.spx-command-head{display:grid!important;gap:10px!important;padding:14px!important;border-bottom:1px solid var(--spx-line-soft)!important;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%)!important;}.spx-command-title{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;}.spx-command-title strong{display:block!important;color:var(--spx-strong)!important;font-size:15px!important;line-height:1.25!important;font-weight:900!important;}.spx-command-title span{color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;white-space:nowrap!important;}.spx-command-close{flex:none!important;width:30px!important;height:30px!important;border:1px solid var(--spx-line)!important;border-radius:9px!important;background:var(--spx-panel)!important;color:var(--spx-sub)!important;font-size:16px!important;font-weight:900!important;cursor:pointer!important;}',
+      '.spx-command-search-wrap{position:relative!important;}.spx-command-search{box-sizing:border-box!important;width:100%!important;height:42px!important;padding:0 42px 0 14px!important;border:1px solid var(--spx-line)!important;border-radius:9px!important;background:var(--spx-input-bg)!important;color:var(--spx-text)!important;font-size:15px!important;font-weight:850!important;outline:none!important;}.spx-command-search:focus{border-color:var(--spx-accent)!important;box-shadow:0 0 0 3px rgba(37,99,235,.12)!important;}.spx-command-search-mark{position:absolute!important;right:12px!important;top:50%!important;transform:translateY(-50%)!important;color:var(--spx-muted)!important;font-size:13px!important;font-weight:900!important;}',
+      '.spx-command-tabs{display:flex!important;gap:7px!important;min-width:0!important;overflow-x:auto!important;scrollbar-width:thin!important;}.spx-command-tab{flex:none!important;min-height:28px!important;padding:0 10px!important;border:1px solid var(--spx-line)!important;border-radius:999px!important;background:var(--spx-panel)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;cursor:pointer!important;}.spx-command-tab.spx-active{border-color:var(--spx-accent)!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;}',
+      '.spx-command-list{display:grid!important;flex:1 1 auto!important;min-height:0!important;max-height:min(56vh,474px)!important;overflow:auto!important;padding:10px!important;scrollbar-width:thin!important;}.spx-command-item{box-sizing:border-box!important;display:grid!important;grid-template-columns:38px minmax(0,1fr) auto!important;gap:10px!important;align-items:center!important;min-height:64px!important;width:100%!important;padding:9px 10px!important;border:1px solid transparent!important;border-radius:12px!important;background:transparent!important;color:var(--spx-text)!important;text-align:left!important;cursor:pointer!important;}.spx-command-item:hover,.spx-command-item.spx-active{border-color:var(--spx-line)!important;background:var(--spx-panel-muted)!important;}.spx-command-item.spx-active{box-shadow:inset 3px 0 0 var(--spx-accent)!important;}',
+      '.spx-command-icon{display:inline-flex!important;width:38px!important;height:38px!important;align-items:center!important;justify-content:center!important;border:1px solid var(--spx-line)!important;border-radius:10px!important;background:var(--spx-panel)!important;color:var(--spx-accent)!important;font-size:13px!important;font-weight:900!important;}.spx-command-main{min-width:0!important;}.spx-command-main strong{display:block!important;color:var(--spx-strong)!important;font-size:14px!important;line-height:1.3!important;font-weight:900!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}.spx-command-main span{display:block!important;margin-top:3px!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:750!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
+      '.spx-command-tail{display:flex!important;align-items:center!important;gap:7px!important;color:var(--spx-muted)!important;font-size:11px!important;font-weight:900!important;white-space:nowrap!important;}.spx-command-pill,.spx-command-kbd{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-height:22px!important;padding:0 8px!important;border-radius:999px!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;font-size:11px!important;font-weight:900!important;}.spx-command-kbd{min-width:34px!important;height:20px!important;border:1px solid var(--spx-line)!important;border-radius:6px!important;background:var(--spx-panel)!important;color:var(--spx-sub)!important;box-shadow:inset 0 -1px 0 rgba(15,23,42,.08)!important;}.spx-command-pill.spx-warn{background:#ffedd5!important;color:#7c2d12!important;}.spx-command-pill.spx-ok{background:#dcfce7!important;color:#15803d!important;}',
+      '.spx-command-empty{padding:22px 10px!important;color:var(--spx-sub)!important;text-align:center!important;font-size:13px!important;font-weight:800!important;}.spx-command-foot{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;padding:9px 14px!important;border-top:1px solid var(--spx-line-soft)!important;background:var(--spx-panel-muted)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:850!important;}.spx-command-keys{display:flex!important;flex-wrap:wrap!important;gap:6px!important;justify-content:flex-end!important;}',
+      '.spx-command-detail{padding:14px!important;}.spx-command-detail h3{margin:0!important;color:var(--spx-strong)!important;font-size:15px!important;line-height:1.3!important;font-weight:900!important;}.spx-command-detail p{margin:5px 0 12px!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:750!important;}.spx-command-detail-card{display:grid!important;gap:9px!important;padding:11px!important;border:1px solid var(--spx-line-soft)!important;border-radius:12px!important;background:var(--spx-panel-muted)!important;}.spx-command-detail-row{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;min-height:26px!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:850!important;}.spx-command-detail-row span:first-child{flex:none!important;color:var(--spx-sub)!important;}.spx-command-detail-row strong,.spx-command-detail-row a{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;text-align:right!important;color:inherit!important;font-weight:900!important;text-decoration:none!important;}.spx-command-detail-row a:hover{text-decoration:underline!important;}.spx-command-detail-target{align-items:flex-start!important;}.spx-command-detail-target strong,.spx-command-detail-target a{white-space:normal!important;overflow:visible!important;overflow-wrap:anywhere!important;word-break:break-word!important;line-height:1.35!important;text-align:left!important;color:var(--spx-link)!important;}',
+      '@media(max-width:980px){.spx-command-wrap{grid-template-columns:1fr!important;width:min(720px,calc(100vw - 52px))!important}.spx-command-detail{display:none!important}}',
+      '@media(max-width:760px){.spx-command-overlay{padding:58px 8px 20px!important}.spx-command-wrap{width:calc(100vw - 16px)!important}.spx-command-palette{max-height:calc(100vh - 78px)!important}.spx-command-list{max-height:none!important}.spx-command-item{grid-template-columns:34px minmax(0,1fr)!important;min-height:62px!important}.spx-command-icon{width:34px!important;height:34px!important}.spx-command-tail{grid-column:2!important;justify-content:flex-start!important}.spx-command-foot{align-items:flex-start!important;flex-direction:column!important}}',
       '.spx-toolbox{position:fixed;right:82px;bottom:18px;width:min(440px,calc(100vw - 24px));max-height:min(72vh,680px);overflow:hidden;z-index:100000;box-sizing:border-box;background:rgba(255,255,255,.98);border:1px solid rgba(148,163,184,.48);box-shadow:var(--spx-shadow-strong);border-radius:var(--spx-radius-xl);padding:0;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;backdrop-filter:blur(12px);}',
       '.spx-toolbox[hidden]{display:none!important;}',
       '.spx-toolbox-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid var(--spx-line-soft);background:linear-gradient(135deg,#f8fafc 0%,#ecfeff 100%);}',
@@ -3582,7 +3851,7 @@
       '.spx-theme-night #wrapA,.spx-theme-night #main,.spx-theme-night #content,.spx-theme-night.spx-reader #wrapA,.spx-theme-night.spx-reader #main,.spx-theme-night.spx-reader #content,.spx-theme-night.spx-immersive-read #wrapA,.spx-theme-night.spx-immersive-read #main,.spx-theme-night.spx-immersive-read #content{background:var(--spx-page-bg)!important;background-image:none!important;color:var(--spx-text)!important;}',
       '.spx-theme-night a{color:var(--spx-link)!important;}',
       '.spx-theme-night input,.spx-theme-night textarea,.spx-theme-night select{background:var(--spx-input-bg)!important;color:var(--spx-text)!important;border-color:var(--spx-line)!important;}',
-      '.spx-theme-night .t,.spx-theme-night .t3,.spx-theme-night .t5,.spx-theme-night .bdbA,.spx-theme-night table.js-post,.spx-theme-night .spx-home-module,.spx-theme-night .spx-watch-center,.spx-theme-night .spx-settings,.spx-theme-night .spx-toolbox,.spx-theme-night .spx-preview-panel,.spx-theme-night .spx-preview-popover,.spx-theme-night .spx-author-popover,.spx-theme-night .spx-quick-reply,.spx-theme-night .spx-forum-tools,.spx-theme-night .spx-data-health,.spx-theme-night .spx-storage-usage-row,.spx-theme-night .spx-storage-suggestions{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;}',
+      '.spx-theme-night .t,.spx-theme-night .t3,.spx-theme-night .t5,.spx-theme-night .bdbA,.spx-theme-night table.js-post,.spx-theme-night .spx-home-module,.spx-theme-night .spx-watch-center,.spx-theme-night .spx-settings,.spx-theme-night .spx-toolbox,.spx-theme-night .spx-command-palette,.spx-theme-night .spx-command-detail,.spx-theme-night .spx-preview-panel,.spx-theme-night .spx-preview-popover,.spx-theme-night .spx-author-popover,.spx-theme-night .spx-quick-reply,.spx-theme-night .spx-forum-tools,.spx-theme-night .spx-data-health,.spx-theme-night .spx-storage-usage-row,.spx-theme-night .spx-storage-suggestions{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;}',
       '.spx-theme-night .tr1,.spx-theme-night .tr2,.spx-theme-night .tr3,.spx-theme-night td,.spx-theme-night th,.spx-theme-night .spx-home-module tr.tr3,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3{background:var(--spx-row-bg)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night .spx-home-module tr.tr3:hover,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3:hover{background:var(--spx-row-hover)!important;}',
       '.spx-theme-night .spx-home-module>h2,.spx-theme-night .spx-home-module .h,.spx-theme-night .spx-settings-header,.spx-theme-night .spx-settings-footer,.spx-theme-night .spx-toolbox-header,.spx-theme-night .spx-watch-center-header,.spx-theme-night .spx-preview-lightbox-toolbar,.spx-theme-night .spx-preview-lightbox-caption{background:var(--spx-panel-muted)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-strong)!important;}',
@@ -11250,11 +11519,408 @@
     return panel;
   }
 
+  function collectCurrentPageCommandItems(root) {
+    var doc = root || document;
+    var seen = {};
+    var items = [];
+    qsa('a[href]', doc).forEach(function collectPageCommandLink(link) {
+      var href = link.href || link.getAttribute('href') || '';
+      var text = compactText(link.textContent || link.title || '');
+      if (!href || !text || /^javascript:/i.test(href)) return;
+      var isThread = /read\.php\?tid[=-]?\d+|read\.php\?tid-\d+/i.test(href);
+      var isForum = /thread\.php\?fid[=-]?\d+|thread\.php\?fid-\d+/i.test(href);
+      if (!isThread && !isForum) return;
+      if (/^(上一页|下一页|首页|尾页|收藏|回复|引用|编辑|删除)$/.test(text)) return;
+      var key = href.replace(/#.*$/, '') + '|' + text;
+      if (seen[key]) return;
+      seen[key] = true;
+      items.push({
+        title: text.slice(0, 80),
+        href: href,
+        category: 'navigate',
+        icon: isThread ? '帖' : '版',
+        source: isThread ? '当前页面主题' : '当前页面版块',
+        description: isThread ? '跳转到当前页面中的主题' : '跳转到当前页面中的版块入口',
+        keywords: compactText((link.closest && link.closest('tr') && link.closest('tr').textContent) || ''),
+      });
+    });
+    return items.slice(0, 40);
+  }
+
+  function getCommandPaletteData(settings, state) {
+    return {
+      toolboxConfigs: getToolboxActionConfigs(location.href, document),
+      navigationConfigs: getAllModuleNavigationConfigs(),
+      pageItems: collectCurrentPageCommandItems(document),
+      watch: state && state.watch,
+      progress: state && state.progress,
+      resources: state && state.resources,
+      settings: settings,
+    };
+  }
+
+  function setCommandPaletteHidden(panel, hidden) {
+    if (!panel) return;
+    panel.hidden = !!hidden;
+    qsa(COMMAND_PALETTE_BUTTON_SELECTOR).forEach(function toggleCommandButton(button) {
+      button.classList.toggle('spx-active', !panel.hidden);
+      button.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
+    });
+    if (!panel.hidden) {
+      panel.spxRender();
+      window.setTimeout(function focusCommandSearch() {
+        var input = qs('.spx-command-search', panel);
+        if (input && typeof input.focus === 'function') input.focus();
+      }, 0);
+    }
+  }
+
+  function getCommandCenterPanelConfig(panelId) {
+    return getToolbarCenterConfigs().filter(function matchCenterConfig(config) {
+      return config.panelId === panelId;
+    })[0] || null;
+  }
+
+  function openCommandCenterPanel(panelId, settings, state) {
+    var config = getCommandCenterPanelConfig(panelId);
+    if (!config || !config.createPanel) return false;
+    var centerPanel = config.createPanel(settings, state);
+    if (centerPanel.spxRender) centerPanel.spxRender();
+    setCenterPanelHidden(centerPanel, false, config.buttonSelector);
+    return true;
+  }
+
+  function openCommandUrl(href) {
+    var value = String(href || '');
+    if (!value) return false;
+    if (/^(?:magnet|ed2k):/i.test(value)) {
+      location.href = value;
+      return true;
+    }
+    try {
+      var url = new URL(value, location.href);
+      if (url.origin === location.origin) {
+        location.href = url.href;
+      } else if (typeof window.open === 'function') {
+        window.open(url.href, '_blank', 'noopener');
+      } else {
+        location.href = url.href;
+      }
+      return true;
+    } catch (error) {
+      location.href = value;
+      return true;
+    }
+  }
+
+  function closeCommandRelatedPanels() {
+    var toolbox = qs('#spx-toolbox');
+    if (toolbox) setToolboxHidden(toolbox, true, TOOLBOX_BUTTON_SELECTOR);
+    var settingsPanel = qs('#spx-settings');
+    if (settingsPanel) setSettingsPanelHidden(settingsPanel, true, SETTINGS_BUTTON_SELECTOR);
+  }
+
+  function executeCommandPaletteEntry(entry, settings, state, panel) {
+    if (!entry) return false;
+    var config = entry.payload || null;
+    setCommandPaletteHidden(panel, true);
+    if (config && config.href) return openCommandUrl(config.href);
+    if (config && config.kind === 'settings') {
+      closeCommandRelatedPanels();
+      var settingsPanel = createSettingsPanel(settings, state);
+      if (settingsPanel.spxSync) settingsPanel.spxSync();
+      setSettingsPanelHidden(settingsPanel, false, SETTINGS_BUTTON_SELECTOR);
+      return true;
+    }
+    if (config && config.key) {
+      settings[config.key] = !settings[config.key];
+      saveSettings(settings);
+      enhanceAll(settings, state);
+      return true;
+    }
+    if (config && config.createPanel && config.panelId) {
+      closeCommandRelatedPanels();
+      return openCommandCenterPanel(config.panelId, settings, state);
+    }
+    if (config && typeof config.onClick === 'function') {
+      config.onClick();
+      return true;
+    }
+    if (entry.action === 'open-settings') {
+      var panelNode = createSettingsPanel(settings, state);
+      if (panelNode.spxSync) panelNode.spxSync();
+      setSettingsPanelHidden(panelNode, false, SETTINGS_BUTTON_SELECTOR);
+      return true;
+    }
+    if (entry.action === 'open-panel' && entry.panelId) {
+      return openCommandCenterPanel(entry.panelId, settings, state);
+    }
+    if (entry.action === 'open-watch-entry') {
+      var watchEntry = getWatchCenterEntries(state.watch, state.progress).filter(function matchWatchEntry(item) {
+        return item.id === entry.recordId;
+      })[0];
+      if (watchEntry) {
+        openProgressEntry(state, watchEntry.id, watchEntry.progressUrl || watchEntry.url, 'next');
+        return true;
+      }
+    }
+    if (entry.action === 'open-history-entry') {
+      var historyEntry = getHistoryCenterEntries(state.progress).filter(function matchHistoryEntry(item) {
+        return item.id === entry.recordId;
+      })[0];
+      if (historyEntry) {
+        openProgressEntry(state, historyEntry.id, historyEntry.url, 'next');
+        return true;
+      }
+    }
+    if (entry.href) return openCommandUrl(entry.href);
+    return false;
+  }
+
+  function isCommandPaletteSearchInput(target) {
+    return !!(target && target.classList && target.classList.contains('spx-command-search'));
+  }
+
+  function rerenderCommandPaletteAfterSearch(panel, target) {
+    if (!panel) return;
+    panel.spxState.query = target ? target.value : panel.spxState.query;
+    panel.spxState.activeIndex = 0;
+    panel.spxRender();
+    var nextInput = qs('.spx-command-search', panel);
+    if (nextInput) {
+      nextInput.focus();
+      if (typeof nextInput.setSelectionRange === 'function') {
+        nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
+      }
+    }
+  }
+
+  function renderCommandPaletteDetail(panel, entry) {
+    var detail = qs('.spx-command-detail', panel);
+    if (!detail) return;
+    detail.textContent = '';
+    detail.appendChild(createEl('h3', '', entry ? entry.title : '没有匹配命令'));
+    detail.appendChild(createEl('p', '', entry ? entry.description : '换一个关键词或分类继续搜索。'));
+    var card = createEl('div', 'spx-command-detail-card');
+    [
+      ['来源', entry ? getCommandPaletteSourceLabel(entry) : '-'],
+      ['目标', entry ? (entry.target || entry.href || entry.panelId || entry.key || '-') : '-'],
+      ['风险', entry ? (entry.risk || '低') : '-'],
+    ].forEach(function appendDetailRow(item) {
+      var isTarget = item[0] === '目标';
+      var row = createEl('div', 'spx-command-detail-row' + (isTarget ? ' spx-command-detail-target' : ''));
+      row.appendChild(createEl('span', '', item[0]));
+      if (isTarget && entry && entry.href && /^https?:/i.test(entry.href)) {
+        var link = createEl('a', '', item[1]);
+        link.href = entry.href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.title = entry.href;
+        row.appendChild(link);
+      } else {
+        row.appendChild(createEl('strong', '', item[1]));
+      }
+      card.appendChild(row);
+    });
+    detail.appendChild(card);
+  }
+
+  function renderCommandPalettePanel(panel, settings, state) {
+    var panelState = panel.spxState || { query: '', filter: 'all', activeIndex: 0 };
+    panel.spxState = panelState;
+    var allEntries = collectCommandPaletteEntries(getCommandPaletteData(settings, state));
+    var visibleEntries = filterCommandPaletteEntries(allEntries, panelState);
+    panelState.activeIndex = Math.min(Math.max(0, Number(panelState.activeIndex) || 0), Math.max(0, visibleEntries.length - 1));
+    panel.spxEntries = visibleEntries;
+    panel.textContent = '';
+
+    var wrap = createEl('div', 'spx-command-wrap');
+    var palette = createEl('section', 'spx-command-palette');
+    palette.setAttribute('aria-label', '全局命令面板');
+    var head = createEl('div', 'spx-command-head');
+    var title = createEl('div', 'spx-command-title');
+    var titleCopy = createEl('div');
+    titleCopy.appendChild(createEl('strong', '', '全局命令'));
+    titleCopy.appendChild(createEl('span', '', '本地数据优先 · Ctrl+K'));
+    var closeButton = createEl('button', 'spx-command-close', '×');
+    closeButton.type = 'button';
+    closeButton.title = '关闭命令面板';
+    closeButton.dataset.action = 'close-command-palette';
+    title.append(titleCopy, closeButton);
+    head.appendChild(title);
+
+    var searchWrap = createEl('div', 'spx-command-search-wrap');
+    var search = createEl('input', 'spx-command-search');
+    search.type = 'search';
+    search.placeholder = '搜索导航、收藏、资源、设置或页面动作';
+    search.value = panelState.query || '';
+    search.setAttribute('aria-label', '搜索命令');
+    searchWrap.appendChild(search);
+    searchWrap.appendChild(createEl('span', 'spx-command-search-mark', '/'));
+    head.appendChild(searchWrap);
+
+    var tabs = createEl('div', 'spx-command-tabs');
+    [
+      ['all', '全部'],
+      ['navigate', '导航'],
+      ['center', '我的中心'],
+      ['resource', '资源'],
+      ['setting', '设置'],
+      ['action', '页面动作'],
+    ].forEach(function appendCommandTab(item) {
+      var tab = createEl('button', 'spx-command-tab' + (normalizeCommandPaletteFilter(panelState.filter) === item[0] ? ' spx-active' : ''), item[1]);
+      tab.type = 'button';
+      tab.dataset.filter = item[0];
+      tabs.appendChild(tab);
+    });
+    head.appendChild(tabs);
+    palette.appendChild(head);
+
+    var list = createEl('div', 'spx-command-list');
+    if (!visibleEntries.length) {
+      list.appendChild(createEl('div', 'spx-command-empty', '没有匹配的命令'));
+    } else {
+      visibleEntries.slice(0, 80).forEach(function appendCommandEntry(entry, index) {
+        var item = createEl('button', 'spx-command-item' + (index === panelState.activeIndex ? ' spx-active' : ''));
+        item.type = 'button';
+        item.dataset.commandId = entry.id;
+        item.appendChild(createEl('span', 'spx-command-icon', entry.icon || '令'));
+        var main = createEl('span', 'spx-command-main');
+        main.appendChild(createEl('strong', '', entry.title));
+        main.appendChild(createEl('span', '', entry.description || getCommandPaletteSourceLabel(entry)));
+        item.appendChild(main);
+        var tail = createEl('span', 'spx-command-tail');
+        tail.appendChild(createEl('span', 'spx-command-pill' + (entry.category === 'resource' ? ' spx-ok' : entry.category === 'center' ? ' spx-warn' : ''), getCommandPaletteCategoryLabel(entry.category)));
+        if (index === panelState.activeIndex) tail.appendChild(createEl('span', 'spx-command-kbd', 'Enter'));
+        item.appendChild(tail);
+        list.appendChild(item);
+      });
+    }
+    palette.appendChild(list);
+    var foot = createEl('div', 'spx-command-foot');
+    foot.appendChild(createEl('span', '', formatCommandPaletteResultSummary(visibleEntries, allEntries, panelState)));
+    var keys = createEl('span', 'spx-command-keys');
+    ['↑ ↓', 'Enter', 'Esc'].forEach(function appendKeyLabel(label) {
+      keys.appendChild(createEl('span', 'spx-command-kbd', label));
+    });
+    foot.appendChild(keys);
+    palette.appendChild(foot);
+    wrap.appendChild(palette);
+
+    var detail = createEl('aside', 'spx-command-detail');
+    wrap.appendChild(detail);
+    panel.appendChild(wrap);
+    renderCommandPaletteDetail(panel, visibleEntries[panelState.activeIndex] || null);
+  }
+
+  function createCommandPalettePanel(settings, state) {
+    var panel = qs('#spx-command-palette-overlay');
+    if (panel) return panel;
+    panel = createEl('div', 'spx-command-overlay');
+    panel.id = 'spx-command-palette-overlay';
+    panel.hidden = true;
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', '全局命令面板');
+    panel.spxState = { query: '', filter: 'all', activeIndex: 0 };
+    panel.spxComposing = false;
+    panel.spxRender = function renderCommandPanel() {
+      renderCommandPalettePanel(panel, settings, state);
+    };
+    panel.addEventListener('compositionstart', function handleCommandCompositionStart(event) {
+      if (!isCommandPaletteSearchInput(event.target)) return;
+      panel.spxComposing = true;
+    });
+    panel.addEventListener('compositionend', function handleCommandCompositionEnd(event) {
+      if (!isCommandPaletteSearchInput(event.target)) return;
+      panel.spxComposing = false;
+      rerenderCommandPaletteAfterSearch(panel, event.target);
+    });
+    panel.addEventListener('input', function handleCommandInput(event) {
+      var target = event.target;
+      if (!isCommandPaletteSearchInput(target)) return;
+      panel.spxState.query = target.value;
+      if (panel.spxComposing || event.isComposing) return;
+      rerenderCommandPaletteAfterSearch(panel, target);
+    });
+    panel.addEventListener('click', function handleCommandClick(event) {
+      if (event.target === panel) {
+        setCommandPaletteHidden(panel, true);
+        return;
+      }
+      var close = event.target && event.target.closest && event.target.closest('[data-action="close-command-palette"]');
+      if (close) {
+        setCommandPaletteHidden(panel, true);
+        return;
+      }
+      var tab = event.target && event.target.closest && event.target.closest('.spx-command-tab');
+      if (tab) {
+        panel.spxState.filter = normalizeCommandPaletteFilter(tab.dataset.filter);
+        panel.spxState.activeIndex = 0;
+        panel.spxRender();
+        var input = qs('.spx-command-search', panel);
+        if (input) input.focus();
+        return;
+      }
+      var item = event.target && event.target.closest && event.target.closest('.spx-command-item');
+      if (item) {
+        var entries = panel.spxEntries || [];
+        var entry = entries.filter(function matchCommand(itemEntry) { return itemEntry.id === item.dataset.commandId; })[0];
+        executeCommandPaletteEntry(entry, settings, state, panel);
+      }
+    });
+    panel.addEventListener('keydown', function handleCommandKeys(event) {
+      if (panel.spxComposing || event.isComposing || event.keyCode === 229) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setCommandPaletteHidden(panel, true);
+        return;
+      }
+      var entries = panel.spxEntries || [];
+      if (!entries.length) return;
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        panel.spxState.activeIndex = Math.min(entries.length - 1, (panel.spxState.activeIndex || 0) + 1);
+        panel.spxRender();
+        var downInput = qs('.spx-command-search', panel);
+        if (downInput) downInput.focus();
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        panel.spxState.activeIndex = Math.max(0, (panel.spxState.activeIndex || 0) - 1);
+        panel.spxRender();
+        var upInput = qs('.spx-command-search', panel);
+        if (upInput) upInput.focus();
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        executeCommandPaletteEntry(entries[panel.spxState.activeIndex || 0], settings, state, panel);
+      }
+    });
+    panel.spxRender();
+    document.body.appendChild(panel);
+    return panel;
+  }
+
+  function bindCommandPaletteKeyboard(settings, state) {
+    if (document.documentElement.dataset.spxCommandPaletteKeyboardReady === '1') return;
+    document.documentElement.dataset.spxCommandPaletteKeyboardReady = '1';
+    document.addEventListener('keydown', function handleCommandPaletteShortcut(event) {
+      if (!event || (!event.ctrlKey && !event.metaKey) || event.shiftKey || event.altKey) return;
+      if (String(event.key || '').toLowerCase() !== 'k') return;
+      event.preventDefault();
+      var panel = createCommandPalettePanel(settings, state);
+      setCommandPaletteHidden(panel, !panel.hidden);
+    }, true);
+  }
+
   function createToolbar(settings, state) {
     if (qs('#spx-toolbar')) return;
     var toolbar = createEl('div', 'spx-toolbar');
     toolbar.id = 'spx-toolbar';
     var toolbox = createToolboxPanel(settings, state);
+    var commandPalette = createCommandPalettePanel(settings, state);
 
     toolbar.appendChild(toolbarButton('顶部', '回到顶部', function top() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -11269,6 +11935,7 @@
       if (!nextToolboxHidden) {
         var settingsPanel = qs('#spx-settings');
         if (settingsPanel) setSettingsPanelHidden(settingsPanel, true, SETTINGS_BUTTON_SELECTOR);
+        setCommandPaletteHidden(commandPalette, true);
       }
     });
     toolboxButton.dataset.spxToolboxButton = '1';
@@ -11277,10 +11944,27 @@
     toolboxButton.setAttribute('aria-expanded', 'false');
     toolbar.appendChild(toolboxButton);
 
+    var commandButton = toolbarButton('命令', '打开全局命令面板（Ctrl+K）', function toggleCommandPalette() {
+      if (commandPalette.spxRender) commandPalette.spxRender();
+      var nextHidden = !commandPalette.hidden;
+      setCommandPaletteHidden(commandPalette, nextHidden);
+      if (!nextHidden) {
+        setToolboxHidden(toolbox, true, TOOLBOX_BUTTON_SELECTOR);
+        var settingsPanel = qs('#spx-settings');
+        if (settingsPanel) setSettingsPanelHidden(settingsPanel, true, SETTINGS_BUTTON_SELECTOR);
+      }
+    });
+    commandButton.dataset.spxCommandPaletteButton = '1';
+    commandButton.setAttribute('aria-haspopup', 'dialog');
+    commandButton.setAttribute('aria-controls', 'spx-command-palette-overlay');
+    commandButton.setAttribute('aria-expanded', 'false');
+    toolbar.appendChild(commandButton);
+
     var settingsButton = toolbarButton('设置', '打开设置', function openSettings() {
       var panel = createSettingsPanel(settings, state);
       if (panel.spxSync) panel.spxSync();
       setToolboxHidden(toolbox, true, TOOLBOX_BUTTON_SELECTOR);
+      setCommandPaletteHidden(commandPalette, true);
       setSettingsPanelHidden(panel, !panel.hidden, SETTINGS_BUTTON_SELECTOR);
     });
     settingsButton.dataset.spxSettingsButton = '1';
@@ -11895,6 +12579,7 @@
     setBodyClasses(settings);
     createToolbar(settings, state);
     createSettingsPanel(settings, state);
+    bindCommandPaletteKeyboard(settings, state);
     bindForumKeyboardPaging();
     enhanceAll(settings, state);
   }
@@ -11936,6 +12621,11 @@
     filterWatchCenterEntries: filterWatchCenterEntries,
     filterHistoryCenterEntries: filterHistoryCenterEntries,
     filterAutoBuyCenterEntries: filterAutoBuyCenterEntries,
+    normalizeCommandPaletteFilter: normalizeCommandPaletteFilter,
+    getCommandPaletteCategoryLabel: getCommandPaletteCategoryLabel,
+    collectCommandPaletteEntries: collectCommandPaletteEntries,
+    filterCommandPaletteEntries: filterCommandPaletteEntries,
+    formatCommandPaletteResultSummary: formatCommandPaletteResultSummary,
     matchesBlockRules: matchesBlockRules,
     parseForumFilterQuery: parseForumFilterQuery,
     matchesForumFilter: matchesForumFilter,

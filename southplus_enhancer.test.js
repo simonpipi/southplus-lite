@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.4\.1/);
+assert.match(source, /@version\s+0\.4\.2/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.forumDashboard, true);
@@ -281,8 +281,51 @@ const relativeResourceDashboard = enhancer.collectForumDashboardReport({
 }, dashboardNow);
 assert.equal(relativeResourceDashboard.stats.resourceAdded, 1);
 assert.equal(relativeResourceDashboard.resources[0].sourceUrl, '/read.php?tid-2001.html');
+const commandEntries = enhancer.collectCommandPaletteEntries({
+  toolboxConfigs: [
+    { show: true, group: '我的中心', text: '源', label: '资源工作台', description: '管理资源', panelId: 'spx-resource-center' },
+    { show: true, group: '阅读模式', key: 'nightMode', text: '夜', label: '夜间模式', description: '切换夜间模式' },
+  ],
+  navigationConfigs: [
+    { section: '子栏目', label: 'AI交流', href: 'https://south-plus.org/thread.php?fid-208.html' },
+  ],
+  watch: {
+    1001: { title: 'AI 图片资源整理楼', url: 'https://south-plus.org/read.php?tid-1001.html', savedAt: dashboardNow },
+  },
+  progress: {
+    1001: { title: 'AI 图片资源整理楼', url: 'https://south-plus.org/read.php?tid-1001.html', updatedAt: dashboardNow, progress: 0.5 },
+  },
+  resources: {
+    'cloud|https://pan.baidu.com/s/abc': {
+      url: 'https://pan.baidu.com/s/abc',
+      type: 'cloud',
+      sourceTitle: 'AI 图片资源整理楼',
+      status: 'todo',
+      updatedAt: dashboardNow,
+    },
+  },
+});
+assert.equal(enhancer.normalizeCommandPaletteFilter('bad'), 'all');
+assert.equal(enhancer.getCommandPaletteCategoryLabel('resource'), '资源');
+assert.ok(commandEntries.some((entry) => entry.title === '资源工作台' && entry.category === 'center'));
+assert.ok(commandEntries.some((entry) => entry.title === '夜间模式' && entry.category === 'setting'));
+assert.deepEqual(
+  enhancer.filterCommandPaletteEntries(commandEntries, { query: '百度', filter: 'resource' }).map((entry) => entry.category),
+  ['resource']
+);
+assert.match(enhancer.formatCommandPaletteResultSummary(commandEntries.slice(0, 2), commandEntries, { filter: 'resource' }), /资源 · 2 \/ \d+ 项/);
 assert.match(source, /South Plus 工具箱/);
 assert.match(source, /spx-toolbox-action/);
+assert.match(source, /spx-command-overlay/);
+assert.match(source, /Ctrl\+K/);
+assert.match(source, /COMMAND_PALETTE_BUTTON_SELECTOR/);
+assert.match(source, /handleCommandCompositionStart/);
+assert.match(source, /handleCommandCompositionEnd/);
+assert.match(source, /rerenderCommandPaletteAfterSearch/);
+assert.match(source, /panel\.spxComposing \|\| event\.isComposing \|\| event\.keyCode === 229/);
+assert.match(source, /spx-command-detail-target/);
+assert.match(source, /overflow-wrap:anywhere/);
+assert.match(source, /bindCommandPaletteKeyboard\(settings, state\)/);
 assert.match(source, /--spx-page-max:1480px/);
 assert.match(source, /--spx-reader-line:clamp\(760px,62vw,960px\)/);
 assert.match(source, /getInjectedPreviewParityStyleRules/);
