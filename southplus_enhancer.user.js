@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.4.0
+// @version      0.4.1
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -173,6 +173,20 @@
       '感谢补档',
     ],
   };
+
+  var QUICK_REPLY_EMOTES = [
+    '001.jpg', '002.jpg', '003.jpg', '005.jpg', '006.jpg', '007.jpg', '008.jpg', '009.jpg', '010.jpg', '012.jpg',
+    '013.gif', '014.jpg', '015.jpg', '016.jpg', '017.jpg', '018.jpg', '019.jpg', '020.jpg', '021.gif', '022.gif',
+    '023.jpg', '024.jpg', '025.jpg', '026.jpg', '027.jpg', '028.jpg', '029.jpg', '030.jpg', '031.gif', '032.jpg',
+    '033.jpg', '034.jpg', '035.jpg', '036.jpg', '037.gif', '038.gif', '039.jpg', '040.jpg',
+  ].map(function mapQuickReplyEmote(fileName) {
+    var code = fileName.replace(/\D/g, '').replace(/^0+/, '') || '1';
+    return {
+      code: '[s:' + code + ']',
+      fileName: fileName,
+      src: 'https://south-plus.org/images/post/smile/smallface/face' + fileName,
+    };
+  });
 
   function parseThreadId(value) {
     var text = String(value || '');
@@ -3426,14 +3440,56 @@
       '.spx-status-badge.spx-status-failed{background:#fee2e2;color:#b91c1c;}',
       '.spx-status-badge.spx-status-done{background:#dcfce7;color:#15803d;}',
       '.spx-status-badge.spx-status-invalid{background:#fee2e2;color:#b91c1c;}',
-      '.spx-quick-reply{box-sizing:border-box;margin:10px 0 12px;padding:10px 12px;border:1px solid var(--spx-line);border-radius:8px;background:#f8fafc;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;}',
-      '.spx-quick-reply-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;color:var(--spx-sub);}',
-      '.spx-quick-reply-header strong{color:var(--spx-text);font-size:14px;}',
-      '.spx-quick-reply-list{display:flex;flex-wrap:wrap;gap:6px;}',
-      '.spx-quick-reply button{border:1px solid var(--spx-line);border-radius:999px;background:#fff;color:var(--spx-text);padding:5px 10px;cursor:pointer;font-size:13px;line-height:1.25;}',
-      '.spx-quick-reply button:hover{border-color:var(--spx-accent);color:var(--spx-accent);background:#ecfdf5;}',
-      '.spx-quick-reply button:disabled{cursor:wait;opacity:.55;}',
-      '.spx-quick-reply-status.spx-error{color:#b91c1c;font-weight:600;}',
+      '.spx-quick-reply{position:fixed!important;right:82px!important;bottom:78px!important;z-index:100020!important;box-sizing:border-box!important;width:min(560px,calc(100vw - 108px))!important;max-height:min(78vh,720px)!important;overflow:auto!important;border:1px solid var(--spx-line)!important;border-radius:14px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-popover)!important;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
+      '.spx-quick-reply.spx-quick-reply-collapsed{display:none!important;}',
+      '.spx-quick-reply-launcher{position:fixed!important;right:16px!important;bottom:78px!important;z-index:100021!important;display:none!important;align-items:center!important;justify-content:center!important;min-width:118px!important;height:42px!important;padding:0 14px!important;border:1px solid rgba(37,99,235,.34)!important;border-radius:14px!important;background:var(--spx-accent)!important;color:#fff!important;font-size:13px!important;font-weight:900!important;box-shadow:0 18px 46px rgba(37,99,235,.3)!important;cursor:pointer!important;}',
+      '.spx-quick-reply-launcher.spx-visible{display:inline-flex!important;}',
+      '.spx-quick-reply-header{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;margin:0!important;padding:12px 14px!important;border-bottom:1px solid var(--spx-line-soft)!important;background:var(--spx-panel)!important;color:var(--spx-sub)!important;}',
+      '.spx-quick-reply-header strong{display:block!important;color:var(--spx-text)!important;font-size:14px!important;font-weight:900!important;line-height:1.25!important;}',
+      '.spx-quick-reply-status{display:block!important;margin-top:3px!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:800!important;}',
+      '.spx-quick-reply-status.spx-error{color:#b91c1c!important;font-weight:800!important;}',
+      '.spx-quick-reply-actions{display:flex!important;gap:6px!important;flex:none!important;}',
+      '.spx-quick-reply button{box-sizing:border-box!important;border:1px solid var(--spx-line)!important;background:#fff!important;color:var(--spx-text)!important;cursor:pointer!important;}',
+      '.spx-quick-reply button:hover{border-color:var(--spx-accent)!important;color:var(--spx-accent)!important;background:var(--spx-accent-wash)!important;}',
+      '.spx-quick-reply button:disabled{cursor:wait!important;opacity:.55!important;}',
+      '.spx-quick-reply-icon{min-width:58px!important;height:30px!important;padding:0 10px!important;border-radius:8px!important;font-size:12px!important;font-weight:900!important;}',
+      '.spx-quick-reply-context{display:none!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;min-height:36px!important;padding:8px 12px!important;border-bottom:1px solid #fde4bd!important;background:#fffbeb!important;color:#7c2d12!important;font-size:12px!important;font-weight:900!important;}',
+      '.spx-quick-reply-context.spx-visible{display:flex!important;}',
+      '.spx-quick-reply-context button{flex:none!important;width:24px!important;height:24px!important;padding:0!important;border:0!important;border-radius:7px!important;background:rgba(255,255,255,.8)!important;color:#7c2d12!important;font-size:14px!important;font-weight:900!important;}',
+      '.spx-quick-reply-body{padding:12px!important;background:var(--spx-panel)!important;}',
+      '.spx-quick-reply-list{display:flex!important;gap:7px!important;margin:0 0 9px!important;overflow-x:auto!important;scrollbar-width:thin!important;}',
+      '.spx-quick-reply-chip{flex:none!important;min-height:28px!important;padding:0 9px!important;border-radius:999px!important;background:var(--spx-panel-muted)!important;font-size:13px!important;font-weight:800!important;line-height:1.2!important;}',
+      '.spx-quick-reply-chip.spx-hot{border-color:#16a34a!important;background:#ecfdf5!important;color:#047857!important;}',
+      '.spx-quick-reply-emotes{margin:-1px 0 10px!important;padding:8px!important;border:1px solid var(--spx-line-soft)!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;}',
+      '.spx-quick-reply-emote-head{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;margin-bottom:7px!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;}',
+      '.spx-quick-reply-emote-grid{display:grid!important;grid-template-columns:repeat(auto-fill,34px)!important;gap:5px!important;align-items:center!important;}',
+      '.spx-quick-reply-emote{width:34px!important;height:34px!important;padding:0!important;border-radius:7px!important;background:#fff!important;line-height:1!important;}',
+      '.spx-quick-reply-emote img{display:block!important;max-width:28px!important;max-height:28px!important;margin:auto!important;object-fit:contain!important;}',
+      '.spx-quick-reply-tools{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;margin-bottom:8px!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:850!important;}',
+      '.spx-quick-reply-note{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
+      '.spx-quick-reply-counter{flex:none!important;font-weight:900!important;font-variant-numeric:tabular-nums!important;}',
+      '.spx-quick-reply-editor{box-sizing:border-box!important;display:block!important;width:100%!important;min-height:128px!important;max-height:260px!important;resize:vertical!important;padding:11px 12px!important;border:1px solid var(--spx-line)!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;color:var(--spx-text)!important;font-size:14px!important;line-height:1.6!important;outline:none!important;}',
+      '.spx-quick-reply-editor:focus{border-color:var(--spx-accent)!important;box-shadow:0 0 0 3px rgba(37,99,235,.12)!important;}',
+      '.spx-quick-reply-attach{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:8px!important;align-items:center!important;margin-top:9px!important;padding:8px!important;border:1px solid var(--spx-line-soft)!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;}',
+      '.spx-quick-reply-desc{box-sizing:border-box!important;min-width:0!important;height:32px!important;padding:0 10px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:#fff!important;color:var(--spx-text)!important;font-size:13px!important;outline:none!important;}',
+      '.spx-quick-reply-picker{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-height:32px!important;padding:0 11px!important;border:1px solid var(--spx-accent)!important;border-radius:8px!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;font-size:13px!important;font-weight:900!important;cursor:pointer!important;white-space:nowrap!important;}',
+      '.spx-quick-reply-help{grid-column:1/-1!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:800!important;}',
+      '.spx-quick-reply-attachments{display:none!important;grid-column:1/-1!important;grid-template-columns:repeat(auto-fit,minmax(140px,1fr))!important;gap:7px!important;margin-top:1px!important;}',
+      '.spx-quick-reply-attachments.spx-visible{display:grid!important;}',
+      '.spx-quick-reply-attachment{display:grid!important;grid-template-columns:38px minmax(0,1fr) auto!important;gap:8px!important;align-items:center!important;min-width:0!important;padding:6px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:#fff!important;}',
+      '.spx-quick-reply-thumb{width:38px!important;height:38px!important;border-radius:7px!important;background:#e5e7eb!important;object-fit:cover!important;}',
+      '.spx-quick-reply-attachment-name{overflow:hidden!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
+      '.spx-quick-reply-attachment-size{margin-top:2px!important;color:var(--spx-sub)!important;font-size:11px!important;font-weight:800!important;}',
+      '.spx-quick-reply-remove{width:26px!important;height:26px!important;padding:0!important;border-radius:7px!important;color:#b91c1c!important;font-weight:900!important;}',
+      '.spx-quick-reply-footer{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;margin-top:10px!important;}',
+      '.spx-quick-reply-hint{min-width:0!important;overflow:hidden!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:800!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
+      '.spx-quick-reply-submit-actions{display:flex!important;gap:7px!important;flex:none!important;}',
+      '.spx-quick-reply-action{min-height:32px!important;padding:0 12px!important;border-radius:8px!important;font-weight:900!important;}',
+      '.spx-quick-reply-action.spx-primary{border-color:var(--spx-accent)!important;background:var(--spx-accent)!important;color:#fff!important;}',
+      '.spx-quick-reply-selection{position:fixed!important;left:52%!important;top:50%!important;z-index:100022!important;display:none!important;gap:6px!important;padding:6px!important;border:1px solid var(--spx-line)!important;border-radius:9px!important;background:var(--spx-panel)!important;box-shadow:var(--spx-shadow-popover)!important;}',
+      '.spx-quick-reply-selection.spx-visible{display:flex!important;}',
+      '.spx-quick-reply-selection button{min-height:28px!important;padding:0 10px!important;border-radius:8px!important;font-size:12px!important;font-weight:900!important;}',
+      '@media(max-width:900px){.spx-quick-reply{right:8px!important;bottom:calc(78px + env(safe-area-inset-bottom,0px))!important;width:calc(100vw - 16px)!important;border-radius:12px!important}.spx-quick-reply-launcher{right:8px!important;bottom:calc(78px + env(safe-area-inset-bottom,0px))!important}.spx-quick-reply-footer{align-items:stretch!important;flex-direction:column!important}.spx-quick-reply-attach{grid-template-columns:minmax(0,1fr)!important}.spx-quick-reply-picker{width:100%!important}.spx-quick-reply-submit-actions{justify-content:flex-end!important}}',
       '.spx-author-hover-source{cursor:help!important;}',
       '.spx-author-popover{position:fixed!important;z-index:100003!important;box-sizing:border-box!important;width:min(320px,calc(100vw - 32px))!important;max-height:min(460px,calc(100vh - 32px))!important;overflow:auto!important;padding:12px!important;background:#fff!important;border:1px solid #cbd5e1!important;border-radius:10px!important;box-shadow:0 18px 46px rgba(15,23,42,.24)!important;color:#172033!important;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
       '.spx-author-popover-header{display:grid!important;grid-template-columns:48px minmax(0,1fr)!important;gap:10px!important;align-items:center!important;margin:0 0 10px!important;padding-bottom:10px!important;border-bottom:1px solid #e2e8f0!important;}',
@@ -8752,20 +8808,45 @@
         toolsHost.insertBefore(existingTools, toolsHost.firstChild);
       }
 
+      function openPostQuickReply(event) {
+        if (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+        }
+        var floorLabel = getPostFloorLabel(index);
+        var contextLabel = '回复 ' + (author || '用户') + ' · ' + floorLabel;
+        var replyText = '回 ' + floorLabel + (author ? '(' + author + ')' : '') + ' 的帖子\n';
+        openFloatingQuickReplyContext(contextLabel, replyText);
+      }
+
+      qsa('.readbot .huifu a,a[onclick*="postreply"]', post).forEach(function bindNativeQuickReply(link) {
+        if (link.dataset.spxQuickReplyBound === '1') return;
+        link.dataset.spxQuickReplyBound = '1';
+        link.addEventListener('click', openPostQuickReply, true);
+      });
+
       if (!existingTools) {
         var tools = createEl('div', 'spx-post-tools');
         var floor = createEl('span', '', getPostFloorLabel(index));
+        var quickReply = createEl('button', '', '回复');
         var blockAuthor = createEl('button', '', '屏蔽此人');
         var copyLink = createEl('button', '', '复制链接');
         var extractResources = createEl('button', '', '资源');
         var jumpNextFloor = null;
         var jumpLastFloor = null;
         floor.style.marginRight = 'auto';
+        quickReply.type = 'button';
+        blockAuthor.type = 'button';
+        copyLink.type = 'button';
+        extractResources.type = 'button';
         extractResources.title = '提取本页资源链接，可按本楼、作者或类型复制';
 
         if (index === 0 && tid) {
           jumpNextFloor = createEl('button', '', '未读楼层');
           jumpLastFloor = createEl('button', '', '上次楼层');
+          jumpNextFloor.type = 'button';
+          jumpLastFloor.type = 'button';
           jumpNextFloor.title = '跳到上次未读位置';
           jumpLastFloor.title = '跳到上次读到的楼层';
           jumpNextFloor.dataset.spxReadJump = 'next';
@@ -8790,9 +8871,12 @@
           openResourcePanel(posts, index, author, { state: state });
         });
 
+        quickReply.addEventListener('click', openPostQuickReply);
+
         tools.appendChild(floor);
         if (jumpNextFloor) tools.appendChild(jumpNextFloor);
         if (jumpLastFloor) tools.appendChild(jumpLastFloor);
+        tools.appendChild(quickReply);
         tools.appendChild(blockAuthor);
         tools.appendChild(copyLink);
         tools.appendChild(extractResources);
@@ -9690,7 +9774,7 @@
     if (editor.disabled || editor.readOnly) return false;
     if (
       editor.closest &&
-      editor.closest('#spx-settings,#spx-toolbox,#spx-watch-center,#spx-history-center,#spx-auto-buy-center,#spx-resource-center,#spx-preview-lightbox')
+      editor.closest('#spx-settings,#spx-toolbox,#spx-watch-center,#spx-history-center,#spx-auto-buy-center,#spx-resource-center,#spx-preview-lightbox,#spx-quick-reply')
     ) {
       return false;
     }
@@ -10097,59 +10181,414 @@
     return { parent: (form || editor.parentNode), before: editor };
   }
 
+  function ensureQuickReplyControlId(control, prefix) {
+    if (!control) return '';
+    if (!control.id) {
+      control.id = prefix + '-' + Math.random().toString(36).slice(2, 9);
+    }
+    return control.id;
+  }
+
+  function getQuickReplyAttachmentInput(form) {
+    if (!form) return null;
+    return qsa('input[type="file"]', form).filter(function usableAttachmentInput(input) {
+      return input && !input.disabled;
+    })[0] || null;
+  }
+
+  function getQuickReplyAttachmentDescriptionInput(form, attachmentInput) {
+    if (!form || !attachmentInput) return null;
+    var row = attachmentInput.closest && attachmentInput.closest('tr,div,p,section');
+    var rowInputs = row ? qsa('input[type="text"],input:not([type])', row).filter(function usableDescInput(input) {
+      return input && input !== attachmentInput && !input.disabled && !input.readOnly;
+    }) : [];
+    if (rowInputs.length) return rowInputs[0];
+    return qsa('input[type="text"],input:not([type])', form).filter(function likelyDescInput(input) {
+      var name = String(input.name || input.id || input.className || '').toLowerCase();
+      return !input.disabled && !input.readOnly && /(?:desc|describe|intro|atc)/.test(name);
+    })[0] || null;
+  }
+
+  function getQuickReplyAttachmentFiles(input) {
+    if (!input || !input.files) return [];
+    return Array.prototype.slice.call(input.files).filter(function keepImageAttachment(file) {
+      return file && (!file.type || /^image\//i.test(file.type));
+    });
+  }
+
+  function formatQuickReplyFileSize(size) {
+    var value = Number(size);
+    if (!isFinite(value) || value <= 0) return '未知大小';
+    if (value < 1024 * 1024) return Math.max(1, Math.round(value / 1024)) + ' KB';
+    return (value / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  function formatQuickReplyAttachmentSummary(files) {
+    var count = (files || []).length;
+    return count
+      ? '已选择 ' + count + ' 张图片；正式提交会随原站回复表单一起发送。'
+      : '沿用原站附件上传；正式提交时随原站回复表单一起发送。';
+  }
+
+  function openFloatingQuickReplyContext(label, text) {
+    var panel = qs('#spx-quick-reply');
+    if (!panel || typeof panel.spxOpenWithContext !== 'function') return false;
+    panel.spxOpenWithContext(label, text);
+    return true;
+  }
+
   function createQuickReplyPanel(settings, editor, state) {
     var replies = parseQuickReplyList((settings && settings.quickReplies || []).join('\n'));
     if (!editor || !replies.length) return null;
 
+    var form = editor.closest && editor.closest('form');
+    var attachmentInput = getQuickReplyAttachmentInput(form);
+    var attachmentDesc = getQuickReplyAttachmentDescriptionInput(form, attachmentInput);
+    var attachmentId = ensureQuickReplyControlId(attachmentInput, 'spx-quick-reply-attachment');
+
+    if (attachmentInput && !attachmentInput.getAttribute('accept')) {
+      attachmentInput.setAttribute('accept', 'image/*');
+    }
+
     var panel = createEl('div', 'spx-quick-reply');
     panel.id = 'spx-quick-reply';
+    panel.classList.add('spx-quick-reply-collapsed');
+    panel.setAttribute('aria-label', '浮动回复框');
+
+    var launcher = createEl('button', 'spx-quick-reply-launcher', '继续回复');
+    launcher.type = 'button';
+    launcher.id = 'spx-quick-reply-launcher';
+
+    var selectionMenu = createEl('div', 'spx-quick-reply-selection');
+    selectionMenu.id = 'spx-quick-reply-selection';
+    selectionMenu.setAttribute('aria-label', '选中文字操作');
+    var selectionQuote = createEl('button', '', '引用所选');
+    selectionQuote.type = 'button';
+    var selectionCancel = createEl('button', '', '取消');
+    selectionCancel.type = 'button';
+    selectionMenu.append(selectionQuote, selectionCancel);
+
     var header = createEl('div', 'spx-quick-reply-header');
-    header.appendChild(createEl('strong', '', '快捷回复'));
-    header.appendChild(createEl(
-      'span',
-      'spx-quick-reply-status',
-      '快捷语句或提交按钮都会无刷新展示'
-    ));
+    var title = createEl('div');
+    title.appendChild(createEl('strong', '', '快速回复'));
+    var status = createEl('span', 'spx-quick-reply-status', '草稿已保存 · Ctrl+Enter 发送');
+    title.appendChild(status);
+    var headerActions = createEl('div', 'spx-quick-reply-actions');
+    var collapse = createEl('button', 'spx-quick-reply-icon', '最小化');
+    collapse.type = 'button';
+    collapse.title = '最小化回复框';
+    headerActions.appendChild(collapse);
+    header.append(title, headerActions);
+
+    var context = createEl('div', 'spx-quick-reply-context');
+    var contextText = createEl('span', '', '');
+    var clearContext = createEl('button', '', '×');
+    clearContext.type = 'button';
+    clearContext.title = '清除引用';
+    context.append(contextText, clearContext);
+
+    var body = createEl('div', 'spx-quick-reply-body');
     var list = createEl('div', 'spx-quick-reply-list');
 
-    replies.forEach(function appendReply(reply) {
-      var button = createEl('button', '', reply);
+    replies.slice(0, 8).forEach(function appendReply(reply, index) {
+      var button = createEl('button', 'spx-quick-reply-chip' + (index < 2 ? ' spx-hot' : ''), reply);
       button.type = 'button';
-      button.title = '填入并提交回复：' + reply;
+      button.title = '填入回复：' + reply;
       button.addEventListener('click', function useQuickReply() {
-        if (insertTextIntoEditor(editor, reply)) {
-          submitQuickReply(editor, settings, state);
-        }
+        insertMirrorText(reply);
       });
       list.appendChild(button);
     });
 
-    panel.appendChild(header);
-    panel.appendChild(list);
+    var emotes = createEl('div', 'spx-quick-reply-emotes');
+    var emoteHead = createEl('div', 'spx-quick-reply-emote-head');
+    emoteHead.append(createEl('span', '', '原站表情'), createEl('span', '', '点击插入表情码'));
+    var emoteGrid = createEl('div', 'spx-quick-reply-emote-grid');
+    QUICK_REPLY_EMOTES.forEach(function appendEmote(emote) {
+      var button = createEl('button', 'spx-quick-reply-emote');
+      button.type = 'button';
+      button.title = emote.fileName;
+      button.dataset.spxEmote = emote.code;
+      var img = createEl('img');
+      img.src = emote.src;
+      img.alt = emote.fileName;
+      img.referrerPolicy = 'no-referrer';
+      button.appendChild(img);
+      emoteGrid.appendChild(button);
+    });
+    emotes.append(emoteHead, emoteGrid);
+
+    var tools = createEl('div', 'spx-quick-reply-tools');
+    tools.append(createEl('span', 'spx-quick-reply-note', '最近常用优先 · 支持楼层引用和选中文字引用'));
+    var counter = createEl('span', 'spx-quick-reply-counter', '0 字');
+    tools.appendChild(counter);
+
+    var mirror = createEl('textarea', 'spx-quick-reply-editor');
+    mirror.placeholder = '输入回复内容。点击楼层“回复”会自动带上下文。';
+    mirror.value = String(editor.value || '');
+
+    var attach = createEl('div', 'spx-quick-reply-attach');
+    var desc = createEl('input', 'spx-quick-reply-desc');
+    desc.type = 'text';
+    desc.placeholder = '图片描述，可留空';
+    desc.value = attachmentDesc ? String(attachmentDesc.value || '') : '';
+    if (!attachmentDesc) desc.disabled = true;
+    var picker = attachmentInput
+      ? createEl('label', 'spx-quick-reply-picker', '选择图片')
+      : createEl('span', 'spx-quick-reply-picker', '无附件入口');
+    if (attachmentInput) picker.setAttribute('for', attachmentId);
+    var help = createEl('div', 'spx-quick-reply-help', formatQuickReplyAttachmentSummary(getQuickReplyAttachmentFiles(attachmentInput)));
+    var attachmentList = createEl('div', 'spx-quick-reply-attachments');
+    attach.append(desc, picker, help, attachmentList);
+
+    var footer = createEl('div', 'spx-quick-reply-footer');
+    footer.appendChild(createEl('div', 'spx-quick-reply-hint', '失败时保留草稿，成功后局部刷新新楼层。'));
+    var submitActions = createEl('div', 'spx-quick-reply-submit-actions');
+    var saveDraft = createEl('button', 'spx-quick-reply-action', '保存草稿');
+    saveDraft.type = 'button';
+    var send = createEl('button', 'spx-quick-reply-action spx-primary', '发送回复');
+    send.type = 'button';
+    submitActions.append(saveDraft, send);
+    footer.appendChild(submitActions);
+
+    body.append(list, emotes, tools, mirror, attach, footer);
+    panel.append(header, context, body);
+
+    var draftTimer = null;
+    var activeContext = '';
+    var previewUrls = [];
+
+    function syncEditor() {
+      editor.value = mirror.value;
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      editor.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function updateCounter() {
+      counter.textContent = mirror.value.length + ' 字';
+    }
+
+    function markDraftSaved() {
+      status.classList.remove('spx-error');
+      status.textContent = '草稿已保存 · Ctrl+Enter 发送';
+    }
+
+    function scheduleDraftSave() {
+      syncEditor();
+      status.classList.remove('spx-error');
+      status.textContent = '正在保存草稿...';
+      window.clearTimeout(draftTimer);
+      draftTimer = window.setTimeout(markDraftSaved, 420);
+    }
+
+    function openReply() {
+      panel.classList.remove('spx-quick-reply-collapsed');
+      launcher.classList.remove('spx-visible');
+      if (typeof mirror.focus === 'function') mirror.focus();
+    }
+
+    function collapseReply() {
+      panel.classList.add('spx-quick-reply-collapsed');
+      launcher.classList.add('spx-visible');
+    }
+
+    function setContext(label) {
+      activeContext = String(label || '').trim();
+      contextText.textContent = activeContext;
+      context.classList.toggle('spx-visible', !!activeContext);
+    }
+
+    function insertMirrorText(text) {
+      var value = mirror.value;
+      var start = typeof mirror.selectionStart === 'number' ? mirror.selectionStart : value.length;
+      var end = typeof mirror.selectionEnd === 'number' ? mirror.selectionEnd : value.length;
+      var prefix = value && !/\n$/.test(value.slice(0, start)) ? '\n' : '';
+      mirror.value = value.slice(0, start) + prefix + text + value.slice(end);
+      var cursor = start + prefix.length + String(text || '').length;
+      if (typeof mirror.setSelectionRange === 'function') mirror.setSelectionRange(cursor, cursor);
+      updateCounter();
+      scheduleDraftSave();
+      openReply();
+    }
+
+    function revokePreviewUrls() {
+      previewUrls.forEach(function revoke(url) {
+        try { URL.revokeObjectURL(url); } catch (error) {}
+      });
+      previewUrls = [];
+    }
+
+    function renderAttachments() {
+      var files = getQuickReplyAttachmentFiles(attachmentInput);
+      attachmentList.innerHTML = '';
+      attachmentList.classList.toggle('spx-visible', !!files.length);
+      help.textContent = formatQuickReplyAttachmentSummary(files);
+      revokePreviewUrls();
+      files.forEach(function appendAttachment(file, index) {
+        var row = createEl('div', 'spx-quick-reply-attachment');
+        var thumb = createEl('img', 'spx-quick-reply-thumb');
+        try {
+          thumb.src = URL.createObjectURL(file);
+          previewUrls.push(thumb.src);
+        } catch (error) {}
+        thumb.alt = file.name || '图片附件';
+        var meta = createEl('div');
+        meta.append(
+          createEl('div', 'spx-quick-reply-attachment-name', file.name || '图片附件'),
+          createEl('div', 'spx-quick-reply-attachment-size', formatQuickReplyFileSize(file.size))
+        );
+        var remove = createEl('button', 'spx-quick-reply-remove', '×');
+        remove.type = 'button';
+        remove.title = '移除图片';
+        remove.dataset.spxRemoveAttachment = String(index);
+        row.append(thumb, meta, remove);
+        attachmentList.appendChild(row);
+      });
+    }
+
+    function removeAttachment(index) {
+      if (!attachmentInput || !attachmentInput.files || typeof DataTransfer !== 'function') {
+        status.textContent = '当前浏览器不支持单张移除，请重新选择图片';
+        return;
+      }
+      var dt = new DataTransfer();
+      getQuickReplyAttachmentFiles(attachmentInput).forEach(function keepFile(file, fileIndex) {
+        if (fileIndex !== index) dt.items.add(file);
+      });
+      attachmentInput.files = dt.files;
+      renderAttachments();
+      scheduleDraftSave();
+    }
+
+    function selectedText() {
+      return String(window.getSelection && window.getSelection().toString() || '').trim();
+    }
+
+    function sendReply() {
+      syncEditor();
+      if (attachmentDesc) {
+        attachmentDesc.value = desc.value;
+        attachmentDesc.dispatchEvent(new Event('input', { bubbles: true }));
+        attachmentDesc.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if (!mirror.value.trim() && !getQuickReplyAttachmentFiles(attachmentInput).length) {
+        status.classList.add('spx-error');
+        status.textContent = '请输入回复内容或选择图片';
+        mirror.focus();
+        return;
+      }
+      window.clearTimeout(draftTimer);
+      var result = submitQuickReply(editor, settings, state);
+      if (result && typeof result.then === 'function') {
+        result.then(function markResult(ok) {
+          if (ok) {
+            status.classList.remove('spx-error');
+            status.textContent = getQuickReplyAttachmentFiles(attachmentInput).length
+              ? '提交成功 · 已带图片刷新帖子'
+              : '提交成功 · 已刷新帖子';
+          }
+        });
+        return;
+      }
+      if (result) status.textContent = '已交给原站提交';
+    }
+
+    panel.spxOpenWithContext = function spxOpenWithContext(label, text) {
+      setContext(label);
+      if (text) insertMirrorText(text);
+      else openReply();
+    };
+    function showSelectionMenu() {
+      var text = selectedText();
+      selectionMenu.classList.toggle('spx-visible', text.length > 2 && !panel.contains(document.activeElement));
+    }
+
+    panel.spxCleanup = function spxCleanupQuickReply() {
+      revokePreviewUrls();
+      window.clearTimeout(draftTimer);
+      document.removeEventListener('selectionchange', showSelectionMenu);
+      if (launcher.parentNode) launcher.remove();
+      if (selectionMenu.parentNode) selectionMenu.remove();
+    };
+    panel.spxLauncher = launcher;
+    panel.spxSelectionMenu = selectionMenu;
+
+    collapse.addEventListener('click', collapseReply);
+    launcher.addEventListener('click', openReply);
+    clearContext.addEventListener('click', function clearQuickReplyContext() {
+      activeContext = '';
+      context.classList.remove('spx-visible');
+    });
+    mirror.addEventListener('input', function handleMirrorInput() {
+      updateCounter();
+      scheduleDraftSave();
+    });
+    mirror.addEventListener('keydown', function handleMirrorShortcut(event) {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault();
+        sendReply();
+      }
+    });
+    desc.addEventListener('input', function handleDescInput() {
+      if (attachmentDesc) attachmentDesc.value = desc.value;
+      scheduleDraftSave();
+    });
+    if (attachmentInput) {
+      attachmentInput.addEventListener('change', function handleAttachmentInputChange() {
+        renderAttachments();
+        scheduleDraftSave();
+        openReply();
+      });
+    }
+    saveDraft.addEventListener('click', function saveQuickReplyDraft() {
+      scheduleDraftSave();
+      markDraftSaved();
+    });
+    send.addEventListener('click', sendReply);
+    panel.addEventListener('click', function handleQuickReplyPanelClick(event) {
+      var target = event.target;
+      if (target.closest('[data-spx-emote]')) {
+        insertMirrorText(target.closest('[data-spx-emote]').dataset.spxEmote || '');
+        return;
+      }
+      if (target.closest('[data-spx-remove-attachment]')) {
+        removeAttachment(Number(target.closest('[data-spx-remove-attachment]').dataset.spxRemoveAttachment));
+      }
+    });
+    selectionQuote.addEventListener('click', function quoteSelectedText() {
+      var text = selectedText();
+      if (!text) return;
+      setContext('引用所选文字');
+      insertMirrorText('[quote]' + text.slice(0, 160) + '[/quote]\n');
+      selectionMenu.classList.remove('spx-visible');
+    });
+    selectionCancel.addEventListener('click', function cancelSelectedQuote() {
+      selectionMenu.classList.remove('spx-visible');
+    });
+    document.addEventListener('selectionchange', showSelectionMenu);
+
+    updateCounter();
+    renderAttachments();
     return panel;
   }
 
   function enhanceQuickReply(settings, state) {
     if (detectPageType(location.href) !== 'read' && detectPageType(location.href) !== 'post') return;
     var oldPanel = qs('#spx-quick-reply');
+    if (oldPanel && typeof oldPanel.spxCleanup === 'function') oldPanel.spxCleanup();
     if (oldPanel) oldPanel.remove();
+    var oldLauncher = qs('#spx-quick-reply-launcher');
+    if (oldLauncher) oldLauncher.remove();
+    var oldSelection = qs('#spx-quick-reply-selection');
+    if (oldSelection) oldSelection.remove();
 
     var editor = getQuickReplyEditor(document);
     var panel = createQuickReplyPanel(settings, editor, state);
     bindQuickReplyFormSubmit(editor, settings, state, panel);
-    var mount = getQuickReplyMount(editor);
-    if (!panel || !mount || !mount.parent) return;
-
-    if (mount.before && /^tr$/i.test(mount.before.nodeName || '') && /^tbody$/i.test(mount.parent.nodeName || '')) {
-      var tr = createEl('tr');
-      var td = createEl('td');
-      td.colSpan = 20;
-      tr.appendChild(td);
-      td.appendChild(panel);
-      mount.parent.insertBefore(tr, mount.before);
-      return;
-    }
-    mount.parent.insertBefore(panel, mount.before);
+    if (!panel || !document.body) return;
+    document.body.appendChild(panel);
+    if (panel.spxLauncher) document.body.appendChild(panel.spxLauncher);
+    if (panel.spxSelectionMenu) document.body.appendChild(panel.spxSelectionMenu);
   }
 
   function createSettingsPanel(settings, state) {
@@ -11608,6 +12047,10 @@
     getThreadPreviewImageUrls: getThreadPreviewImageUrls,
     getThreadPreviewImageSummary: getThreadPreviewImageSummary,
     createQuickReplyRequest: createQuickReplyRequest,
+    getQuickReplyAttachmentFiles: getQuickReplyAttachmentFiles,
+    formatQuickReplyAttachmentSummary: formatQuickReplyAttachmentSummary,
+    formatQuickReplyFileSize: formatQuickReplyFileSize,
+    getQuickReplyEmotes: function getQuickReplyEmotes() { return QUICK_REPLY_EMOTES.slice(); },
     isQuickReplySubmitter: isQuickReplySubmitter,
     getQuickReplySubmitter: getQuickReplySubmitter,
     isQuickReplyEditorCandidate: isQuickReplyEditorCandidate,
