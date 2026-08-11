@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.4\.2/);
+assert.match(source, /@version\s+0\.4\.3/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.forumDashboard, true);
@@ -525,7 +525,9 @@ assert.match(source, /compositionstart/);
 assert.match(source, /compositionend/);
 assert.match(source, /event\.isComposing/);
 assert.match(source, /THREAD_ROW_HIDDEN_CLASSES/);
-assert.match(source, /setThreadRowHiddenClass\(item\.row, 'spx-filter-hidden', hidden\)/);
+assert.match(source, /setThreadRowHiddenClass\(item\.row, 'spx-filter-hidden', textHidden\)/);
+assert.match(source, /setThreadRowHiddenClass\(item\.row, 'spx-resource-filter-hidden', resourceHidden\)/);
+assert.equal(enhancer.matchesForumFilter({ title: '普通标题', author: 'bob', resourceBadges: [{ type: 'quark', label: '夸克' }] }, '夸克'), true);
 assert.match(source, /setThreadRowHiddenClass\(info\.row, 'spx-hidden-rule', matchesBlockRules\(info, settings\)\)/);
 assert.match(source, /spx-thread-list-table tr\.spx-filter-hidden/);
 assert.match(source, /shouldUseModuleNavigation\(settings, location\.href, document\)/);
@@ -725,6 +727,40 @@ assert.equal(enhancer.parseUserSpBalance('当前拥有 30 SP币'), 30);
 assert.equal(enhancer.parseUserSpBalance('SP余额：8.5'), 8.5);
 assert.equal(enhancer.parseUserSpBalance('SP币: 34'), 34);
 assert.equal(enhancer.parseUserSpBalance('本帖售价：5 SP币'), null);
+
+assert.deepEqual(
+  enhancer.getResourceBadgeTypes(enhancer.inferResourceBadgesFromText('[合集] 百度 / 夸克双盘 解压码')),
+  ['baidu', 'quark', 'archive']
+);
+assert.deepEqual(
+  enhancer.getResourceBadgeTypes(enhancer.inferResourceBadgesFromText('PikPak 分流 另附镜像外链')),
+  ['pikpak', 'external']
+);
+assert.equal(
+  enhancer.getResourceBadgeFromResourceItem({ type: 'cloud', provider: '百度网盘', url: 'https://pan.baidu.com/s/abc' }).type,
+  'baidu'
+);
+const badgeIndex = enhancer.getThreadResourceBadgeIndex({
+  baidu: {
+    url: 'https://pan.baidu.com/s/abc',
+    type: 'cloud',
+    provider: '百度网盘',
+    sourceUrl: 'https://south-plus.org/read.php?tid=2904409',
+    sourceTitle: '百度资源',
+  },
+  magnet: {
+    url: 'magnet:?xt=urn:btih:abcdef',
+    type: 'magnet',
+    sourceUrl: 'https://south-plus.org/read.php?tid-2904409.html',
+    sourceTitle: '磁力资源',
+  },
+});
+assert.deepEqual(
+  enhancer.getResourceBadgeTypes(enhancer.getThreadResourceBadges({ id: '2904409', title: '夸克备份' }, badgeIndex)),
+  ['baidu', 'quark', 'magnet']
+);
+assert.match(source, /spx-resource-badge-guess/);
+assert.match(source, /setThreadRowHiddenClass\(item\.row, 'spx-resource-filter-hidden', resourceHidden\)/);
 
 assert.equal(enhancer.clampPreviewZoom(0.1), 0.5);
 assert.equal(enhancer.clampPreviewZoom(1.75), 1.75);

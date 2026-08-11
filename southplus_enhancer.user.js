@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.4.2
+// @version      0.4.3
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -82,7 +82,7 @@
   var TOOLBOX_BUTTON_SELECTOR = '[data-spx-toolbox-button="1"]';
   var SETTINGS_BUTTON_SELECTOR = '[data-spx-settings-button="1"]';
   var COMMAND_PALETTE_BUTTON_SELECTOR = '[data-spx-command-palette-button="1"]';
-  var THREAD_ROW_HIDDEN_CLASSES = ['spx-filter-hidden', 'spx-hidden-rule', 'spx-unread-hidden', 'spx-thread-row-hidden'];
+  var THREAD_ROW_HIDDEN_CLASSES = ['spx-filter-hidden', 'spx-resource-filter-hidden', 'spx-hidden-rule', 'spx-unread-hidden', 'spx-thread-row-hidden'];
   var pendingModuleNavigationConfigs = [];
   var scriptRequestState = {
     queue: [],
@@ -109,6 +109,18 @@
     cloud: '网盘',
     image: '图片',
     external: '外链',
+  };
+  var RESOURCE_BADGE_ORDER = ['baidu', 'quark', 'pikpak', 'magnet', 'torrent', 'archive', 'ed2k', 'external', 'cloud'];
+  var RESOURCE_BADGE_DEFINITIONS = {
+    baidu: { label: '百度', pattern: /百度|baidu|pan\.baidu|yun\.baidu/i },
+    quark: { label: '夸克', pattern: /夸克|quark|pan\.quark/i },
+    pikpak: { label: 'PikPak', pattern: /pikpak/i },
+    magnet: { label: '磁力', pattern: /磁力|magnet/i },
+    torrent: { label: '种子', pattern: /种子|torrent/i },
+    archive: { label: '压缩包', pattern: /压缩包|解压|zip|rar|7z|iso/i },
+    ed2k: { label: '电驴', pattern: /电驴|ed2k/i },
+    external: { label: '外链', pattern: /外链|直链|镜像/i },
+    cloud: { label: '网盘', pattern: /网盘|云盘/i },
   };
   var CLOUD_RESOURCE_HOST_PATTERN = [
     'pan\\.baidu\\.com',
@@ -1134,7 +1146,10 @@
     var data = item || {};
     var title = String(data.title || '').toLowerCase();
     var author = String(data.author || '').toLowerCase();
-    var combined = title + ' ' + author;
+    var resourceText = (data.resourceBadges || []).map(function mapFilterResourceBadge(badge) {
+      return [badge.type, badge.label].filter(Boolean).join(' ');
+    }).join(' ').toLowerCase();
+    var combined = title + ' ' + author + ' ' + resourceText;
 
     if (parsed.author && author.indexOf(parsed.author) === -1) return false;
     if ((parsed.excludes || []).some(function hasExcluded(token) {
@@ -1876,6 +1891,120 @@
       .sort(function sortResourceEntries(left, right) {
         return (right.updatedAt || right.savedAt || 0) - (left.updatedAt || left.savedAt || 0);
       });
+  }
+
+  function getResourceBadgeDefinition(type) {
+    return RESOURCE_BADGE_DEFINITIONS[type] || null;
+  }
+
+  function getResourceBadgeOrderIndex(type) {
+    var index = RESOURCE_BADGE_ORDER.indexOf(type);
+    return index === -1 ? RESOURCE_BADGE_ORDER.length : index;
+  }
+
+  function getCloudResourceBadgeType(value) {
+    var text = String(value || '');
+    if (/百度|baidu/i.test(text)) return 'baidu';
+    if (/夸克|quark/i.test(text)) return 'quark';
+    if (/pikpak/i.test(text)) return 'pikpak';
+    return 'cloud';
+  }
+
+  function getResourceBadgeFromResourceItem(item, source) {
+    var data = item || {};
+    var type = data.type || classifyResourceLink(data.url);
+    var badgeType = type === 'cloud'
+      ? getCloudResourceBadgeType([data.provider, data.label, data.url].filter(Boolean).join(' '))
+      : type;
+    var definition = getResourceBadgeDefinition(badgeType);
+    if (!definition) return null;
+    return {
+      type: badgeType,
+      label: definition.label,
+      source: source || 'resource',
+      guessed: false,
+    };
+  }
+
+  function mergeResourceBadges() {
+    var map = {};
+    Array.prototype.slice.call(arguments).forEach(function mergeBadgeList(list) {
+      (list || []).forEach(function mergeBadge(badge) {
+        if (!badge || !badge.type || !getResourceBadgeDefinition(badge.type)) return;
+        var previous = map[badge.type];
+        if (!previous || (previous.guessed && !badge.guessed)) {
+          map[badge.type] = Object.assign({}, badge, {
+            label: badge.label || getResourceBadgeDefinition(badge.type).label,
+            guessed: !!badge.guessed,
+          });
+        }
+      });
+    });
+    return Object.keys(map)
+      .sort(function sortResourceBadges(left, right) {
+        return getResourceBadgeOrderIndex(left) - getResourceBadgeOrderIndex(right);
+      })
+      .map(function mapResourceBadge(type) {
+        return map[type];
+      });
+  }
+
+  function getResourceBadgesFromItems(items, source) {
+    return mergeResourceBadges((items || []).map(function mapResourceBadgeItem(item) {
+      return getResourceBadgeFromResourceItem(item, source);
+    }));
+  }
+
+  function inferResourceBadgesFromText(text) {
+    var source = String(text || '');
+    var badges = RESOURCE_BADGE_ORDER.map(function inferResourceBadge(type) {
+      var definition = getResourceBadgeDefinition(type);
+      if (!definition || !definition.pattern.test(source)) return null;
+      return {
+        type: type,
+        label: definition.label,
+        source: 'title',
+        guessed: true,
+      };
+    });
+    var merged = mergeResourceBadges(badges);
+    if (merged.some(function hasSpecificCloudBadge(badge) {
+      return badge.type === 'baidu' || badge.type === 'quark' || badge.type === 'pikpak';
+    })) {
+      return merged.filter(function dropGenericCloudBadge(badge) {
+        return badge.type !== 'cloud';
+      });
+    }
+    return merged;
+  }
+
+  function getThreadResourceBadgeIndex(resources) {
+    var index = {};
+    getResourceCenterEntries(resources || {}).forEach(function indexResourceEntry(entry) {
+      var tid = parseThreadId(entry.sourceUrl || entry.sourceTitle || '');
+      var badge = getResourceBadgeFromResourceItem(entry, 'resource');
+      if (!tid || !badge) return;
+      index[tid] = mergeResourceBadges(index[tid], [badge]);
+    });
+    return index;
+  }
+
+  function getThreadResourceBadges(item, badgeIndex, previewPayload) {
+    var data = item || {};
+    var index = badgeIndex || {};
+    var titleBadges = inferResourceBadgesFromText(data.title || '');
+    var previewBadges = previewPayload && previewPayload.resourceBadges
+      ? (previewPayload.resourceBadges || []).map(function markPreviewBadge(badge) {
+        return Object.assign({}, badge, { source: badge.source || 'preview', guessed: !!badge.guessed });
+      })
+      : [];
+    return mergeResourceBadges(index[data.id], previewBadges, titleBadges);
+  }
+
+  function getResourceBadgeTypes(badges) {
+    return (badges || []).map(function mapBadgeType(badge) {
+      return badge.type;
+    }).filter(Boolean);
   }
 
   function getResourceProviderOptions(entries) {
@@ -3780,6 +3909,13 @@
       '.spx-forum-tools input{box-sizing:border-box;flex:1;min-width:180px;height:30px;border:1px solid var(--spx-line);border-radius:6px;padding:0 9px;font-size:13px;}',
       '.spx-forum-tools button{height:30px;border:1px solid var(--spx-line);border-radius:6px;background:#fff;color:var(--spx-text);padding:0 9px;cursor:pointer;font-size:12px;}',
       '.spx-forum-tools button:hover{border-color:var(--spx-accent);color:var(--spx-accent);}',
+      '.spx-forum-resource-filters{display:flex;align-items:center;gap:5px;max-width:46%;overflow-x:auto;scrollbar-width:thin;}',
+      '.spx-forum-tools .spx-resource-filter-active{border-color:#93c5fd;background:#dbeafe;color:#1d4ed8;font-weight:900;}',
+      '.spx-resource-badges{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px;margin-left:6px;vertical-align:middle;}',
+      '.spx-resource-badge{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;min-height:21px;padding:0 7px;border:1px solid #bfdbfe;border-radius:6px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:900;line-height:1;white-space:nowrap;cursor:pointer;}',
+      '.spx-resource-badge:hover{filter:brightness(.97);transform:translateY(-1px);}',
+      '.spx-resource-badge-guess{border-style:dashed;background:#fff;color:#475467;}',
+      '.spx-resource-badge-baidu{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;}.spx-resource-badge-quark{border-color:#99f6e4;background:#f0fdfa;color:#0f766e;}.spx-resource-badge-pikpak{border-color:#ddd6fe;background:#faf5ff;color:#6d28d9;}.spx-resource-badge-magnet{border-color:#fed7aa;background:#fff7ed;color:#c2410c;}.spx-resource-badge-torrent{border-color:#bae6fd;background:#f0f9ff;color:#0369a1;}.spx-resource-badge-archive{border-color:#fbcfe8;background:#fdf2f8;color:#be185d;}.spx-resource-badge-ed2k{border-color:#cbd5e1;background:#f1f5f9;color:#334155;}.spx-resource-badge-external{border-color:#fde68a;background:#fffbeb;color:#92400e;}.spx-resource-badge-cloud{border-color:#cbd5e1;background:#f8fafc;color:#475569;}',
       '.spx-module-nav-ready.spx-home-dashboard #content,.spx-module-nav-ready.spx-forum-dashboard #content{display:grid!important;grid-template-columns:minmax(196px,var(--spx-module-width)) minmax(0,1fr)!important;gap:14px!important;align-items:start!important;}',
       '.spx-module-body{grid-column:2!important;min-width:0!important;display:block!important;}',
       '.spx-module-nav-ready.spx-home-dashboard #content>*:not(.spx-module-nav):not(.spx-module-body),.spx-module-nav-ready.spx-forum-dashboard #content>*:not(.spx-module-nav):not(.spx-module-body){grid-column:2!important;min-width:0!important;}',
@@ -3812,6 +3948,7 @@
       '.spx-module-nav-count{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-width:22px!important;height:20px!important;padding:0 6px!important;border-radius:999px!important;background:var(--spx-panel)!important;color:var(--spx-sub)!important;font-size:11px!important;font-weight:900!important;font-variant-numeric:tabular-nums!important;}',
       '.spx-module-nav-item.spx-active .spx-module-nav-count{background:rgba(255,255,255,.22)!important;color:#fff!important;}',
       '.spx-filter-hidden{display:none!important;}',
+      '.spx-resource-filter-hidden{display:none!important;}',
       '.spx-module-filter-hidden{display:none!important;}',
       '.spx-forum-prelude-hidden{display:none!important;}',
       '.spx-thread-row-hidden{display:none!important;}',
@@ -5378,6 +5515,54 @@
     };
   }
 
+  function dispatchResourceBadgeFilter(type) {
+    if (!type || typeof document === 'undefined') return;
+    var detail = { type: type };
+    try {
+      document.dispatchEvent(new CustomEvent('spx-resource-filter', { detail: detail }));
+    } catch (error) {
+      var event = document.createEvent && document.createEvent('CustomEvent');
+      if (!event) return;
+      event.initCustomEvent('spx-resource-filter', true, false, detail);
+      document.dispatchEvent(event);
+    }
+  }
+
+  function renderThreadResourceBadges(info, badges) {
+    if (!info || !info.cell || !info.titleLink) return;
+    var previous = qs('.spx-resource-badges', info.cell);
+    if (previous) previous.remove();
+    var list = mergeResourceBadges(badges || []);
+    info.resourceBadges = list;
+    info.resourceBadgeTypes = getResourceBadgeTypes(list);
+    if (info.row && info.row.dataset) info.row.dataset.spxResourceTypes = info.resourceBadgeTypes.join(' ');
+    if (!list.length) return;
+
+    var wrap = createEl('span', 'spx-resource-badges');
+    wrap.setAttribute('aria-label', '资源类型角标');
+    list.forEach(function appendResourceBadge(badge) {
+      var button = createEl('button', 'spx-resource-badge spx-resource-badge-' + badge.type + (badge.guessed ? ' spx-resource-badge-guess' : ''), badge.label);
+      button.type = 'button';
+      button.dataset.spxResourceType = badge.type;
+      button.title = (badge.guessed ? '标题关键词推测：' : '已识别资源：') + badge.label + '，点击筛选同类主题';
+      button.addEventListener('click', function filterByResourceBadge(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        dispatchResourceBadgeFilter(badge.type);
+      });
+      wrap.appendChild(button);
+    });
+
+    var anchor = qs('.spx-thread-tools', info.cell) || qs('.spx-watch-badge', info.cell) || info.titleLink;
+    anchor.insertAdjacentElement('afterend', wrap);
+  }
+
+  function updateThreadResourceBadges(info, state, previewPayload) {
+    if (!info) return;
+    var badges = getThreadResourceBadges(info, getThreadResourceBadgeIndex(state && state.resources), previewPayload);
+    renderThreadResourceBadges(info, badges);
+  }
+
   function isStickyCell(cell) {
     var text = (cell.textContent || '').trim();
     if (!cell.id) return false;
@@ -6610,30 +6795,89 @@
 
     var tools = createEl('div', 'spx-forum-tools');
     tools.id = 'spx-forum-tools';
+    var activeResourceFilter = 'all';
     var input = createEl('input');
     input.type = 'search';
     input.placeholder = '快速过滤：关键词、!排除、作者:用户名';
+    var resourceFilters = createEl('div', 'spx-forum-resource-filters');
     var markVisibleButton = createEl('button', '', '可见已读');
     var watchVisibleButton = createEl('button', '', '可见稍后');
     var preloadNextButton = createEl('button', '', '预载下页');
     var clearButton = createEl('button', '', '清空过滤');
     tools.appendChild(input);
+    tools.appendChild(resourceFilters);
     tools.appendChild(markVisibleButton);
     tools.appendChild(watchVisibleButton);
     tools.appendChild(preloadNextButton);
     tools.appendChild(clearButton);
 
+    function getAvailableResourceFilterTypes() {
+      var seen = {};
+      (items || []).forEach(function collectItemResourceTypes(item) {
+        (item.resourceBadgeTypes || []).forEach(function collectType(type) {
+          if (getResourceBadgeDefinition(type)) seen[type] = true;
+        });
+      });
+      return RESOURCE_BADGE_ORDER.filter(function keepAvailableType(type) {
+        return !!seen[type];
+      });
+    }
+
+    function syncResourceFilterButtons() {
+      qsa('button[data-spx-resource-filter]', resourceFilters).forEach(function syncFilterButton(button) {
+        button.classList.toggle('spx-resource-filter-active', button.dataset.spxResourceFilter === activeResourceFilter);
+      });
+    }
+
+    function setResourceFilter(type) {
+      activeResourceFilter = getResourceBadgeDefinition(type) ? type : 'all';
+      syncResourceFilterButtons();
+      applyFilter();
+    }
+
+    function createResourceFilterButton(type, label) {
+      var button = createEl('button', type === activeResourceFilter ? 'spx-resource-filter-active' : '', label);
+      button.type = 'button';
+      button.dataset.spxResourceFilter = type;
+      button.title = type === 'all' ? '显示全部资源类型' : '只看' + label + '资源主题';
+      button.addEventListener('click', function applyResourceFilter(event) {
+        event.preventDefault();
+        setResourceFilter(type);
+      });
+      return button;
+    }
+
+    function renderResourceFilters() {
+      var types = getAvailableResourceFilterTypes();
+      resourceFilters.textContent = '';
+      if (!types.length) return;
+      resourceFilters.appendChild(createResourceFilterButton('all', '全部资源'));
+      types.forEach(function appendResourceFilter(type) {
+        resourceFilters.appendChild(createResourceFilterButton(type, getResourceBadgeDefinition(type).label));
+      });
+    }
+
     function applyFilter() {
       var parsed = parseForumFilterQuery(input.value);
       items.forEach(function toggleItem(item) {
-        var hidden = !!input.value.trim() && !matchesForumFilter(item, parsed);
-        setThreadRowHiddenClass(item.row, 'spx-filter-hidden', hidden);
+        var textHidden = !!input.value.trim() && !matchesForumFilter(item, parsed);
+        var resourceHidden = activeResourceFilter !== 'all' && (item.resourceBadgeTypes || []).indexOf(activeResourceFilter) === -1;
+        setThreadRowHiddenClass(item.row, 'spx-filter-hidden', textHidden);
+        setThreadRowHiddenClass(item.row, 'spx-resource-filter-hidden', resourceHidden);
       });
     }
+
+    renderResourceFilters();
+    document.addEventListener('spx-resource-filter', function handleResourceBadgeFilter(event) {
+      if (!tools.isConnected) return;
+      setResourceFilter(event && event.detail && event.detail.type);
+    });
 
     input.addEventListener('input', applyFilter);
     clearButton.addEventListener('click', function clearFilter() {
       input.value = '';
+      activeResourceFilter = 'all';
+      syncResourceFilterButtons();
       applyFilter();
       input.focus();
     });
@@ -7881,6 +8125,7 @@
   function extractPreviewPayloadFromDocument(doc, url) {
     var content = doc && doc.querySelector ? doc.querySelector('.tpc_content') : null;
     var images = content ? Array.prototype.slice.call(content.querySelectorAll('img')) : [];
+    var resourceLinks = doc && doc.querySelectorAll ? getJumpResourceLinks(extractReadPageResourceLinks(qsa('table.js-post', doc), url)) : [];
     return {
       text: content ? content.textContent.replace(/\s+/g, ' ').trim().slice(0, 260) : '',
       images: extractPreviewImageUrls(
@@ -7894,6 +8139,7 @@
         }),
         url
       ),
+      resourceBadges: getResourceBadgesFromItems(resourceLinks, 'preview'),
     };
   }
 
@@ -7909,6 +8155,7 @@
       var cached = getCachedThreadPreview(url);
       if (cached) {
         cached.cached = true;
+        updateThreadResourceBadges(info, state, cached);
         renderPreviewPanel(info, cached, event, state, settings);
         return;
       }
@@ -7933,6 +8180,7 @@
             var doc = new DOMParser().parseFromString(html, 'text/html');
             var payload = extractPreviewPayloadFromDocument(doc, url);
             rememberThreadPreview(url, payload);
+            updateThreadResourceBadges(info, state, payload);
             renderPreviewPanel(info, payload, event, state, settings);
           })
           .catch(function showPreviewError() {
@@ -7969,6 +8217,7 @@
       return parseThreadId(cell.id) && qs('a[id^="a_ajax_"]', cell);
     });
     var items = [];
+    var resourceBadgeIndex = getThreadResourceBadgeIndex(state.resources);
 
     cells.forEach(function enhanceCell(cell) {
       var table = cell.closest ? cell.closest('.t') : null;
@@ -7996,12 +8245,19 @@
       if (info.row.dataset) info.row.dataset.spxThreadListRow = '1';
       setThreadRowHiddenClass(info.row, 'spx-unread-hidden', !!settings.unreadOnly && isRead);
       setThreadRowHiddenClass(info.row, 'spx-hidden-rule', matchesBlockRules(info, settings));
+      var resourceBadges = getThreadResourceBadges(info, resourceBadgeIndex);
+      info.resourceBadges = resourceBadges;
+      info.resourceBadgeTypes = getResourceBadgeTypes(resourceBadges);
 
       if (state.watch[info.id] && !qs('.spx-watch-badge', info.cell)) {
         info.titleLink.insertAdjacentElement('afterend', createWatchBadge(info.id));
       }
 
-      if (qs('.spx-thread-tools', info.cell)) return;
+      if (qs('.spx-thread-tools', info.cell)) {
+        renderThreadResourceBadges(info, resourceBadges);
+        attachThreadHoverPreview(info, settings, state);
+        return;
+      }
       var tools = createEl('span', 'spx-thread-tools');
       var watchButton = createEl('button', '', state.watch[info.id] ? '已存' : '稍后');
       var titleBlockButton = createEl('button', '', '屏题');
@@ -8074,6 +8330,7 @@
       tools.appendChild(hideRowButton);
       tools.appendChild(favoriteButton);
       info.titleLink.insertAdjacentElement('afterend', tools);
+      renderThreadResourceBadges(info, resourceBadges);
       attachThreadHoverPreview(info, settings, state);
 
       info.titleLink.addEventListener('click', function markRead() {
@@ -12641,6 +12898,12 @@
     classifyResourceLink: classifyResourceLink,
     getCloudProviderLabel: getCloudProviderLabel,
     getResourceDisplayLabel: getResourceDisplayLabel,
+    getResourceBadgeDefinition: getResourceBadgeDefinition,
+    getResourceBadgeFromResourceItem: getResourceBadgeFromResourceItem,
+    inferResourceBadgesFromText: inferResourceBadgesFromText,
+    getThreadResourceBadgeIndex: getThreadResourceBadgeIndex,
+    getThreadResourceBadges: getThreadResourceBadges,
+    getResourceBadgeTypes: getResourceBadgeTypes,
     extractResourceLinksFromText: extractResourceLinksFromText,
     filterResourceLinks: filterResourceLinks,
     formatResourceLinks: formatResourceLinks,

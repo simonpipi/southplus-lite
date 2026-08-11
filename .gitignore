@@ -2,3 +2,4 @@
 docs/
 *.html
 !command-palette-preview.html
+!resource-badge-preview.html
