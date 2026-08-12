@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.6 - 2026-08-12
+
+### Changed
+
+- 首屏启动改为按需创建工具箱、设置面板和命令面板，减少页面刷新后的同步初始化工作。
+- 总增强入口按页面类型分流执行，首页、列表页、阅读页、个人中心和任务页只运行对应增强模块。
+- 命令面板缓存当前页面命令索引，并对搜索输入增加轻量防抖，降低连续输入时的重绘和 DOM 扫描频率。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.4.5 - 2026-08-12
 
 ### Fixed

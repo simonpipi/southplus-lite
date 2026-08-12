@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.4\.5/);
+assert.match(source, /@version\s+0\.4\.6/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.forumDashboard, true);
@@ -326,6 +326,12 @@ assert.match(source, /panel\.spxComposing \|\| event\.isComposing \|\| event\.ke
 assert.match(source, /spx-command-detail-target/);
 assert.match(source, /overflow-wrap:anywhere/);
 assert.match(source, /bindCommandPaletteKeyboard\(settings, state\)/);
+assert.match(source, /var toolbox = null;/);
+assert.match(source, /var commandPalette = null;/);
+assert.match(source, /getCommandPaletteEntries\(panel, settings, state\)/);
+assert.match(source, /panel\.spxSearchTimer = window\.setTimeout/);
+assert.match(source, /var pageType = detectPageType\(location\.href\)/);
+assert.doesNotMatch(source, /createSettingsPanel\(settings, state\);\n\s+bindCommandPaletteKeyboard/);
 assert.match(source, /--spx-page-max:1480px/);
 assert.match(source, /--spx-reader-line:clamp\(760px,62vw,960px\)/);
 assert.match(source, /getInjectedPreviewParityStyleRules/);
@@ -492,7 +498,8 @@ assert.match(source, /#spx-resource-center\{width:min\(720px,calc\(100vw - 96px\
 assert.match(source, /bottom:calc\(58px \+ env\(safe-area-inset-bottom,0px\)\)!important/);
 assert.match(source, /data-spx-settings-button/);
 assert.match(source, /setSettingsPanelHidden\(settingsPanel, !settingsPanel.hidden, SETTINGS_BUTTON_SELECTOR\)/);
-assert.match(source, /var nextToolboxHidden = !toolbox.hidden/);
+assert.match(source, /var currentToolbox = getToolbox\(\)/);
+assert.match(source, /var nextToolboxHidden = !currentToolbox.hidden/);
 assert.match(source, /\.spx-reader \.tpc_content\{[^}]*font-size:16px!important;line-height:1\.78!important/);
 assert.match(source, /\.spx-reader \.tpc_content #read_tpc,\.spx-reader \.tpc_content>\.f14\{font-size:16px!important;line-height:1\.78!important;\}/);
 assert.match(source, /\.spx-reader \.tpc_content br\{line-height:1\.75!important;\}/);

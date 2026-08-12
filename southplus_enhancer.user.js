@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.4.5
+// @version      0.4.6
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -97,6 +97,7 @@
   var threadPreviewCacheOrder = [];
   var spBalanceCache = { value: null, expiresAt: 0 };
   var readResourceRailContext = { posts: null, state: null, filter: 'all' };
+  var enhanceCycle = 0;
   var RESOURCE_STATUSES = {
     saved: '已保存',
     todo: '待下载',
@@ -12171,7 +12172,6 @@
       });
       panel.appendChild(body);
     };
-    panel.spxRender();
     document.body.appendChild(panel);
     return panel;
   }
@@ -12216,9 +12216,59 @@
     };
   }
 
+  function getStateMapSize(map) {
+    return Object.keys(map || {}).length;
+  }
+
+  function getCommandPaletteCacheKey(settings, state) {
+    var optionKeys = [
+      'cleanMode',
+      'readerMode',
+      'immersiveRead',
+      'nightMode',
+      'unifiedPreviewGallery',
+      'forumDashboard',
+      'networkFriendly',
+      'unreadOnly',
+      'onlyOriginalAuthor',
+      'moduleNavDensity',
+    ];
+    var optionText = optionKeys.map(function mapCommandOption(key) {
+      return key + ':' + String(settings && settings[key]);
+    }).join('|');
+    return [
+      location.href,
+      enhanceCycle,
+      getStateMapSize(state && state.watch),
+      getStateMapSize(state && state.progress),
+      getStateMapSize(state && state.resources),
+      optionText,
+    ].join('||');
+  }
+
+  function getCommandPaletteEntries(panel, settings, state) {
+    var cacheKey = getCommandPaletteCacheKey(settings, state);
+    if (!panel.spxAllEntries || panel.spxEntriesCacheKey !== cacheKey) {
+      panel.spxAllEntries = collectCommandPaletteEntries(getCommandPaletteData(settings, state));
+      panel.spxEntriesCacheKey = cacheKey;
+    }
+    return panel.spxAllEntries || [];
+  }
+
+  function invalidateCommandPaletteCache() {
+    var panel = qs('#spx-command-palette-overlay');
+    if (!panel) return;
+    panel.spxAllEntries = null;
+    panel.spxEntriesCacheKey = '';
+  }
+
   function setCommandPaletteHidden(panel, hidden) {
     if (!panel) return;
     panel.hidden = !!hidden;
+    if (panel.hidden && panel.spxSearchTimer) {
+      window.clearTimeout(panel.spxSearchTimer);
+      panel.spxSearchTimer = null;
+    }
     qsa(COMMAND_PALETTE_BUTTON_SELECTOR).forEach(function toggleCommandButton(button) {
       button.classList.toggle('spx-active', !panel.hidden);
       button.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
@@ -12385,7 +12435,7 @@
   function renderCommandPalettePanel(panel, settings, state) {
     var panelState = panel.spxState || { query: '', filter: 'all', activeIndex: 0 };
     panel.spxState = panelState;
-    var allEntries = collectCommandPaletteEntries(getCommandPaletteData(settings, state));
+    var allEntries = getCommandPaletteEntries(panel, settings, state);
     var visibleEntries = filterCommandPaletteEntries(allEntries, panelState);
     panelState.activeIndex = Math.min(Math.max(0, Number(panelState.activeIndex) || 0), Math.max(0, visibleEntries.length - 1));
     panel.spxEntries = visibleEntries;
@@ -12480,6 +12530,9 @@
     panel.setAttribute('aria-label', '全局命令面板');
     panel.spxState = { query: '', filter: 'all', activeIndex: 0 };
     panel.spxComposing = false;
+    panel.spxAllEntries = null;
+    panel.spxEntriesCacheKey = '';
+    panel.spxSearchTimer = null;
     panel.spxRender = function renderCommandPanel() {
       renderCommandPalettePanel(panel, settings, state);
     };
@@ -12497,7 +12550,11 @@
       if (!isCommandPaletteSearchInput(target)) return;
       panel.spxState.query = target.value;
       if (panel.spxComposing || event.isComposing) return;
-      rerenderCommandPaletteAfterSearch(panel, target);
+      if (panel.spxSearchTimer) window.clearTimeout(panel.spxSearchTimer);
+      panel.spxSearchTimer = window.setTimeout(function renderDebouncedCommandSearch() {
+        panel.spxSearchTimer = null;
+        rerenderCommandPaletteAfterSearch(panel, target);
+      }, 80);
     });
     panel.addEventListener('click', function handleCommandClick(event) {
       if (event.target === panel) {
@@ -12555,7 +12612,6 @@
         executeCommandPaletteEntry(entries[panel.spxState.activeIndex || 0], settings, state, panel);
       }
     });
-    panel.spxRender();
     document.body.appendChild(panel);
     return panel;
   }
@@ -12576,8 +12632,26 @@
     if (qs('#spx-toolbar')) return;
     var toolbar = createEl('div', 'spx-toolbar');
     toolbar.id = 'spx-toolbar';
-    var toolbox = createToolboxPanel(settings, state);
-    var commandPalette = createCommandPalettePanel(settings, state);
+    var toolbox = null;
+    var commandPalette = null;
+
+    function getToolbox() {
+      toolbox = toolbox || createToolboxPanel(settings, state);
+      return toolbox;
+    }
+
+    function getCommandPalette() {
+      commandPalette = commandPalette || createCommandPalettePanel(settings, state);
+      return commandPalette;
+    }
+
+    function closeToolboxIfLoaded() {
+      if (toolbox) setToolboxHidden(toolbox, true, TOOLBOX_BUTTON_SELECTOR);
+    }
+
+    function closeCommandPaletteIfLoaded() {
+      if (commandPalette) setCommandPaletteHidden(commandPalette, true);
+    }
 
     toolbar.appendChild(toolbarButton('顶部', '回到顶部', function top() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -12586,13 +12660,14 @@
       window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
     }));
     var toolboxButton = toolbarButton('工具', '打开工具箱', function toggleToolbox() {
-      if (toolbox.spxRender) toolbox.spxRender();
-      var nextToolboxHidden = !toolbox.hidden;
-      setToolboxHidden(toolbox, nextToolboxHidden, TOOLBOX_BUTTON_SELECTOR);
+      var currentToolbox = getToolbox();
+      if (currentToolbox.spxRender) currentToolbox.spxRender();
+      var nextToolboxHidden = !currentToolbox.hidden;
+      setToolboxHidden(currentToolbox, nextToolboxHidden, TOOLBOX_BUTTON_SELECTOR);
       if (!nextToolboxHidden) {
         var settingsPanel = qs('#spx-settings');
         if (settingsPanel) setSettingsPanelHidden(settingsPanel, true, SETTINGS_BUTTON_SELECTOR);
-        setCommandPaletteHidden(commandPalette, true);
+        closeCommandPaletteIfLoaded();
       }
     });
     toolboxButton.dataset.spxToolboxButton = '1';
@@ -12602,11 +12677,11 @@
     toolbar.appendChild(toolboxButton);
 
     var commandButton = toolbarButton('命令', '打开全局命令面板（Ctrl+K）', function toggleCommandPalette() {
-      if (commandPalette.spxRender) commandPalette.spxRender();
-      var nextHidden = !commandPalette.hidden;
-      setCommandPaletteHidden(commandPalette, nextHidden);
+      var currentCommandPalette = getCommandPalette();
+      var nextHidden = !currentCommandPalette.hidden;
+      setCommandPaletteHidden(currentCommandPalette, nextHidden);
       if (!nextHidden) {
-        setToolboxHidden(toolbox, true, TOOLBOX_BUTTON_SELECTOR);
+        closeToolboxIfLoaded();
         var settingsPanel = qs('#spx-settings');
         if (settingsPanel) setSettingsPanelHidden(settingsPanel, true, SETTINGS_BUTTON_SELECTOR);
       }
@@ -12620,8 +12695,8 @@
     var settingsButton = toolbarButton('设置', '打开设置', function openSettings() {
       var panel = createSettingsPanel(settings, state);
       if (panel.spxSync) panel.spxSync();
-      setToolboxHidden(toolbox, true, TOOLBOX_BUTTON_SELECTOR);
-      setCommandPaletteHidden(commandPalette, true);
+      closeToolboxIfLoaded();
+      closeCommandPaletteIfLoaded();
       setSettingsPanelHidden(panel, !panel.hidden, SETTINGS_BUTTON_SELECTOR);
     });
     settingsButton.dataset.spxSettingsButton = '1';
@@ -13205,20 +13280,23 @@
   }
 
   function enhanceAll(settings, state) {
+    var pageType = detectPageType(location.href);
+    enhanceCycle += 1;
+    invalidateCommandPaletteCache();
     setBodyClasses(settings);
     pendingModuleNavigationConfigs = [];
     restoreModuleNavigation();
-    applySiteShellLayout(document);
+    if (shouldUseSiteShell(location.href)) applySiteShellLayout(document);
     enhanceSiteNavigation(document);
     enhanceFavoriteNavigation(settings, state, document);
-    enhanceAccountNavigation(document);
+    if (pageType === 'profile') enhanceAccountNavigation(document);
     enhanceAdBlock(settings);
-    enhanceHome(settings, state);
-    enhanceThreadList(settings, state);
-    enhanceReadPage(settings, state);
-    enhanceQuickReply(settings, state);
-    createGlobalModuleNavigation(settings, state);
-    enhanceTaskPageLayout();
+    if (pageType === 'home') enhanceHome(settings, state);
+    if (pageType === 'forum') enhanceThreadList(settings, state);
+    if (pageType === 'read') enhanceReadPage(settings, state);
+    if (pageType === 'read' || pageType === 'post') enhanceQuickReply(settings, state);
+    if (shouldUseModuleNavigation(settings, location.href, document)) createGlobalModuleNavigation(settings, state);
+    if (pageType === 'task') enhanceTaskPageLayout();
     var panel = qs('#spx-settings');
     if (panel && panel.spxSync) panel.spxSync();
   }
@@ -13235,9 +13313,8 @@
     injectStyles();
     setBodyClasses(settings);
     createToolbar(settings, state);
-    createSettingsPanel(settings, state);
     bindCommandPaletteKeyboard(settings, state);
-    bindForumKeyboardPaging();
+    if (shouldUseForumKeyboardPaging(location.href)) bindForumKeyboardPaging();
     enhanceAll(settings, state);
   }
 
