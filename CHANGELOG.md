@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.4.5 - 2026-08-12
+
+### Fixed
+
+- 修复阅读页预览图侧栏图片过多时，滚动到底部后头部操作区不可见、无法直接收起预览框的问题。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
+## 0.4.4 - 2026-08-11
+
+### Added
+
+- 新增阅读页固定资源栏：右侧汇总当前帖子里的网盘、磁力、种子、压缩包、电驴和外链资源，显示类型、楼层、作者、口令和保存 / 处理状态。
+- 资源栏支持按资源类型筛选、复制全部、复制口令、保存当前、单条复制、定位楼层，以及标记待下载 / 已处理 / 失效。
+- 移动端资源栏改为底部抽屉布局，收起后保留 `资源 N` 悬浮入口。
+
+### Changed
+
+- 阅读页资源面板、自动购买保存、资源工作台状态变更后会同步刷新固定资源栏，避免资源状态显示滞后。
+- 快速回复编辑器识别会排除固定资源栏，避免把资源栏内控件误当成回复输入区。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.4.3 - 2026-08-11
 
 ### Added

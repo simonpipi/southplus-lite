@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.4.3
+// @version      0.4.5
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -55,6 +55,7 @@
   var RESTORE_PROGRESS_KEY = APP + ':restoreProgressTid:v1';
   var AUTO_BUY_KEY = APP + ':autoBuyAttempts:v1';
   var RESOURCE_KEY = APP + ':resources:v1';
+  var READ_RESOURCE_RAIL_COLLAPSED_KEY = APP + ':readResourceRailCollapsed:v1';
   var NAVIGATION_KEY = APP + ':navigation:v1';
   var NAVIGATION_COLLAPSE_KEY = APP + ':navigationCollapse:v1';
   var NAVIGATION_PIN_KEY = APP + ':navigationPins:v1';
@@ -95,6 +96,7 @@
   var threadPreviewCache = {};
   var threadPreviewCacheOrder = [];
   var spBalanceCache = { value: null, expiresAt: 0 };
+  var readResourceRailContext = { posts: null, state: null, filter: 'all' };
   var RESOURCE_STATUSES = {
     saved: '已保存',
     todo: '待下载',
@@ -2007,6 +2009,114 @@
     }).filter(Boolean);
   }
 
+  function getResourceRailTypeKey(item) {
+    var data = item || {};
+    var badge = getResourceBadgeFromResourceItem(data, 'resource');
+    if (badge && badge.type) return badge.type;
+    var type = data.type || classifyResourceLink(data.url);
+    if (type === 'cloud') {
+      return getCloudResourceBadgeType([data.provider, data.label, data.url].filter(Boolean).join(' '));
+    }
+    return getResourceBadgeDefinition(type) ? type : 'external';
+  }
+
+  function getResourceRailTypeLabel(type) {
+    var definition = getResourceBadgeDefinition(type);
+    if (definition && definition.label) return definition.label;
+    return RESOURCE_CATEGORIES[type] || '资源';
+  }
+
+  function getResourceRailEntries(links, resources) {
+    var library = pruneResourceLibrary(resources || {});
+    return getJumpResourceLinks(links).map(function mapResourceRailEntry(item, index) {
+      var key = getResourceLibraryKey(item);
+      var savedRecord = key && library[key] ? normalizeResourceRecord(library[key], key) : null;
+      var source = savedRecord || item || {};
+      var type = getResourceRailTypeKey(source);
+      var status = savedRecord ? normalizeResourceStatus(savedRecord.status) : 'todo';
+      var accessCode = String(source.accessCode || item.accessCode || '');
+      var floorLabel = String(item.floorLabel || source.floorLabel || '');
+      var author = String(item.author || source.author || '');
+      return {
+        key: key || ('resource-rail-' + index),
+        url: item.url || source.url || '',
+        type: type,
+        typeLabel: getResourceRailTypeLabel(type),
+        label: item.label || source.label || getResourceDisplayLabel(source),
+        accessCode: accessCode,
+        floorLabel: floorLabel,
+        author: author,
+        postIndex: Number(item.postIndex) || 0,
+        status: status,
+        statusLabel: savedRecord ? getResourceStatusLabel(status) : '待保存',
+        saved: !!savedRecord,
+        sourceTitle: String(source.sourceTitle || ''),
+        sourceUrl: String(source.sourceUrl || item.sourceUrl || item.pageUrl || ''),
+        sourceText: [source.sourceTitle, floorLabel, author].filter(Boolean).join(' · '),
+        note: String((savedRecord && savedRecord.note) || ''),
+        tags: normalizeResourceTags(savedRecord && savedRecord.tags),
+      };
+    });
+  }
+
+  function filterResourceRailEntries(entries, filter) {
+    var type = String(filter || 'all');
+    if (type === 'all') return (entries || []).slice();
+    return (entries || []).filter(function keepResourceRailEntry(entry) {
+      return entry && entry.type === type;
+    });
+  }
+
+  function formatResourceRailSummary(entries) {
+    var floors = {};
+    var codes = 0;
+    var todo = 0;
+    var saved = 0;
+    (entries || []).forEach(function countResourceRailEntry(entry) {
+      if (!entry) return;
+      if (entry.floorLabel) floors[entry.floorLabel] = true;
+      if (entry.accessCode) codes += 1;
+      if (entry.saved) saved += 1;
+      if (!entry.saved || normalizeResourceStatus(entry.status) === 'todo') todo += 1;
+    });
+    return {
+      total: (entries || []).length,
+      floors: Object.keys(floors).length,
+      codes: codes,
+      todo: todo,
+      saved: saved,
+    };
+  }
+
+  function formatResourceRailSummaryText(entries) {
+    var summary = formatResourceRailSummary(entries);
+    return summary.total + ' 条 · ' + summary.floors + ' 个楼层 · ' + summary.codes + ' 个口令 · 待处理 ' + summary.todo;
+  }
+
+  function formatResourceRailCodes(entries) {
+    return (entries || []).filter(function hasResourceRailCode(entry) {
+      return entry && entry.accessCode;
+    }).map(function formatResourceRailCode(entry) {
+      return [
+        '[' + (entry.typeLabel || entry.label || '资源') + ']',
+        entry.floorLabel,
+        entry.author,
+        entry.url,
+        '提取码 ' + entry.accessCode,
+      ].filter(Boolean).join(' ');
+    }).join('\n');
+  }
+
+  function getAvailableResourceRailFilterTypes(entries) {
+    var seen = {};
+    (entries || []).forEach(function collectResourceRailType(entry) {
+      if (entry && entry.type && getResourceBadgeDefinition(entry.type)) seen[entry.type] = true;
+    });
+    return RESOURCE_BADGE_ORDER.filter(function keepResourceRailType(type) {
+      return !!seen[type];
+    });
+  }
+
   function getResourceProviderOptions(entries) {
     var seen = {};
     return (entries || [])
@@ -3318,6 +3428,7 @@
     refreshHistoryCenter();
     refreshAutoBuyCenter();
     refreshResourceCenter();
+    refreshReadResourceRail();
     enhanceAll(settings, state);
     return true;
   }
@@ -3672,7 +3783,7 @@
       '.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{box-sizing:border-box!important;display:grid!important;grid-template-columns:minmax(320px,clamp(360px,34vw,560px)) minmax(0,1fr)!important;gap:clamp(14px,2vw,24px)!important;align-items:start!important;max-width:100%!important;margin:0 auto!important;padding:18px clamp(18px,3vw,36px) 36px!important;background:#fff!important;}',
       '.spx-reader .spx-post-body-split .tpc_content,.spx-immersive-read .spx-post-body-split .tpc_content{box-sizing:border-box!important;width:100%!important;max-width:var(--spx-reader-line)!important;margin:0 auto!important;padding:0!important;background:transparent!important;}',
       '.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{box-sizing:border-box!important;max-width:none!important;margin:0!important;padding:10px!important;background:#f8fafc!important;border:1px solid #d7e1eb!important;border-radius:8px!important;box-shadow:none!important;max-height:min(72vh,680px)!important;overflow:auto!important;}',
-      '.spx-reader .spx-preview-header,.spx-immersive-read .spx-preview-header{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;margin:0 0 10px!important;font-size:13px!important;color:#64748b!important;}',
+      '.spx-reader .spx-preview-header,.spx-immersive-read .spx-preview-header{position:sticky!important;top:0!important;z-index:3!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;margin:0 0 10px!important;background:inherit!important;font-size:13px!important;color:#64748b!important;}',
       '.spx-reader .spx-preview-header strong,.spx-immersive-read .spx-preview-header strong{font-size:14px!important;color:#0f172a!important;}',
       '.spx-reader .spx-preview-summary,.spx-immersive-read .spx-preview-summary{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
       '.spx-reader .spx-preview-actions,.spx-immersive-read .spx-preview-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;flex-wrap:wrap!important;gap:6px!important;}',
@@ -3803,6 +3914,32 @@
       '.spx-storage-suggestions{margin:6px 0 8px;padding:7px 8px;border-radius:7px;background:#fff;border:1px solid #e5e7eb;color:#475569;font-size:12px;line-height:1.45;}',
       '.spx-watch-center{position:fixed;right:66px;bottom:18px;width:var(--spx-panel-width);max-height:var(--spx-panel-max-height);overflow:auto;z-index:100000;background:var(--spx-panel);border:1px solid var(--spx-line);box-shadow:var(--spx-shadow-popover);border-radius:var(--spx-radius-lg);padding:14px;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;scrollbar-width:thin;}',
       '.spx-resource-panel,#spx-resource-center{width:min(720px,calc(100vw - 96px));}',
+      '.spx-read-resource-rail{position:fixed!important;right:76px!important;top:72px!important;z-index:100015!important;box-sizing:border-box!important;display:flex!important;flex-direction:column!important;width:320px!important;max-height:calc(100vh - 112px)!important;padding:12px!important;border:1px solid var(--spx-line)!important;border-radius:16px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-popover)!important;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
+      '.spx-read-resource-rail[hidden]{display:none!important;}',
+      '.spx-read-resource-rail-head{display:flex!important;align-items:flex-start!important;justify-content:space-between!important;gap:10px!important;margin:-12px -12px 10px!important;padding:12px!important;border-bottom:1px solid var(--spx-line-soft)!important;border-radius:16px 16px 0 0!important;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%)!important;}',
+      '.spx-read-resource-rail-head strong{display:block!important;color:var(--spx-strong)!important;font-size:15px!important;font-weight:900!important;line-height:1.25!important;}',
+      '.spx-read-resource-summary{display:block!important;margin-top:3px!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:800!important;}',
+      '.spx-read-resource-rail button,.spx-read-resource-launcher{box-sizing:border-box!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:#fff!important;color:var(--spx-text)!important;cursor:pointer!important;font:800 12px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
+      '.spx-read-resource-rail button{min-height:28px!important;padding:0 9px!important;}',
+      '.spx-read-resource-rail button:hover,.spx-read-resource-launcher:hover{border-color:var(--spx-accent)!important;color:var(--spx-accent)!important;background:var(--spx-accent-wash)!important;}',
+      '.spx-read-resource-rail button:disabled{cursor:not-allowed!important;opacity:.5!important;}',
+      '.spx-read-resource-actions,.spx-read-resource-filters,.spx-read-resource-card-actions{display:flex!important;flex-wrap:wrap!important;gap:6px!important;align-items:center!important;}',
+      '.spx-read-resource-actions{margin-bottom:8px!important;}',
+      '.spx-read-resource-filters{margin-bottom:10px!important;padding:8px!important;border:1px solid var(--spx-line-soft)!important;border-radius:12px!important;background:var(--spx-panel-muted)!important;}',
+      '.spx-read-resource-filters button.spx-active{border-color:var(--spx-accent)!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;}',
+      '.spx-read-resource-list{display:flex!important;flex-direction:column!important;gap:8px!important;min-height:0!important;overflow:auto!important;padding-right:2px!important;scrollbar-width:thin!important;}',
+      '.spx-read-resource-card{box-sizing:border-box!important;display:grid!important;gap:7px!important;padding:10px!important;border:1px solid var(--spx-line-soft)!important;border-radius:12px!important;background:var(--spx-panel-muted)!important;color:var(--spx-text)!important;}',
+      '.spx-read-resource-card.spx-active{border-color:var(--spx-accent)!important;box-shadow:0 0 0 3px rgba(37,99,235,.12)!important;}',
+      '.spx-read-resource-card-top{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;}',
+      '.spx-read-resource-type{display:inline-flex!important;align-items:center!important;min-height:20px!important;padding:0 7px!important;border-radius:999px!important;background:#e0f2fe!important;color:#075985!important;font-size:11px!important;font-weight:900!important;}',
+      '.spx-read-resource-url{display:block!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;color:var(--spx-link)!important;font-size:12px!important;font-weight:850!important;text-decoration:none!important;}',
+      '.spx-read-resource-url:hover{text-decoration:underline!important;}',
+      '.spx-read-resource-meta{color:var(--spx-sub)!important;font-size:12px!important;font-weight:750!important;line-height:1.38!important;word-break:break-word!important;}',
+      '.spx-read-resource-card-actions button{min-height:26px!important;padding:0 8px!important;font-size:11px!important;}',
+      '.spx-read-resource-card-actions .spx-action-secondary{color:var(--spx-sub)!important;background:var(--spx-panel)!important;}',
+      '.spx-read-resource-launcher{position:fixed!important;right:16px!important;bottom:132px!important;z-index:100016!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;min-width:82px!important;height:38px!important;padding:0 12px!important;border-color:rgba(37,99,235,.34)!important;border-radius:14px!important;background:var(--spx-accent)!important;color:#fff!important;box-shadow:0 16px 42px rgba(37,99,235,.28)!important;}',
+      '.spx-read-resource-launcher[hidden]{display:none!important;}',
+      'table.js-post.spx-read-resource-floor-active{outline:3px solid rgba(37,99,235,.22)!important;outline-offset:3px!important;}',
       '.spx-watch-center[hidden]{display:none!important;}',
       '.spx-watch-center-header{position:sticky;top:-14px;z-index:1;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:-14px -14px 12px;padding:13px 14px 11px;border-bottom:1px solid var(--spx-line-soft);background:rgba(255,255,255,.96);backdrop-filter:blur(10px);}',
       '.spx-watch-center h3{margin:0;color:var(--spx-strong);font-size:16px;line-height:1.3;}',
@@ -3978,6 +4115,7 @@
       '.spx-folded-quote{max-height:110px;overflow:hidden;position:relative;border-bottom:1px dashed var(--spx-line);}',
       '.spx-folded-quote:after{content:"";position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(transparent,var(--spx-panel));}',
       '@media(max-width:900px){.spx-home-dashboard #content,.spx-forum-dashboard #content{width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}.spx-module-nav-ready.spx-home-dashboard #content,.spx-module-nav-ready.spx-forum-dashboard #content{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:10px!important}.spx-module-nav-ready.spx-home-dashboard #content>*:not(.spx-module-nav),.spx-module-nav-ready.spx-forum-dashboard #content>*:not(.spx-module-nav),.spx-module-nav{grid-column:1!important}.spx-module-nav{position:static!important;display:flex!important;flex-direction:row!important;align-items:center!important;max-height:none!important;overflow-x:auto!important;overflow-y:hidden!important;padding:7px!important}.spx-module-nav-title{flex:none!important;padding:0 8px!important;border-bottom:0!important}.spx-module-nav-controls{flex:none!important;width:180px!important}.spx-module-nav-group,.spx-module-nav-node,.spx-module-nav-children{flex:none!important;display:flex!important;flex-direction:row!important;align-items:center!important;gap:6px!important;margin:0!important;padding:0!important;border-left:0!important}.spx-module-nav-section,.spx-module-nav-parent-title{flex:none!important}.spx-module-nav-parent-title{min-height:30px!important;border-radius:999px!important}.spx-module-nav-item{flex:none!important;width:auto!important;min-height:30px!important;border-radius:999px!important}.spx-home-dashboard #spx-home-grid{grid-template-columns:1fr!important}.spx-home-dashboard .spx-home-module,.spx-home-dashboard .spx-home-module[data-spx-large="1"]{grid-column:1!important}.spx-home-dashboard #header,.spx-home-dashboard #mainNav,.spx-home-dashboard #infobox,.spx-home-dashboard #notice,.spx-home-dashboard .spx-home-quick,.spx-forum-dashboard #header,.spx-forum-dashboard #mainNav,.spx-forum-dashboard #infobox,.spx-forum-dashboard #notice{width:calc(100vw - 16px)!important}.spx-home-dashboard .spx-home-module tr.tr3,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3{grid-template-columns:1fr!important;gap:4px!important}.spx-home-dashboard .spx-home-module tr.tr3>td:first-child,.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3>td:first-child:not([id^="td_"]){display:none!important}.spx-forum-tools{width:100%!important;flex-wrap:wrap}.spx-forum-tools input{flex-basis:100%!important}}',
+      '@media(max-width:760px){.spx-read-resource-rail{left:8px!important;right:8px!important;top:auto!important;bottom:calc(104px + env(safe-area-inset-bottom,0px))!important;width:auto!important;max-height:46vh!important;border-radius:18px!important}.spx-read-resource-rail-head{border-radius:18px 18px 0 0!important}.spx-read-resource-list{max-height:calc(46vh - 156px)!important}.spx-read-resource-launcher{right:8px!important;bottom:calc(104px + env(safe-area-inset-bottom,0px))!important;min-width:88px!important;height:40px!important}.spx-read-resource-actions button,.spx-read-resource-filters button{flex:1 1 auto!important}.spx-read-resource-card-actions{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important}.spx-read-resource-card-actions button{min-width:0!important;padding:0 5px!important}}',
       '@media(max-width:760px){.spx-preview-lightbox{padding:0!important}.spx-preview-lightbox-shell{border:0!important;border-radius:0!important}.spx-preview-lightbox-toolbar{align-items:flex-start!important;min-height:0!important;padding:8px!important}.spx-preview-lightbox-actions{gap:4px!important}.spx-preview-lightbox button{height:30px!important;padding:0 8px!important}.spx-preview-lightbox-canvas{padding:22px 50px!important}.spx-preview-lightbox-nav{width:38px!important;height:54px!important;font-size:26px!important}.spx-preview-lightbox-prev{left:6px!important}.spx-preview-lightbox-next{right:6px!important}.spx-preview-lightbox-caption{padding:6px 9px!important}.spx-preview-lightbox-help{display:none!important}.spx-reader body{font-size:16px!important}.spx-reader #wrapA{width:calc(100vw - 14px)!important;margin:0 7px!important}.spx-reader .tpc_content{font-size:16px!important;line-height:1.76!important;padding:12px!important}.spx-reader .tpc_content #read_tpc,.spx-reader .tpc_content>.f14{font-size:16px!important;line-height:1.76!important}.spx-reader .spx-post-body-split,.spx-immersive-read .spx-post-body-split{display:flex!important;flex-direction:column!important;gap:12px!important;padding:14px!important}.spx-reader .spx-post-body-split .tpc_content,.spx-immersive-read .spx-post-body-split .tpc_content{padding:0!important}.spx-reader .spx-preview-panel,.spx-immersive-read .spx-preview-panel{width:auto!important;max-height:360px!important;margin:0!important;padding:10px!important}.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{height:132px!important}.spx-preview-panel.spx-preview-drawer{left:8px!important;right:8px!important;top:auto!important;bottom:calc(62px + env(safe-area-inset-bottom,0px))!important;width:auto!important;max-height:58vh!important;border-radius:16px!important}.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed{left:auto!important;right:8px!important;bottom:calc(62px + env(safe-area-inset-bottom,0px))!important;top:auto!important;width:46px!important;height:126px!important}.spx-immersive-read #wrapA,.spx-immersive-read #main,.spx-immersive-read #content{width:100vw!important;margin:0!important}.spx-immersive-read table.js-post{width:calc(100vw - 14px)!important;margin:10px 7px!important}.spx-immersive-read .h1,.spx-immersive-read [id^="subject_"]{font-size:19px!important;padding:16px 14px 6px!important}.spx-immersive-read .tpc_content{font-size:16px!important;line-height:1.76!important;padding:14px!important}.spx-immersive-read .tpc_content #read_tpc,.spx-immersive-read .tpc_content>.f14{font-size:16px!important;line-height:1.76!important}.spx-toolbar{left:8px!important;right:8px!important;bottom:calc(8px + env(safe-area-inset-bottom,0px))!important;width:auto!important;flex-direction:row!important;justify-content:space-between!important;padding:6px!important;border-radius:16px!important}.spx-toolbar button,.spx-toolbar a{flex:1 1 0!important;width:auto!important;height:34px!important;font-size:12px}.spx-settings,.spx-watch-center,.spx-toolbox{left:8px!important;right:8px!important;bottom:calc(58px + env(safe-area-inset-bottom,0px))!important;width:auto!important;max-height:calc(100vh - 92px - env(safe-area-inset-bottom,0px))!important;border-radius:18px!important}.spx-settings-grid,.spx-toolbox-grid{grid-template-columns:1fr!important}.spx-toolbox-body{max-height:calc(100vh - 150px - env(safe-area-inset-bottom,0px));padding:11px}.spx-toolbox-action{min-height:54px!important}.spx-watch-controls input,.spx-watch-controls select{flex:1 1 100%!important;max-width:none!important}.spx-resource-panel,#spx-resource-center{width:auto!important}.spx-watch-center-header{top:-14px}.spx-toolbox-desc{-webkit-line-clamp:1}}',
     ];
   }
@@ -3988,10 +4126,11 @@
       '.spx-theme-night #wrapA,.spx-theme-night #main,.spx-theme-night #content,.spx-theme-night.spx-reader #wrapA,.spx-theme-night.spx-reader #main,.spx-theme-night.spx-reader #content,.spx-theme-night.spx-immersive-read #wrapA,.spx-theme-night.spx-immersive-read #main,.spx-theme-night.spx-immersive-read #content{background:var(--spx-page-bg)!important;background-image:none!important;color:var(--spx-text)!important;}',
       '.spx-theme-night a{color:var(--spx-link)!important;}',
       '.spx-theme-night input,.spx-theme-night textarea,.spx-theme-night select{background:var(--spx-input-bg)!important;color:var(--spx-text)!important;border-color:var(--spx-line)!important;}',
-      '.spx-theme-night .t,.spx-theme-night .t3,.spx-theme-night .t5,.spx-theme-night .bdbA,.spx-theme-night table.js-post,.spx-theme-night .spx-home-module,.spx-theme-night .spx-watch-center,.spx-theme-night .spx-settings,.spx-theme-night .spx-toolbox,.spx-theme-night .spx-command-palette,.spx-theme-night .spx-command-detail,.spx-theme-night .spx-preview-panel,.spx-theme-night .spx-preview-popover,.spx-theme-night .spx-author-popover,.spx-theme-night .spx-quick-reply,.spx-theme-night .spx-forum-tools,.spx-theme-night .spx-data-health,.spx-theme-night .spx-storage-usage-row,.spx-theme-night .spx-storage-suggestions{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;}',
+      '.spx-theme-night .t,.spx-theme-night .t3,.spx-theme-night .t5,.spx-theme-night .bdbA,.spx-theme-night table.js-post,.spx-theme-night .spx-home-module,.spx-theme-night .spx-watch-center,.spx-theme-night .spx-settings,.spx-theme-night .spx-toolbox,.spx-theme-night .spx-command-palette,.spx-theme-night .spx-command-detail,.spx-theme-night .spx-preview-panel,.spx-theme-night .spx-preview-popover,.spx-theme-night .spx-author-popover,.spx-theme-night .spx-quick-reply,.spx-theme-night .spx-forum-tools,.spx-theme-night .spx-read-resource-rail,.spx-theme-night .spx-read-resource-card,.spx-theme-night .spx-read-resource-filters,.spx-theme-night .spx-data-health,.spx-theme-night .spx-storage-usage-row,.spx-theme-night .spx-storage-suggestions{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;}',
       '.spx-theme-night .tr1,.spx-theme-night .tr2,.spx-theme-night .tr3,.spx-theme-night td,.spx-theme-night th,.spx-theme-night .spx-home-module tr.tr3,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3{background:var(--spx-row-bg)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night .spx-home-module tr.tr3:hover,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3:hover{background:var(--spx-row-hover)!important;}',
-      '.spx-theme-night .spx-home-module>h2,.spx-theme-night .spx-home-module .h,.spx-theme-night .spx-settings-header,.spx-theme-night .spx-settings-footer,.spx-theme-night .spx-toolbox-header,.spx-theme-night .spx-watch-center-header,.spx-theme-night .spx-preview-lightbox-toolbar,.spx-theme-night .spx-preview-lightbox-caption{background:var(--spx-panel-muted)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-strong)!important;}',
+      '.spx-theme-night .spx-home-module>h2,.spx-theme-night .spx-home-module .h,.spx-theme-night .spx-settings-header,.spx-theme-night .spx-settings-footer,.spx-theme-night .spx-toolbox-header,.spx-theme-night .spx-watch-center-header,.spx-theme-night .spx-read-resource-rail-head,.spx-theme-night .spx-preview-lightbox-toolbar,.spx-theme-night .spx-preview-lightbox-caption{background:var(--spx-panel-muted)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-strong)!important;}',
+      '.spx-theme-night .spx-read-resource-rail button{background:var(--spx-panel)!important;color:var(--spx-text)!important;border-color:var(--spx-line)!important;}',
       '.spx-theme-night .spx-toolbox-action,.spx-theme-night .spx-watch-item,.spx-theme-night .spx-watch-controls,.spx-theme-night .spx-settings-section,.spx-theme-night .spx-preview-item,.spx-theme-night .spx-preview-images a,.spx-theme-night .spx-fold-box,.spx-theme-night .spx-auto-resource-actions a,.spx-theme-night .spx-auto-resource-actions button{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night button,.spx-theme-night .spx-toolbar button,.spx-theme-night .spx-toolbar a,.spx-theme-night .spx-thread-tools button,.spx-theme-night .spx-post-tools button,.spx-theme-night .spx-watch-actions button,.spx-theme-night .spx-watch-actions a{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night .spx-toolbox-action:hover,.spx-theme-night .spx-toolbox-action:focus-visible,.spx-theme-night button:hover,.spx-theme-night .spx-toolbar button:hover,.spx-theme-night .spx-toolbar a:hover{border-color:var(--spx-accent)!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;}',
@@ -6586,6 +6725,7 @@
     state.resources = pruneResourceLibrary(state.resources || {});
     saveResourceLibrary(state.resources);
     refreshResourceCenter();
+    refreshReadResourceRail();
   }
 
   function createResourceCenterPanel(settings, state) {
@@ -9238,6 +9378,7 @@
     state.resources = savedResources.resources;
     saveResourceLibrary(state.resources);
     refreshResourceCenter();
+    refreshReadResourceRail();
     showAutoBuyResourceJump(resourceLinks, state, savedResources.saved);
     context.pageRoot.dataset.spxAutoBuyStatus = 'done';
     recordAutoBuyAttempt(
@@ -9411,6 +9552,7 @@
     });
 
     cleanupReadSeparators();
+    createReadResourceRail(posts, state);
     enhancePreviewGallery(settings, posts);
     if (settings.foldQuotes) foldLongReadBlocks();
     enhanceAutoBuyPost(settings, state);
@@ -9509,6 +9651,263 @@
     window.setTimeout(function restoreTextLater() {
       if (node.isConnected) node.textContent = restoreText;
     }, delay || 1400);
+  }
+
+  function isReadResourceRailCollapsed() {
+    var storage = getStorage();
+    return !!(storage && storage.getItem(READ_RESOURCE_RAIL_COLLAPSED_KEY) === '1');
+  }
+
+  function setReadResourceRailCollapsed(collapsed) {
+    var storage = getStorage();
+    if (storage) storage.setItem(READ_RESOURCE_RAIL_COLLAPSED_KEY, collapsed ? '1' : '0');
+    qsa('#spx-read-resource-rail').forEach(function toggleRail(rail) {
+      rail.hidden = !!collapsed;
+    });
+    qsa('#spx-read-resource-launcher').forEach(function toggleLauncher(launcher) {
+      launcher.hidden = !collapsed;
+    });
+  }
+
+  function closeReadResourceRail() {
+    qsa('#spx-read-resource-rail,#spx-read-resource-launcher').forEach(function removeResourceRail(node) {
+      node.remove();
+    });
+  }
+
+  function getCurrentReadResourceRailEntries(posts, state) {
+    return getResourceRailEntries(
+      extractReadPageResourceLinks(posts || [], typeof location !== 'undefined' ? location.href : ''),
+      state && state.resources
+    );
+  }
+
+  function copyReadResourceRailEntries(entries, target, restoreText) {
+    copyTextToClipboard(formatResourceLinks(entries)).then(
+      function showReadResourceRailCopySuccess() {
+        setTemporaryText(target, '已复制 ' + (entries || []).length + ' 条', restoreText);
+      },
+      function showReadResourceRailCopyFailure() {
+        setTemporaryText(target, '复制失败', restoreText);
+      }
+    );
+  }
+
+  function copyReadResourceRailCodes(entries, target) {
+    var text = formatResourceRailCodes(entries);
+    if (!text) {
+      setTemporaryText(target, '无口令', '复制口令');
+      return;
+    }
+    copyTextToClipboard(text).then(
+      function showReadResourceRailCodeCopySuccess() {
+        setTemporaryText(target, '已复制口令', '复制口令');
+      },
+      function showReadResourceRailCodeCopyFailure() {
+        setTemporaryText(target, '复制失败', '复制口令');
+      }
+    );
+  }
+
+  function saveReadResourceRailEntries(entries, state, target, restoreText) {
+    if (!state) {
+      setTemporaryText(target, '无法保存', restoreText || '保存当前');
+      return;
+    }
+    var savedResources = saveResourceLinksToLibrary(entries, state.resources, getCurrentResourceSourceMeta());
+    state.resources = savedResources.resources;
+    saveResourceLibrary(state.resources);
+    refreshResourceCenter();
+    refreshReadResourceRail();
+    setTemporaryText(target, savedResources.saved ? ('已保存 ' + savedResources.saved + ' 条') : '无可保存资源', restoreText || '保存当前');
+  }
+
+  function markReadResourceRailEntry(entry, state, status, target) {
+    if (!entry || !state) return;
+    var savedResources = saveResourceLinksToLibrary([entry], state.resources, getCurrentResourceSourceMeta());
+    state.resources = savedResources.resources;
+    updateResourceRecords(state, [entry.key], function markReadRailResource(record) {
+      record.status = normalizeResourceStatus(status);
+    });
+    saveResourceCenterState(state);
+    refreshReadResourceRail();
+    setTemporaryText(target, getResourceStatusLabel(status), target.textContent || '标记');
+  }
+
+  function jumpToReadResourceRailEntry(entry, posts) {
+    var post = posts && posts[Number(entry && entry.postIndex) || 0];
+    if (!post) return;
+    post.classList.add('spx-read-resource-floor-active');
+    if (typeof post.scrollIntoView === 'function') {
+      post.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    window.setTimeout(function clearResourceFloorHighlight() {
+      if (post.isConnected) post.classList.remove('spx-read-resource-floor-active');
+    }, 1800);
+  }
+
+  function createReadResourceRail(posts, state) {
+    if (detectPageType(location.href) !== 'read' || !document.body) return null;
+    readResourceRailContext.posts = posts || [];
+    readResourceRailContext.state = state;
+    closeReadResourceRail();
+
+    var entries = getCurrentReadResourceRailEntries(posts, state);
+    if (!entries.length) return null;
+
+    var rail = createEl('aside', 'spx-read-resource-rail');
+    var launcher = createEl('button', 'spx-read-resource-launcher', '资源 ' + entries.length);
+    rail.id = 'spx-read-resource-rail';
+    rail.setAttribute('role', 'complementary');
+    rail.setAttribute('aria-label', '当前帖子资源');
+    launcher.id = 'spx-read-resource-launcher';
+    launcher.type = 'button';
+    launcher.title = '展开当前帖资源栏';
+
+    function renderRail() {
+      var allEntries = getCurrentReadResourceRailEntries(readResourceRailContext.posts, readResourceRailContext.state);
+      if (!allEntries.length) {
+        closeReadResourceRail();
+        return;
+      }
+      var availableTypes = getAvailableResourceRailFilterTypes(allEntries);
+      if (readResourceRailContext.filter !== 'all' && availableTypes.indexOf(readResourceRailContext.filter) === -1) {
+        readResourceRailContext.filter = 'all';
+      }
+      var visibleEntries = filterResourceRailEntries(allEntries, readResourceRailContext.filter);
+      rail.textContent = '';
+      launcher.textContent = '资源 ' + allEntries.length;
+
+      var header = createEl('div', 'spx-read-resource-rail-head');
+      var title = createEl('div');
+      title.appendChild(createEl('strong', '', '当前帖资源'));
+      title.appendChild(createEl('span', 'spx-read-resource-summary', formatResourceRailSummaryText(allEntries)));
+      var collapseButton = createEl('button', '', '收起');
+      collapseButton.type = 'button';
+      collapseButton.addEventListener('click', function collapseReadResourceRail() {
+        setReadResourceRailCollapsed(true);
+      });
+      header.appendChild(title);
+      header.appendChild(collapseButton);
+      rail.appendChild(header);
+
+      var actions = createEl('div', 'spx-read-resource-actions');
+      var copyAllButton = createEl('button', '', '复制全部');
+      var saveButton = createEl('button', '', '保存当前');
+      var copyCodeButton = createEl('button', '', '复制口令');
+      [copyAllButton, saveButton, copyCodeButton].forEach(function setRailActionType(button) {
+        button.type = 'button';
+        actions.appendChild(button);
+      });
+      copyAllButton.disabled = !visibleEntries.length;
+      saveButton.disabled = !getJumpResourceLinks(visibleEntries).length;
+      copyCodeButton.disabled = !visibleEntries.some(function hasCode(entry) { return !!entry.accessCode; });
+      copyAllButton.addEventListener('click', function copyVisibleReadResources() {
+        copyReadResourceRailEntries(visibleEntries, copyAllButton, '复制全部');
+      });
+      saveButton.addEventListener('click', function saveVisibleReadResources() {
+        saveReadResourceRailEntries(visibleEntries, readResourceRailContext.state, saveButton, '保存当前');
+      });
+      copyCodeButton.addEventListener('click', function copyVisibleReadCodes() {
+        copyReadResourceRailCodes(visibleEntries, copyCodeButton);
+      });
+      rail.appendChild(actions);
+
+      var filters = createEl('div', 'spx-read-resource-filters');
+      [{ value: 'all', label: '全部' }].concat(availableTypes.map(function mapResourceRailType(type) {
+        return { value: type, label: getResourceRailTypeLabel(type) };
+      })).forEach(function appendResourceRailFilter(item) {
+        var button = createEl('button', item.value === readResourceRailContext.filter ? 'spx-active' : '', item.label);
+        button.type = 'button';
+        button.dataset.spxResourceRailFilter = item.value;
+        button.addEventListener('click', function filterReadResourceRail() {
+          readResourceRailContext.filter = item.value;
+          renderRail();
+        });
+        filters.appendChild(button);
+      });
+      rail.appendChild(filters);
+
+      var list = createEl('div', 'spx-read-resource-list');
+      if (!visibleEntries.length) {
+        list.appendChild(createEl('div', 'spx-watch-empty', '没有匹配的资源。'));
+      }
+      visibleEntries.forEach(function appendReadResourceRailEntry(entry) {
+        var item = createEl('article', 'spx-read-resource-card');
+        item.dataset.key = entry.key;
+        item.dataset.type = entry.type;
+        var top = createEl('div', 'spx-read-resource-card-top');
+        top.appendChild(createEl('span', 'spx-read-resource-type', entry.typeLabel));
+        top.appendChild(createEl('span', 'spx-status-badge spx-status-' + entry.status, entry.statusLabel));
+        item.appendChild(top);
+        var link = createEl('a', 'spx-read-resource-url', entry.url);
+        link.href = entry.url;
+        link.target = '_blank';
+        link.rel = 'noreferrer';
+        link.title = entry.url;
+        item.appendChild(link);
+        var metaParts = [entry.floorLabel, entry.author, entry.accessCode ? ('提取码 ' + entry.accessCode) : '', entry.note ? ('备注 ' + entry.note) : ''];
+        item.appendChild(createEl('div', 'spx-read-resource-meta', metaParts.filter(Boolean).join(' · ') || '暂无来源'));
+        var itemActions = createEl('div', 'spx-read-resource-card-actions');
+        var jumpButton = createEl('button', '', '定位楼层');
+        var copyButton = createEl('button', '', '复制');
+        var saveOneButton = createEl('button', '', entry.saved ? '已保存' : '保存');
+        var todoButton = createEl('button', '', '待下载');
+        var doneButton = createEl('button', '', '已处理');
+        var invalidButton = createEl('button', '', '失效');
+        [jumpButton, copyButton, saveOneButton, todoButton, doneButton, invalidButton].forEach(function setupResourceCardButton(button) {
+          button.type = 'button';
+          itemActions.appendChild(button);
+        });
+        saveOneButton.classList.toggle('spx-action-secondary', entry.saved);
+        jumpButton.addEventListener('click', function jumpToEntryFloor() {
+          item.classList.add('spx-active');
+          jumpToReadResourceRailEntry(entry, readResourceRailContext.posts);
+          window.setTimeout(function clearActiveCard() {
+            if (item.isConnected) item.classList.remove('spx-active');
+          }, 1800);
+        });
+        copyButton.addEventListener('click', function copyOneReadResource() {
+          copyReadResourceRailEntries([entry], copyButton, '复制');
+        });
+        saveOneButton.addEventListener('click', function saveOneReadResource() {
+          saveReadResourceRailEntries([entry], readResourceRailContext.state, saveOneButton, entry.saved ? '已保存' : '保存');
+        });
+        todoButton.addEventListener('click', function markReadResourceTodo() {
+          markReadResourceRailEntry(entry, readResourceRailContext.state, 'todo', todoButton);
+        });
+        doneButton.addEventListener('click', function markReadResourceDone() {
+          markReadResourceRailEntry(entry, readResourceRailContext.state, 'done', doneButton);
+        });
+        invalidButton.addEventListener('click', function markReadResourceInvalid() {
+          markReadResourceRailEntry(entry, readResourceRailContext.state, 'invalid', invalidButton);
+        });
+        item.appendChild(itemActions);
+        list.appendChild(item);
+      });
+      rail.appendChild(list);
+      setReadResourceRailCollapsed(isReadResourceRailCollapsed());
+    }
+
+    rail.spxRender = renderRail;
+    launcher.addEventListener('click', function expandReadResourceRail() {
+      setReadResourceRailCollapsed(false);
+    });
+    document.body.appendChild(rail);
+    document.body.appendChild(launcher);
+    renderRail();
+    return rail;
+  }
+
+  function refreshReadResourceRail() {
+    var rail = qs('#spx-read-resource-rail');
+    if (rail && typeof rail.spxRender === 'function') {
+      rail.spxRender();
+      return;
+    }
+    if (readResourceRailContext.posts && readResourceRailContext.posts.length) {
+      createReadResourceRail(readResourceRailContext.posts, readResourceRailContext.state);
+    }
   }
 
   function closeResourcePanel() {
@@ -9712,6 +10111,7 @@
       targetState.resources = savedResources.resources;
       saveResourceLibrary(targetState.resources);
       refreshResourceCenter();
+      refreshReadResourceRail();
       setTemporaryText(saveButton, savedResources.saved ? ('已保存 ' + savedResources.saved + ' 条') : '无可保存资源', '保存当前');
     });
 
@@ -10300,7 +10700,7 @@
     if (editor.disabled || editor.readOnly) return false;
     if (
       editor.closest &&
-      editor.closest('#spx-settings,#spx-toolbox,#spx-watch-center,#spx-history-center,#spx-auto-buy-center,#spx-resource-center,#spx-preview-lightbox,#spx-quick-reply')
+      editor.closest('#spx-settings,#spx-toolbox,#spx-watch-center,#spx-history-center,#spx-auto-buy-center,#spx-resource-center,#spx-read-resource-rail,#spx-preview-lightbox,#spx-quick-reply')
     ) {
       return false;
     }
@@ -12904,6 +13304,14 @@
     getThreadResourceBadgeIndex: getThreadResourceBadgeIndex,
     getThreadResourceBadges: getThreadResourceBadges,
     getResourceBadgeTypes: getResourceBadgeTypes,
+    getResourceRailTypeKey: getResourceRailTypeKey,
+    getResourceRailTypeLabel: getResourceRailTypeLabel,
+    getResourceRailEntries: getResourceRailEntries,
+    filterResourceRailEntries: filterResourceRailEntries,
+    formatResourceRailSummary: formatResourceRailSummary,
+    formatResourceRailSummaryText: formatResourceRailSummaryText,
+    formatResourceRailCodes: formatResourceRailCodes,
+    getAvailableResourceRailFilterTypes: getAvailableResourceRailFilterTypes,
     extractResourceLinksFromText: extractResourceLinksFromText,
     filterResourceLinks: filterResourceLinks,
     formatResourceLinks: formatResourceLinks,

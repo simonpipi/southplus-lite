@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.4\.3/);
+assert.match(source, /@version\s+0\.4\.5/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.forumDashboard, true);
@@ -515,6 +515,7 @@ assert.match(source, /spx-preview-drawer/);
 assert.match(source, /spx-preview-panel spx-preview-drawer spx-preview-collapsed/);
 assert.match(source, /spx-preview-masonry/);
 assert.match(source, /spx-preview-lightbox-strip/);
+assert.match(source, /spx-preview-header\{[^}]*position:sticky!important;top:0!important;z-index:3!important;[^}]*background:inherit!important/);
 assert.match(source, /按楼层复制/);
 assert.match(source, /复制Markdown/);
 assert.match(source, /资源工作台/);
@@ -761,6 +762,13 @@ assert.deepEqual(
 );
 assert.match(source, /spx-resource-badge-guess/);
 assert.match(source, /setThreadRowHiddenClass\(item\.row, 'spx-resource-filter-hidden', resourceHidden\)/);
+assert.match(source, /function createReadResourceRail\(posts, state\)/);
+assert.match(source, /spx-read-resource-rail/);
+assert.match(source, /spx-read-resource-launcher/);
+assert.match(source, /copyReadResourceRailCodes/);
+assert.match(source, /bottom:calc\(104px \+ env\(safe-area-inset-bottom,0px\)\)/);
+assert.match(source, /createReadResourceRail\(posts, state\)/);
+assert.match(source, /#spx-resource-center,#spx-read-resource-rail/);
 
 assert.equal(enhancer.clampPreviewZoom(0.1), 0.5);
 assert.equal(enhancer.clampPreviewZoom(1.75), 1.75);
@@ -964,6 +972,36 @@ assert.deepEqual(
     ['torrent', '种子', 'saved', '', '资源帖', '自动保存', '合集'],
     ['cloud', '夸克网盘', 'saved', '', '资源帖', '自动保存', '合集'],
   ]
+);
+const readResourceRailEntries = enhancer.getResourceRailEntries(jumpedResources, savedResourceLibrary.resources);
+assert.deepEqual(
+  readResourceRailEntries.map(function mapReadResourceRail(entry) {
+    return [entry.type, entry.typeLabel, entry.saved, entry.status, entry.statusLabel, entry.floorLabel, entry.accessCode];
+  }),
+  [
+    ['baidu', '百度', true, 'todo', '待下载', 'B1F', '1234'],
+    ['torrent', '种子', true, 'saved', '已保存', 'B1F', ''],
+    ['quark', '夸克', true, 'saved', '已保存', 'B1F', ''],
+  ]
+);
+assert.deepEqual(
+  enhancer.filterResourceRailEntries(readResourceRailEntries, 'quark').map(function mapRailFilter(entry) {
+    return entry.url;
+  }),
+  ['https://pan.quark.cn/s/qwer']
+);
+assert.deepEqual(enhancer.getAvailableResourceRailFilterTypes(readResourceRailEntries), ['baidu', 'quark', 'torrent']);
+assert.deepEqual(enhancer.formatResourceRailSummary(readResourceRailEntries), {
+  total: 3,
+  floors: 1,
+  codes: 1,
+  todo: 1,
+  saved: 3,
+});
+assert.equal(enhancer.formatResourceRailSummaryText(readResourceRailEntries), '3 条 · 1 个楼层 · 1 个口令 · 待处理 1');
+assert.equal(
+  enhancer.formatResourceRailCodes(readResourceRailEntries),
+  '[百度] B1F bob https://pan.baidu.com/s/abc?pwd=1234 提取码 1234'
 );
 assert.deepEqual(enhancer.normalizeResourceTags(' 合集，待下载\n合集 '), ['合集', '待下载']);
 assert.deepEqual(
