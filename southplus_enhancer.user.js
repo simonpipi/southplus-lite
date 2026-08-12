@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.4.6
+// @version      0.4.7
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -9765,6 +9765,70 @@
     launcher.type = 'button';
     launcher.title = '展开当前帖资源栏';
 
+    function setRailAction(button, action, key, status) {
+      button.dataset.spxRailAction = action;
+      if (key) button.dataset.spxResourceKey = key;
+      if (status) button.dataset.spxResourceStatus = status;
+      return button;
+    }
+
+    function getRailEntryByKey(key) {
+      return (rail.spxEntriesByKey || {})[String(key || '')] || null;
+    }
+
+    function handleReadResourceRailClick(event) {
+      var target = event.target && event.target.closest
+        ? event.target.closest('[data-spx-rail-action]')
+        : null;
+      if (!target || !rail.contains(target)) return;
+      var action = target.dataset.spxRailAction;
+      var visibleEntries = rail.spxVisibleEntries || [];
+      var entry = getRailEntryByKey(target.dataset.spxResourceKey);
+      var card = target.closest ? target.closest('.spx-read-resource-card') : null;
+
+      if (action === 'collapse') {
+        setReadResourceRailCollapsed(true);
+        return;
+      }
+      if (action === 'copy-all') {
+        copyReadResourceRailEntries(visibleEntries, target, '复制全部');
+        return;
+      }
+      if (action === 'save-visible') {
+        saveReadResourceRailEntries(visibleEntries, readResourceRailContext.state, target, '保存当前');
+        return;
+      }
+      if (action === 'copy-codes') {
+        copyReadResourceRailCodes(visibleEntries, target);
+        return;
+      }
+      if (action === 'filter') {
+        readResourceRailContext.filter = target.dataset.spxResourceRailFilter || 'all';
+        renderRail();
+        return;
+      }
+      if (!entry) return;
+      if (action === 'jump') {
+        if (card) card.classList.add('spx-active');
+        jumpToReadResourceRailEntry(entry, readResourceRailContext.posts);
+        window.setTimeout(function clearActiveCard() {
+          if (card && card.isConnected) card.classList.remove('spx-active');
+        }, 1800);
+        return;
+      }
+      if (action === 'copy-one') {
+        copyReadResourceRailEntries([entry], target, '复制');
+        return;
+      }
+      if (action === 'save-one') {
+        saveReadResourceRailEntries([entry], readResourceRailContext.state, target, entry.saved ? '已保存' : '保存');
+        return;
+      }
+      if (action === 'status') {
+        markReadResourceRailEntry(entry, readResourceRailContext.state, target.dataset.spxResourceStatus, target);
+      }
+    }
+
     function renderRail() {
       var allEntries = getCurrentReadResourceRailEntries(readResourceRailContext.posts, readResourceRailContext.state);
       if (!allEntries.length) {
@@ -9776,7 +9840,13 @@
         readResourceRailContext.filter = 'all';
       }
       var visibleEntries = filterResourceRailEntries(allEntries, readResourceRailContext.filter);
+      var entriesByKey = {};
       rail.textContent = '';
+      rail.spxVisibleEntries = visibleEntries;
+      visibleEntries.forEach(function indexVisibleRailEntry(entry) {
+        entriesByKey[entry.key] = entry;
+      });
+      rail.spxEntriesByKey = entriesByKey;
       launcher.textContent = '资源 ' + allEntries.length;
 
       var header = createEl('div', 'spx-read-resource-rail-head');
@@ -9785,9 +9855,7 @@
       title.appendChild(createEl('span', 'spx-read-resource-summary', formatResourceRailSummaryText(allEntries)));
       var collapseButton = createEl('button', '', '收起');
       collapseButton.type = 'button';
-      collapseButton.addEventListener('click', function collapseReadResourceRail() {
-        setReadResourceRailCollapsed(true);
-      });
+      setRailAction(collapseButton, 'collapse');
       header.appendChild(title);
       header.appendChild(collapseButton);
       rail.appendChild(header);
@@ -9800,18 +9868,12 @@
         button.type = 'button';
         actions.appendChild(button);
       });
+      setRailAction(copyAllButton, 'copy-all');
+      setRailAction(saveButton, 'save-visible');
+      setRailAction(copyCodeButton, 'copy-codes');
       copyAllButton.disabled = !visibleEntries.length;
       saveButton.disabled = !getJumpResourceLinks(visibleEntries).length;
       copyCodeButton.disabled = !visibleEntries.some(function hasCode(entry) { return !!entry.accessCode; });
-      copyAllButton.addEventListener('click', function copyVisibleReadResources() {
-        copyReadResourceRailEntries(visibleEntries, copyAllButton, '复制全部');
-      });
-      saveButton.addEventListener('click', function saveVisibleReadResources() {
-        saveReadResourceRailEntries(visibleEntries, readResourceRailContext.state, saveButton, '保存当前');
-      });
-      copyCodeButton.addEventListener('click', function copyVisibleReadCodes() {
-        copyReadResourceRailCodes(visibleEntries, copyCodeButton);
-      });
       rail.appendChild(actions);
 
       var filters = createEl('div', 'spx-read-resource-filters');
@@ -9821,10 +9883,7 @@
         var button = createEl('button', item.value === readResourceRailContext.filter ? 'spx-active' : '', item.label);
         button.type = 'button';
         button.dataset.spxResourceRailFilter = item.value;
-        button.addEventListener('click', function filterReadResourceRail() {
-          readResourceRailContext.filter = item.value;
-          renderRail();
-        });
+        setRailAction(button, 'filter');
         filters.appendChild(button);
       });
       rail.appendChild(filters);
@@ -9860,29 +9919,13 @@
           button.type = 'button';
           itemActions.appendChild(button);
         });
+        setRailAction(jumpButton, 'jump', entry.key);
+        setRailAction(copyButton, 'copy-one', entry.key);
+        setRailAction(saveOneButton, 'save-one', entry.key);
+        setRailAction(todoButton, 'status', entry.key, 'todo');
+        setRailAction(doneButton, 'status', entry.key, 'done');
+        setRailAction(invalidButton, 'status', entry.key, 'invalid');
         saveOneButton.classList.toggle('spx-action-secondary', entry.saved);
-        jumpButton.addEventListener('click', function jumpToEntryFloor() {
-          item.classList.add('spx-active');
-          jumpToReadResourceRailEntry(entry, readResourceRailContext.posts);
-          window.setTimeout(function clearActiveCard() {
-            if (item.isConnected) item.classList.remove('spx-active');
-          }, 1800);
-        });
-        copyButton.addEventListener('click', function copyOneReadResource() {
-          copyReadResourceRailEntries([entry], copyButton, '复制');
-        });
-        saveOneButton.addEventListener('click', function saveOneReadResource() {
-          saveReadResourceRailEntries([entry], readResourceRailContext.state, saveOneButton, entry.saved ? '已保存' : '保存');
-        });
-        todoButton.addEventListener('click', function markReadResourceTodo() {
-          markReadResourceRailEntry(entry, readResourceRailContext.state, 'todo', todoButton);
-        });
-        doneButton.addEventListener('click', function markReadResourceDone() {
-          markReadResourceRailEntry(entry, readResourceRailContext.state, 'done', doneButton);
-        });
-        invalidButton.addEventListener('click', function markReadResourceInvalid() {
-          markReadResourceRailEntry(entry, readResourceRailContext.state, 'invalid', invalidButton);
-        });
         item.appendChild(itemActions);
         list.appendChild(item);
       });
@@ -9891,6 +9934,7 @@
     }
 
     rail.spxRender = renderRail;
+    rail.addEventListener('click', handleReadResourceRailClick);
     launcher.addEventListener('click', function expandReadResourceRail() {
       setReadResourceRailCollapsed(false);
     });
@@ -10342,15 +10386,20 @@
       var thumbImage = createEl('img');
       thumbButton.type = 'button';
       thumbButton.title = '查看第 ' + (index + 1) + ' 张';
+      thumbButton.dataset.spxPreviewThumbIndex = String(index);
       thumbImage.src = item.src;
       thumbImage.loading = 'lazy';
       thumbImage.decoding = 'async';
       thumbImage.alt = '预览缩略图 ' + (index + 1);
       thumbButton.appendChild(thumbImage);
-      thumbButton.addEventListener('click', function showThumbImage() {
-        showImage(index);
-      });
       strip.appendChild(thumbButton);
+    });
+    strip.addEventListener('click', function handleLightboxThumbClick(event) {
+      var thumb = event.target && event.target.closest
+        ? event.target.closest('[data-spx-preview-thumb-index]')
+        : null;
+      if (!thumb || !strip.contains(thumb)) return;
+      showImage(Number(thumb.dataset.spxPreviewThumbIndex) || 0);
     });
     if (images.length > 1) shell.appendChild(strip);
     lightbox.appendChild(shell);
@@ -10373,39 +10422,6 @@
     var content = qs('.tpc_content', firstPost);
     if (!content) return;
 
-    var previewImages = [];
-    posts.forEach(function collectPostImages(post, postIndex) {
-      var postContent = qs('.tpc_content', post);
-      if (!postContent) return;
-      var floorLabel = getPostFloorLabel(postIndex);
-      var author = getPostAuthor(post);
-      qsa('img', postContent).forEach(function collectImage(img) {
-        var item = {
-          node: img,
-          src: img.currentSrc || img.src,
-          naturalWidth: img.naturalWidth,
-          naturalHeight: img.naturalHeight,
-          width: img.width,
-          height: img.height,
-          className: img.className,
-          alt: img.alt,
-          postIndex: postIndex,
-          floorLabel: floorLabel,
-          author: author,
-        };
-        if (isPreviewImageCandidate(item)) previewImages.push(item);
-      });
-    });
-
-    var seen = {};
-    previewImages = previewImages.filter(function uniqueImage(item) {
-      if (seen[item.src]) return false;
-      seen[item.src] = true;
-      return true;
-    });
-
-    if (!previewImages.length) return;
-
     var panel = createEl('section', 'spx-preview-panel spx-preview-drawer spx-preview-collapsed');
     panel.id = 'spx-preview-panel';
     var header = createEl('div', 'spx-preview-header');
@@ -10423,8 +10439,11 @@
     var loadMoreButton = createEl('button', 'spx-preview-load-more', '加载更多图片');
     var drawerTab = createEl('button', 'spx-preview-drawer-tab', '预览图');
     var showLargeOnly = false;
-    var visiblePreviewImages = previewImages.slice();
+    var previewImages = null;
+    var visiblePreviewImages = [];
     var renderedPreviewLimit = PREVIEW_GALLERY_BATCH_SIZE;
+    var idleScanId = null;
+    var idleScanType = '';
 
     copyAllButton.type = 'button';
     copyFloorButton.type = 'button';
@@ -10448,6 +10467,83 @@
     masonryButton.setAttribute('aria-pressed', 'false');
     drawerButton.setAttribute('aria-pressed', 'false');
     collapseDrawerButton.hidden = true;
+
+    function cancelIdlePreviewScan() {
+      if (idleScanId === null) return;
+      if (idleScanType === 'idle' && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleScanId);
+      } else {
+        window.clearTimeout(idleScanId);
+      }
+      idleScanId = null;
+      idleScanType = '';
+    }
+
+    function scanPreviewImages() {
+      if (previewImages) return previewImages;
+      cancelIdlePreviewScan();
+      var nextImages = [];
+      posts.forEach(function collectPostImages(post, postIndex) {
+        var postContent = qs('.tpc_content', post);
+        if (!postContent) return;
+        var floorLabel = getPostFloorLabel(postIndex);
+        var author = getPostAuthor(post);
+        qsa('img', postContent).forEach(function collectImage(img) {
+          var item = {
+            node: img,
+            src: img.currentSrc || img.src,
+            naturalWidth: img.naturalWidth,
+            naturalHeight: img.naturalHeight,
+            width: img.width,
+            height: img.height,
+            className: img.className,
+            alt: img.alt,
+            postIndex: postIndex,
+            floorLabel: floorLabel,
+            author: author,
+          };
+          if (isPreviewImageCandidate(item)) nextImages.push(item);
+        });
+      });
+
+      var seen = {};
+      previewImages = nextImages.filter(function uniqueImage(item) {
+        if (!item.src || seen[item.src]) return false;
+        seen[item.src] = true;
+        return true;
+      });
+      visiblePreviewImages = previewImages.slice();
+      return previewImages;
+    }
+
+    function getVisiblePreviewImages() {
+      var images = previewImages || [];
+      return showLargeOnly ? images.filter(isLargePreviewImage) : images.slice();
+    }
+
+    function scheduleIdlePreviewScan() {
+      if (idleScanId !== null) return;
+      var callback = function runIdlePreviewScan() {
+        idleScanId = null;
+        idleScanType = '';
+        if (!panel.isConnected) return;
+        var images = scanPreviewImages();
+        if (!images.length && panel.classList.contains('spx-preview-collapsed')) {
+          restorePreviewGallery();
+          return;
+        }
+        visiblePreviewImages = getVisiblePreviewImages();
+        if (panel.classList.contains('spx-preview-collapsed')) syncPreviewHeader();
+        else renderPreviewGrid();
+      };
+      if (typeof window.requestIdleCallback === 'function') {
+        idleScanType = 'idle';
+        idleScanId = window.requestIdleCallback(callback, { timeout: 2200 });
+      } else {
+        idleScanType = 'timer';
+        idleScanId = window.setTimeout(callback, 1200);
+      }
+    }
 
     function setPreviewButtonText(button, text, delay) {
       clearTimeout(button.spxPreviewTimer);
@@ -10483,26 +10579,27 @@
     }
 
     function syncPreviewHeader() {
-      var largeCount = previewImages.filter(isLargePreviewImage).length;
+      var scanned = Array.isArray(previewImages);
+      var allImages = previewImages || [];
+      var largeCount = scanned ? allImages.filter(isLargePreviewImage).length : 0;
       var renderState = getPreviewGalleryRenderState(visiblePreviewImages.length, renderedPreviewLimit);
-      summary.textContent = formatPreviewGallerySummary(
-        previewImages.length,
-        visiblePreviewImages.length,
-        renderState.rendered,
-        showLargeOnly
-      );
-      largeOnlyButton.hidden = largeCount === previewImages.length;
+      summary.textContent = scanned
+        ? formatPreviewGallerySummary(allImages.length, visiblePreviewImages.length, renderState.rendered, showLargeOnly)
+        : '展开后加载当前页图片';
+      drawerTab.textContent = scanned && allImages.length ? ('预览图 ' + allImages.length) : '预览图';
+      largeOnlyButton.hidden = !scanned || !allImages.length || largeCount === allImages.length;
       largeOnlyButton.setAttribute('aria-pressed', showLargeOnly ? 'true' : 'false');
-      copyAllButton.disabled = !visiblePreviewImages.length;
-      copyFloorButton.disabled = !visiblePreviewImages.length;
-      copyMarkdownButton.disabled = !visiblePreviewImages.length;
-      loadMoreButton.hidden = !renderState.hasMore;
+      copyAllButton.disabled = !scanned || !visiblePreviewImages.length;
+      copyFloorButton.disabled = !scanned || !visiblePreviewImages.length;
+      copyMarkdownButton.disabled = !scanned || !visiblePreviewImages.length;
+      loadMoreButton.hidden = !scanned || !renderState.hasMore;
       loadMoreButton.textContent = '加载更多图片（' + renderState.rendered + ' / ' + renderState.total + '）';
       syncPreviewLayoutButtons();
     }
 
     function renderPreviewGrid() {
-      visiblePreviewImages = showLargeOnly ? previewImages.filter(isLargePreviewImage) : previewImages.slice();
+      scanPreviewImages();
+      visiblePreviewImages = getVisiblePreviewImages();
       grid.textContent = '';
       var renderState = getPreviewGalleryRenderState(visiblePreviewImages.length, renderedPreviewLimit);
       var renderedImages = visiblePreviewImages.slice(0, renderState.rendered);
@@ -10519,19 +10616,7 @@
         link.target = '_blank';
         link.rel = 'noreferrer';
         link.title = '在灯箱中查看第 ' + (index + 1) + ' 张图';
-        link.addEventListener('click', function openLightbox(event) {
-          if (
-            event.button > 0 ||
-            event.altKey ||
-            event.ctrlKey ||
-            event.metaKey ||
-            event.shiftKey
-          ) {
-            return;
-          }
-          event.preventDefault();
-          openPreviewLightbox(visiblePreviewImages, index);
-        });
+        link.dataset.spxPreviewIndex = String(index);
 
         var thumb = createEl('img');
         thumb.src = item.src;
@@ -10544,11 +10629,6 @@
         hoverImage.decoding = 'async';
         hoverImage.dataset.src = item.src;
         hoverImage.alt = '预览图 ' + (index + 1) + ' 放大预览';
-        function loadHoverImage() {
-          if (!hoverImage.src) hoverImage.src = hoverImage.dataset.src || item.src;
-        }
-        link.addEventListener('mouseenter', loadHoverImage);
-        link.addEventListener('focus', loadHoverImage);
 
         var label = createEl('span', '', getPreviewImageMetaText(item, index));
         link.appendChild(thumb);
@@ -10556,6 +10636,23 @@
         link.appendChild(label);
         grid.appendChild(link);
       });
+    }
+
+    function ensurePreviewImages(render) {
+      var images = scanPreviewImages();
+      if (render) renderPreviewGrid();
+      else {
+        visiblePreviewImages = getVisiblePreviewImages();
+        syncPreviewHeader();
+      }
+      return images;
+    }
+
+    function loadDelegatedPreviewHoverImage(target) {
+      var link = target && target.closest ? target.closest('.spx-preview-item') : null;
+      if (!link || !grid.contains(link)) return;
+      var hoverImage = qs('.spx-preview-hover-image', link);
+      if (hoverImage && !hoverImage.src) hoverImage.src = hoverImage.dataset.src || link.href;
     }
 
     function loadNextPreviewBatch() {
@@ -10571,16 +10668,20 @@
     }
 
     copyAllButton.addEventListener('click', function copyAllPreviewLinks() {
+      ensurePreviewImages(false);
       copyPreviewText(copyAllButton, formatPreviewImageLinks(visiblePreviewImages), visiblePreviewImages.length);
     });
     copyFloorButton.addEventListener('click', function copyPreviewLinksByFloor() {
+      ensurePreviewImages(false);
       copyPreviewText(copyFloorButton, formatPreviewImageLinksByFloor(visiblePreviewImages), visiblePreviewImages.length);
     });
     copyMarkdownButton.addEventListener('click', function copyPreviewMarkdownLinks() {
+      ensurePreviewImages(false);
       copyPreviewText(copyMarkdownButton, formatPreviewImageMarkdownLinks(visiblePreviewImages), visiblePreviewImages.length);
     });
 
     largeOnlyButton.addEventListener('click', function toggleLargeOnly() {
+      ensurePreviewImages(false);
       showLargeOnly = !showLargeOnly;
       renderedPreviewLimit = PREVIEW_GALLERY_BATCH_SIZE;
       renderPreviewGrid();
@@ -10600,9 +10701,23 @@
     });
     drawerTab.addEventListener('click', function expandPreviewDrawer() {
       panel.classList.remove('spx-preview-collapsed');
+      ensurePreviewImages(true);
     });
     loadMoreButton.addEventListener('click', loadNextPreviewBatch);
     panel.addEventListener('scroll', handlePreviewPanelScroll);
+    grid.addEventListener('click', function handlePreviewGridClick(event) {
+      var link = event.target && event.target.closest ? event.target.closest('.spx-preview-item') : null;
+      if (!link || !grid.contains(link)) return;
+      if (event.button > 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      event.preventDefault();
+      openPreviewLightbox(visiblePreviewImages, Number(link.dataset.spxPreviewIndex) || 0);
+    });
+    grid.addEventListener('mouseover', function handlePreviewGridHover(event) {
+      loadDelegatedPreviewHoverImage(event.target);
+    });
+    grid.addEventListener('focusin', function handlePreviewGridFocus(event) {
+      loadDelegatedPreviewHoverImage(event.target);
+    });
 
     actions.appendChild(copyAllButton);
     actions.appendChild(copyFloorButton);
@@ -10618,15 +10733,20 @@
     panel.appendChild(grid);
     panel.appendChild(loadMoreButton);
     panel.appendChild(drawerTab);
-    renderPreviewGrid();
+    panel.spxCleanup = cancelIdlePreviewScan;
+    syncPreviewHeader();
 
     mountPreviewPanel(firstPost, content, panel);
+    scheduleIdlePreviewScan();
   }
 
   function restorePreviewGallery() {
     closePreviewLightbox();
     var panel = qs('#spx-preview-panel');
-    if (panel) panel.remove();
+    if (panel) {
+      if (typeof panel.spxCleanup === 'function') panel.spxCleanup();
+      panel.remove();
+    }
     var split = qs('.spx-post-body-split');
     if (split) {
       var content = qs('.tpc_content', split);

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.7 - 2026-08-12
+
+### Changed
+
+- 预览图集改为延迟扫描正文图片：阅读页初始只挂载收起入口，首次展开或浏览器空闲时再收集候选图片并渲染缩略图。
+- 预览图集和灯箱缩略图改为容器事件委托，减少图片较多时为每张缩略图绑定的点击 / 悬停处理。
+- 阅读页固定资源栏按钮改为统一事件委托，资源较多或频繁筛选重绘时减少重复事件绑定。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.4.6 - 2026-08-12
 
 ### Changed
