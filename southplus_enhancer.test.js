@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.4\.7/);
+assert.match(source, /@version\s+0\.4\.8/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.forumDashboard, true);
@@ -529,6 +529,16 @@ assert.match(source, /grid\.addEventListener\('click', function handlePreviewGri
 assert.match(source, /grid\.addEventListener\('mouseover', function handlePreviewGridHover/);
 assert.match(source, /strip\.addEventListener\('click', function handleLightboxThumbClick/);
 assert.match(source, /panel\.spxCleanup = cancelIdlePreviewScan/);
+assert.match(source, /THREAD_PREVIEW_HOVER_DELAY = 520/);
+assert.match(source, /function getThreadPreviewHoverDelay\(settings\)/);
+assert.match(source, /cached \? Math\.min\(120, getThreadPreviewHoverDelay\(settings\)\) : getThreadPreviewHoverDelay\(settings\)/);
+assert.match(source, /image\.dataset\.spxPreviewLazySrc = url/);
+assert.match(source, /function scheduleThreadPreviewPanelImages\(panel\)/);
+assert.match(source, /loadThreadPreviewPanelImages\(panel, THREAD_PREVIEW_IMAGE_BATCH_SIZE\)/);
+assert.match(source, /var previewAbortController = null/);
+assert.match(source, /requestOptions\.signal = requestController\.signal/);
+assert.match(source, /previewAbortController\.abort\(\)/);
+assert.match(source, /error && error\.name === 'AbortError'/);
 assert.match(source, /spx-preview-header\{[^}]*position:sticky!important;top:0!important;z-index:3!important;[^}]*background:inherit!important/);
 assert.match(source, /按楼层复制/);
 assert.match(source, /复制Markdown/);
@@ -732,6 +742,8 @@ assert.equal(
   enhancer.getThreadPreviewImageSummary({ images: ['1', '2', '3', '4', '5', '6', '7', '8'] }),
   '已显示前 6 张，打开帖子查看其余 2 张'
 );
+assert.equal(enhancer.getThreadPreviewHoverDelay({ networkFriendly: true }), 520);
+assert.equal(enhancer.getThreadPreviewHoverDelay({ networkFriendly: false }), 260);
 
 assert.equal(enhancer.parsePostPrice('本帖售价：5 SP币'), 5);
 assert.equal(enhancer.parsePostPrice('购买需要 12.5 SP'), 12.5);

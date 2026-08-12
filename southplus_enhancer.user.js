@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.4.7
+// @version      0.4.8
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -79,6 +79,10 @@
   var THREAD_PREVIEW_FAILURE_TTL = 3 * 60 * 1000;
   var THREAD_PREVIEW_CACHE_LIMIT = 50;
   var THREAD_PREVIEW_IMAGE_LIMIT = 6;
+  var THREAD_PREVIEW_HOVER_DELAY = 520;
+  var THREAD_PREVIEW_FAST_HOVER_DELAY = 260;
+  var THREAD_PREVIEW_IMAGE_LOAD_DELAY = 180;
+  var THREAD_PREVIEW_IMAGE_BATCH_SIZE = 2;
   var SP_BALANCE_CACHE_TTL = 90 * 1000;
   var TOOLBOX_BUTTON_SELECTOR = '[data-spx-toolbox-button="1"]';
   var SETTINGS_BUTTON_SELECTOR = '[data-spx-settings-button="1"]';
@@ -4110,6 +4114,8 @@
       '.spx-preview-images{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;}',
       '.spx-preview-images a{display:block;overflow:hidden;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;}',
       '.spx-preview-images img{display:block;width:100%;height:118px;object-fit:cover;}',
+      '.spx-preview-images img[data-spx-preview-lazy-src]{background:linear-gradient(135deg,#f1f5f9,#e2e8f0);opacity:.68;}',
+      '.spx-preview-images img[data-spx-preview-loaded="1"]{opacity:1;transition:opacity .16s ease;}',
       '.spx-preview-status{color:#94a3b8;font-size:12px;}',
       '.spx-compact-read .user-info,.spx-compact-read .readprofile,.spx-hide-profile .user-pic,.spx-hide-profile .user-info,.spx-hide-profile .readprofile{display:none!important;}',
       '.spx-compact-read:not(.spx-reader) .tpc_content{font-size:15px;line-height:1.7;max-width:var(--spx-reader-line);}',
@@ -8122,7 +8128,12 @@
 
   function removeThreadPreview() {
     var panel = qs('#spx-preview-popover');
-    if (panel) panel.remove();
+    if (!panel) return;
+    if (panel.spxPreviewImageTimer && typeof window !== 'undefined' && typeof window.clearTimeout === 'function') {
+      window.clearTimeout(panel.spxPreviewImageTimer);
+      panel.spxPreviewImageTimer = null;
+    }
+    panel.remove();
   }
 
   function getThreadPreviewUrl(info) {
@@ -8145,6 +8156,51 @@
     if (!count) return '没有可预览图片';
     if (count > THREAD_PREVIEW_IMAGE_LIMIT) return '已显示前 ' + THREAD_PREVIEW_IMAGE_LIMIT + ' 张，打开帖子查看其余 ' + (count - THREAD_PREVIEW_IMAGE_LIMIT) + ' 张';
     return '共 ' + count + ' 张预览图';
+  }
+
+  function getThreadPreviewHoverDelay(settings) {
+    return isNetworkFriendlyMode(settings) ? THREAD_PREVIEW_HOVER_DELAY : THREAD_PREVIEW_FAST_HOVER_DELAY;
+  }
+
+  function loadThreadPreviewPanelImage(image) {
+    if (!image || image.src) return false;
+    var src = image.dataset && image.dataset.spxPreviewLazySrc;
+    if (!src) return false;
+    image.src = src;
+    delete image.dataset.spxPreviewLazySrc;
+    image.dataset.spxPreviewLoaded = '1';
+    return true;
+  }
+
+  function loadThreadPreviewPanelImages(panel, batchSize) {
+    if (!panel || !panel.isConnected) return 0;
+    var limit = Math.max(1, Number(batchSize) || THREAD_PREVIEW_IMAGE_BATCH_SIZE);
+    var loaded = 0;
+    qsa('img[data-spx-preview-lazy-src]', panel).some(function loadPreviewImage(image) {
+      if (loaded >= limit) return true;
+      if (loadThreadPreviewPanelImage(image)) loaded += 1;
+      return false;
+    });
+    return loaded;
+  }
+
+  function scheduleThreadPreviewPanelImages(panel) {
+    if (!panel || typeof window === 'undefined' || typeof window.setTimeout !== 'function') return;
+    var loadNextBatch = function loadNextThreadPreviewImageBatch() {
+      if (!panel.isConnected) return;
+      panel.spxPreviewImageTimer = null;
+      loadThreadPreviewPanelImages(panel, THREAD_PREVIEW_IMAGE_BATCH_SIZE);
+      if (qs('img[data-spx-preview-lazy-src]', panel)) {
+        panel.spxPreviewImageTimer = window.setTimeout(loadNextBatch, THREAD_PREVIEW_IMAGE_LOAD_DELAY);
+      }
+    };
+    panel.spxPreviewImageTimer = window.setTimeout(loadNextBatch, THREAD_PREVIEW_IMAGE_LOAD_DELAY);
+    panel.addEventListener('mouseenter', function loadVisibleThreadPreviewImages() {
+      loadThreadPreviewPanelImages(panel, THREAD_PREVIEW_IMAGE_BATCH_SIZE);
+    }, { once: true });
+    panel.addEventListener('focusin', function loadFocusedThreadPreviewImages() {
+      loadThreadPreviewPanelImages(panel, THREAD_PREVIEW_IMAGE_BATCH_SIZE);
+    }, { once: true });
   }
 
   function saveThreadPreviewWatch(info, state) {
@@ -8248,9 +8304,10 @@
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
         var image = createEl('img');
-        image.src = url;
         image.loading = 'lazy';
         image.decoding = 'async';
+        image.alt = '预览图';
+        image.dataset.spxPreviewLazySrc = url;
         link.appendChild(image);
         grid.appendChild(link);
       });
@@ -8261,6 +8318,7 @@
     panel.addEventListener('mouseleave', removeThreadPreview);
     document.body.appendChild(panel);
     positionPreviewPanel(panel, event || {});
+    scheduleThreadPreviewPanelImages(panel);
   }
 
   function extractPreviewPayloadFromDocument(doc, url) {
@@ -8289,21 +8347,30 @@
     info.titleLink.dataset.spxPreviewReady = '1';
     var timer = null;
     var previewToken = 0;
+    var lastPreviewEvent = null;
+    var previewAbortController = null;
     info.titleLink.addEventListener('mouseenter', function schedulePreview(event) {
+      lastPreviewEvent = event;
       previewToken += 1;
       var currentToken = previewToken;
       var url = info.titleLink.href;
       var cached = getCachedThreadPreview(url);
-      if (cached) {
-        cached.cached = true;
-        updateThreadResourceBadges(info, state, cached);
-        renderPreviewPanel(info, cached, event, state, settings);
-        return;
+      if (timer) window.clearTimeout(timer);
+      if (previewAbortController) {
+        previewAbortController.abort();
+        previewAbortController = null;
       }
       timer = window.setTimeout(function loadPreview() {
+        timer = null;
         if (currentToken !== previewToken) return;
+        if (cached) {
+          cached.cached = true;
+          updateThreadResourceBadges(info, state, cached);
+          renderPreviewPanel(info, cached, lastPreviewEvent || event, state, settings);
+          return;
+        }
         if (isScriptRequestCoolingDown()) {
-          renderPreviewPanel(info, { text: '站点提示操作频繁，悬停预览已临时暂停。', images: [], status: '请求冷却中' }, event, state, settings);
+          renderPreviewPanel(info, { text: '站点提示操作频繁，悬停预览已临时暂停。', images: [], status: '请求冷却中' }, lastPreviewEvent || event, state, settings);
           return;
         }
         var previewPolicy = {
@@ -8311,28 +8378,39 @@
           label: '悬停预览',
           networkFriendly: isNetworkFriendlyMode(settings),
         };
-        renderPreviewPanel(info, { text: '正在加载预览...', images: [], status: '加载中' }, event, state, settings);
-        requestWithPolicy(url, { credentials: 'include' }, previewPolicy)
+        var requestOptions = { credentials: 'include' };
+        var requestController = null;
+        if (typeof AbortController === 'function') {
+          requestController = new AbortController();
+          previewAbortController = requestController;
+          requestOptions.signal = requestController.signal;
+        }
+        renderPreviewPanel(info, { text: '正在加载预览...', images: [], status: '加载中' }, lastPreviewEvent || event, state, settings);
+        requestWithPolicy(url, requestOptions, previewPolicy)
           .then(function parseResponse(response) {
             return readScriptResponseText(response, previewPolicy);
           })
           .then(function renderHtml(html) {
+            if (previewAbortController === requestController) previewAbortController = null;
             if (currentToken !== previewToken) return;
             var doc = new DOMParser().parseFromString(html, 'text/html');
             var payload = extractPreviewPayloadFromDocument(doc, url);
             rememberThreadPreview(url, payload);
             updateThreadResourceBadges(info, state, payload);
-            renderPreviewPanel(info, payload, event, state, settings);
+            renderPreviewPanel(info, payload, lastPreviewEvent || event, state, settings);
           })
-          .catch(function showPreviewError() {
+          .catch(function showPreviewError(error) {
+            if (previewAbortController === requestController) previewAbortController = null;
+            if (error && error.name === 'AbortError') return;
             if (currentToken !== previewToken) return;
             var failurePayload = { text: '预览加载失败，已短暂缓存失败状态，避免重复请求同一主题。', images: [], status: '加载失败' };
             rememberThreadPreview(url, failurePayload, undefined, THREAD_PREVIEW_FAILURE_TTL);
-            renderPreviewPanel(info, failurePayload, event, state, settings);
+            renderPreviewPanel(info, failurePayload, lastPreviewEvent || event, state, settings);
           });
-      }, 420);
+      }, cached ? Math.min(120, getThreadPreviewHoverDelay(settings)) : getThreadPreviewHoverDelay(settings));
     });
     info.titleLink.addEventListener('mousemove', function movePreview(event) {
+      lastPreviewEvent = event;
       var panel = qs('#spx-preview-popover');
       if (panel) positionPreviewPanel(panel, event);
     });
@@ -8340,6 +8418,10 @@
       previewToken += 1;
       if (timer) window.clearTimeout(timer);
       timer = null;
+      if (previewAbortController) {
+        previewAbortController.abort();
+        previewAbortController = null;
+      }
       window.setTimeout(function removePreviewIfPanelInactive() {
         var panel = qs('#spx-preview-popover');
         if (panel && panel.matches && panel.matches(':hover')) return;
@@ -13604,6 +13686,7 @@
     getThreadPreviewMetaText: getThreadPreviewMetaText,
     getThreadPreviewImageUrls: getThreadPreviewImageUrls,
     getThreadPreviewImageSummary: getThreadPreviewImageSummary,
+    getThreadPreviewHoverDelay: getThreadPreviewHoverDelay,
     createQuickReplyRequest: createQuickReplyRequest,
     getQuickReplyAttachmentFiles: getQuickReplyAttachmentFiles,
     formatQuickReplyAttachmentSummary: formatQuickReplyAttachmentSummary,
