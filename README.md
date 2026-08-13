@@ -169,7 +169,9 @@
 ## 文件说明
 
 - `southplus_enhancer.user.js`：用户脚本主文件。
+- `tests/browser-smoke.js`：macOS Chrome 实页冒烟测试脚本，连接当前登录态页面并输出自动化报告。
 - `style-options-preview.html`：清爽产品型、夜间影院型等视觉方向的静态方案预览。
+- `ui-experience-preview.html`：今日摘要带、保存视图、楼层时间线、资源处理队列、通知收纳和筛选抽屉的静态交互预览。
 - `command-palette-preview.html`：全局命令面板的静态交互预览。
 - `resource-badge-preview.html`：论坛列表资源类型角标的静态交互预览。
 - `README.md`：功能说明与使用文档。
@@ -182,8 +184,11 @@
 ```bash
 node --check southplus_enhancer.user.js
 node southplus_enhancer.test.js
+node tests/browser-smoke.js
 git diff --check
 ```
+
+`tests/browser-smoke.js` 会使用当前 macOS Google Chrome 中的 SouthPlus 登录态执行论坛列表、阅读页、首页、搜索页、任务页、个人页和悬停预览检查；运行结束会恢复 `spEnhancer:*` 本地数据快照并关闭脚本打开的临时标签页。若需要机器可读结果，可执行 `node tests/browser-smoke.js --json`。
 
 浏览器内建议抽查：
 
