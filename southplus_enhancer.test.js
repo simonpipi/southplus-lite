@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.4\.8/);
+assert.match(source, /@version\s+0\.4\.10/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.forumDashboard, true);
@@ -528,7 +528,12 @@ assert.match(source, /link\.dataset\.spxPreviewIndex = String\(index\)/);
 assert.match(source, /grid\.addEventListener\('click', function handlePreviewGridClick/);
 assert.match(source, /grid\.addEventListener\('mouseover', function handlePreviewGridHover/);
 assert.match(source, /strip\.addEventListener\('click', function handleLightboxThumbClick/);
-assert.match(source, /panel\.spxCleanup = cancelIdlePreviewScan/);
+assert.match(source, /panel\.spxCleanup = function cleanupPreviewPanel/);
+assert.match(source, /cancelIdlePreviewScan\(\);\n\s+cancelPreviewDownload\(\);/);
+assert.match(source, /function preparePreviewImageReveal\(image\)/);
+assert.match(source, /data-spx-preview-ready="0"/);
+assert.match(source, /markPreviewImageLoaded\(thumb\)/);
+assert.match(source, /markPreviewImageLoaded\(image\);\n\s+applyImageSize\(\);/);
 assert.match(source, /THREAD_PREVIEW_HOVER_DELAY = 520/);
 assert.match(source, /function getThreadPreviewHoverDelay\(settings\)/);
 assert.match(source, /cached \? Math\.min\(120, getThreadPreviewHoverDelay\(settings\)\) : getThreadPreviewHoverDelay\(settings\)/);
@@ -540,6 +545,7 @@ assert.match(source, /requestOptions\.signal = requestController\.signal/);
 assert.match(source, /previewAbortController\.abort\(\)/);
 assert.match(source, /error && error\.name === 'AbortError'/);
 assert.match(source, /spx-preview-header\{[^}]*position:sticky!important;top:0!important;z-index:3!important;[^}]*background:inherit!important/);
+assert.match(source, /spx-preview-collapsed \.spx-preview-header,\.spx-preview-panel\.spx-preview-drawer\.spx-preview-collapsed \.spx-preview-download/);
 assert.match(source, /按楼层复制/);
 assert.match(source, /复制Markdown/);
 assert.match(source, /资源工作台/);
@@ -864,6 +870,28 @@ assert.equal(
   enhancer.formatPreviewGallerySummary(100, 50, 36, true),
   '大图已显示 36 / 50（当前页 100 张），点击进入灯箱'
 );
+assert.equal(enhancer.formatPreviewImageArchiveFileName(new Date('2026-08-13T14:09:00').getTime()), 'southplus-images-20260813-1409.zip');
+assert.equal(enhancer.getPreviewImageDownloadExtension('https://img.example.com/a.webp?x=1', ''), '.webp');
+assert.equal(enhancer.getPreviewImageDownloadExtension('https://img.example.com/a', 'image/png'), '.png');
+assert.equal(enhancer.sanitizePreviewDownloadName('楼主 / alice:*?'), '楼主-alice');
+assert.equal(
+  enhancer.formatPreviewImageDownloadFileName({ src: 'https://img.example.com/a.jpeg', floorLabel: '楼主', author: 'alice' }, 0, ''),
+  '001-楼主-alice.jpg'
+);
+assert.equal(
+  enhancer.getPreviewDownloadStatusSummary({ total: 12, done: 10, failed: 2, active: 0, queued: 0 }),
+  '已完成 10 / 12 · 2 张失败可跳过'
+);
+assert.match(
+  enhancer.formatPreviewDownloadReport([{ index: 1, src: 'https://img.example.com/fail.jpg', status: 'failed', attempts: 6, error: '网络或跨域限制', item: { floorLabel: 'B2F', author: 'bob' } }]),
+  /失败图片：1 张[\s\S]*重试：6 \/ 6[\s\S]*网络或跨域限制/
+);
+assert.equal(enhancer.getZipCrc32(new Uint8Array([97, 98, 99])).toString(16), '352441c2');
+assert.match(source, /PREVIEW_DOWNLOAD_MAX_RETRIES = 6/);
+assert.match(source, /spx-preview-download/);
+assert.match(source, /下载全部/);
+assert.match(source, /打包已完成/);
+assert.match(source, /download-report\.txt/);
 
 assert.equal(enhancer.normalizeResourceUrl('pan.baidu.com/s/abc?pwd=1234'), 'https://pan.baidu.com/s/abc?pwd=1234');
 assert.equal(enhancer.normalizeResourceUrl('pan.quark.cn/s/abc'), 'https://pan.quark.cn/s/abc');

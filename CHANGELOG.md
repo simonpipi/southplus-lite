@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.10 - 2026-08-13
+
+### Added
+
+- 预览图侧栏新增 `下载全部`：可下载当前筛选范围内的预览图并打包为 ZIP，侧栏内显示总进度、折叠下载详情和逐图状态。
+- 预览图下载失败会自动重试最多 6 次；达到上限后可继续重试失败项，也可跳过失败图片并将已完成图片打包下载，ZIP 内附 `download-report.txt` 失败清单。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
+## 0.4.9 - 2026-08-13
+
+### Changed
+
+- 预览图集、悬停预览弹层和灯箱缩略图在图片加载完成前保持占位，加载完成后再淡入，避免渐进解码阶段的临时花屏直接显示。
+
+### Verified
+
+- `node --check southplus_enhancer.user.js`
+- `node southplus_enhancer.test.js`
+- `git diff --check`
+
 ## 0.4.8 - 2026-08-12
 
 ### Changed

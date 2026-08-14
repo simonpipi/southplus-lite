@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.4.8
+// @version      0.4.10
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -73,6 +73,8 @@
   var STALE_PROGRESS_MAX_AGE = 180 * 24 * 60 * 60 * 1000;
   var LOCAL_STORAGE_WARNING_BYTES = 4 * 1024 * 1024;
   var PREVIEW_GALLERY_BATCH_SIZE = 36;
+  var PREVIEW_DOWNLOAD_MAX_RETRIES = 6;
+  var PREVIEW_DOWNLOAD_CONCURRENCY = 3;
   var FAVORITE_NAV_BATCH_SIZE = 50;
   var FAVORITE_NAV_MAX_FETCHED_ITEMS = 120;
   var THREAD_PREVIEW_CACHE_TTL = 20 * 60 * 1000;
@@ -1203,6 +1205,28 @@
     };
   }
 
+  function markPreviewImageLoaded(image) {
+    if (!image || !image.dataset) return;
+    image.dataset.spxPreviewReady = '1';
+    image.dataset.spxPreviewLoaded = '1';
+  }
+
+  function preparePreviewImageReveal(image) {
+    if (!image || !image.dataset) return image;
+    image.dataset.spxPreviewReady = '0';
+
+    var markLoaded = function markLoadedPreviewImage() {
+      markPreviewImageLoaded(image);
+      image.removeEventListener('load', markLoaded);
+      image.removeEventListener('error', markLoaded);
+    };
+
+    image.addEventListener('load', markLoaded);
+    image.addEventListener('error', markLoaded);
+    if (image.src && image.complete && image.naturalWidth) markLoaded();
+    return image;
+  }
+
   function isLargePreviewImage(image) {
     var size = getPreviewImageSize(image);
     if (!size.width && !size.height) return true;
@@ -1294,6 +1318,243 @@
     return rendered < visible
       ? '已显示 ' + rendered + ' / 当前页 ' + pageTotal + ' 张，点击进入灯箱'
       : '当前页 ' + pageTotal + ' 张，点击进入灯箱';
+  }
+
+  function padPreviewDownloadPart(value, size) {
+    return String(Math.max(0, Number(value) || 0)).padStart(size || 2, '0');
+  }
+
+  function formatPreviewImageArchiveFileName(timestamp) {
+    var rawTime = Number(timestamp);
+    var date = new Date(isFinite(rawTime) ? rawTime : Date.now());
+    return [
+      'southplus-images-',
+      date.getFullYear(),
+      padPreviewDownloadPart(date.getMonth() + 1),
+      padPreviewDownloadPart(date.getDate()),
+      '-',
+      padPreviewDownloadPart(date.getHours()),
+      padPreviewDownloadPart(date.getMinutes()),
+      '.zip',
+    ].join('');
+  }
+
+  function sanitizePreviewDownloadName(value) {
+    return String(value || '')
+      .replace(/[\\/:*?"<>|]+/g, '-')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 72) || 'image';
+  }
+
+  function getPreviewImageDownloadExtension(url, contentType) {
+    var type = String(contentType || '').toLowerCase();
+    if (/image\/png/.test(type)) return '.png';
+    if (/image\/webp/.test(type)) return '.webp';
+    if (/image\/gif/.test(type)) return '.gif';
+    if (/image\/(?:jpeg|jpg|pjpeg)/.test(type)) return '.jpg';
+    if (/image\/bmp/.test(type)) return '.bmp';
+    try {
+      var pathname = new URL(String(url || ''), 'https://south-plus.org/').pathname;
+      var match = pathname.match(/\.([a-z0-9]{2,5})$/i);
+      if (match && /^(?:jpg|jpeg|png|webp|gif|bmp|avif)$/.test(match[1].toLowerCase())) {
+        return match[1].toLowerCase() === 'jpeg' ? '.jpg' : '.' + match[1].toLowerCase();
+      }
+    } catch (error) {}
+    return '.jpg';
+  }
+
+  function formatPreviewImageDownloadFileName(item, index, contentType) {
+    var image = item || {};
+    var prefix = padPreviewDownloadPart((Number(index) || 0) + 1, 3);
+    var meta = sanitizePreviewDownloadName([image.floorLabel, image.author].filter(Boolean).join('-'));
+    return prefix + '-' + meta + getPreviewImageDownloadExtension(getPreviewImageSource(image), contentType);
+  }
+
+  function getPreviewDownloadStatusSummary(counts) {
+    var data = counts || {};
+    var total = Math.max(0, Number(data.total) || 0);
+    var done = Math.max(0, Number(data.done) || 0);
+    var failed = Math.max(0, Number(data.failed) || 0);
+    var active = Math.max(0, Number(data.active) || 0);
+    var queued = Math.max(0, Number(data.queued) || 0);
+    if (!total) return '没有可下载图片';
+    if (data.packing) return '正在打包 ' + done + ' 张图片';
+    if (active || queued) return '下载中 ' + done + ' / ' + total + (failed ? ' · ' + failed + ' 张失败' : '');
+    if (failed) return '已完成 ' + done + ' / ' + total + ' · ' + failed + ' 张失败可跳过';
+    return '已完成 ' + done + ' / ' + total + ' · 准备 ZIP';
+  }
+
+  function formatPreviewDownloadReport(entries) {
+    var rows = ['SouthPlus Lite 预览图下载报告', '生成时间：' + new Date().toLocaleString(), ''];
+    var failed = (entries || []).filter(function keepFailedPreviewDownload(entry) {
+      return entry && entry.status === 'failed';
+    });
+    rows.push('失败图片：' + failed.length + ' 张');
+    failed.forEach(function appendFailedPreviewDownload(entry) {
+      rows.push('');
+      rows.push('#' + (Number(entry.index) + 1 || 1));
+      rows.push('地址：' + (entry.src || getPreviewImageSource(entry.item)));
+      rows.push('楼层：' + ((entry.item && entry.item.floorLabel) || '未知楼层'));
+      rows.push('作者：' + ((entry.item && entry.item.author) || '未知作者'));
+      rows.push('重试：' + (entry.attempts || 0) + ' / ' + PREVIEW_DOWNLOAD_MAX_RETRIES);
+      rows.push('原因：' + (entry.error || '下载失败'));
+    });
+    return rows.join('\n');
+  }
+
+  var zipCrcTable = null;
+
+  function getZipCrcTable() {
+    if (zipCrcTable) return zipCrcTable;
+    zipCrcTable = [];
+    for (var i = 0; i < 256; i += 1) {
+      var crc = i;
+      for (var bit = 0; bit < 8; bit += 1) {
+        crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
+      }
+      zipCrcTable[i] = crc >>> 0;
+    }
+    return zipCrcTable;
+  }
+
+  function getZipCrc32(bytes) {
+    var table = getZipCrcTable();
+    var crc = 0xffffffff;
+    var data = bytes || [];
+    for (var i = 0; i < data.length; i += 1) {
+      crc = table[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  function encodeZipText(text) {
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(String(text || ''));
+    var encoded = unescape(encodeURIComponent(String(text || '')));
+    var bytes = new Uint8Array(encoded.length);
+    for (var i = 0; i < encoded.length; i += 1) bytes[i] = encoded.charCodeAt(i);
+    return bytes;
+  }
+
+  function getZipDosDateTime(timestamp) {
+    var date = new Date(timestamp || Date.now());
+    var year = Math.max(1980, date.getFullYear());
+    return {
+      time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+      date: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+    };
+  }
+
+  function setZipUint16(view, offset, value) {
+    view.setUint16(offset, value, true);
+  }
+
+  function setZipUint32(view, offset, value) {
+    view.setUint32(offset, value >>> 0, true);
+  }
+
+  function getBlobBytes(blob) {
+    if (blob instanceof Uint8Array) return Promise.resolve(blob);
+    if (blob && typeof blob.arrayBuffer === 'function') {
+      return blob.arrayBuffer().then(function convertBlobArrayBuffer(buffer) {
+        return new Uint8Array(buffer);
+      });
+    }
+    return new Promise(function readBlobWithFileReader(resolve, reject) {
+      if (typeof FileReader === 'undefined' || !blob) {
+        resolve(new Uint8Array(0));
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function handleBlobRead() { resolve(new Uint8Array(reader.result || [])); };
+      reader.onerror = function handleBlobReadError() { reject(reader.error || new Error('读取文件失败')); };
+      reader.readAsArrayBuffer(blob);
+    });
+  }
+
+  function createPreviewZipBlob(files) {
+    if (typeof Blob === 'undefined' || typeof Uint8Array === 'undefined' || typeof DataView === 'undefined') {
+      return Promise.reject(new Error('当前浏览器不支持 ZIP 打包'));
+    }
+    var sourceFiles = (files || []).filter(function keepZipFile(file) {
+      return file && file.name && file.blob;
+    });
+    return Promise.all(sourceFiles.map(function normalizeZipFile(file) {
+      return getBlobBytes(file.blob).then(function attachZipBytes(bytes) {
+        return {
+          name: String(file.name || 'image'),
+          bytes: bytes,
+          timestamp: file.timestamp || Date.now(),
+        };
+      });
+    })).then(function buildZipFromBytes(normalizedFiles) {
+      var chunks = [];
+      var central = [];
+      var offset = 0;
+      normalizedFiles.forEach(function appendZipFile(file) {
+        var nameBytes = encodeZipText(file.name);
+        var data = file.bytes || new Uint8Array(0);
+        var crc = getZipCrc32(data);
+        var timeParts = getZipDosDateTime(file.timestamp);
+        var header = new Uint8Array(30 + nameBytes.length);
+        var view = new DataView(header.buffer);
+        setZipUint32(view, 0, 0x04034b50);
+        setZipUint16(view, 4, 20);
+        setZipUint16(view, 6, 0x0800);
+        setZipUint16(view, 8, 0);
+        setZipUint16(view, 10, timeParts.time);
+        setZipUint16(view, 12, timeParts.date);
+        setZipUint32(view, 14, crc);
+        setZipUint32(view, 18, data.length);
+        setZipUint32(view, 22, data.length);
+        setZipUint16(view, 26, nameBytes.length);
+        setZipUint16(view, 28, 0);
+        header.set(nameBytes, 30);
+        chunks.push(header, data);
+        central.push({ nameBytes: nameBytes, crc: crc, size: data.length, offset: offset, time: timeParts.time, date: timeParts.date });
+        offset += header.length + data.length;
+      });
+
+      var centralOffset = offset;
+      central.forEach(function appendCentralZipRecord(record) {
+        var header = new Uint8Array(46 + record.nameBytes.length);
+        var view = new DataView(header.buffer);
+        setZipUint32(view, 0, 0x02014b50);
+        setZipUint16(view, 4, 20);
+        setZipUint16(view, 6, 20);
+        setZipUint16(view, 8, 0x0800);
+        setZipUint16(view, 10, 0);
+        setZipUint16(view, 12, record.time);
+        setZipUint16(view, 14, record.date);
+        setZipUint32(view, 16, record.crc);
+        setZipUint32(view, 20, record.size);
+        setZipUint32(view, 24, record.size);
+        setZipUint16(view, 28, record.nameBytes.length);
+        setZipUint16(view, 30, 0);
+        setZipUint16(view, 32, 0);
+        setZipUint16(view, 34, 0);
+        setZipUint16(view, 36, 0);
+        setZipUint32(view, 38, 0);
+        setZipUint32(view, 42, record.offset);
+        header.set(record.nameBytes, 46);
+        chunks.push(header);
+        offset += header.length;
+      });
+      var centralSize = offset - centralOffset;
+      var footer = new Uint8Array(22);
+      var footerView = new DataView(footer.buffer);
+      setZipUint32(footerView, 0, 0x06054b50);
+      setZipUint16(footerView, 4, 0);
+      setZipUint16(footerView, 6, 0);
+      setZipUint16(footerView, 8, central.length);
+      setZipUint16(footerView, 10, central.length);
+      setZipUint32(footerView, 12, centralSize);
+      setZipUint32(footerView, 16, centralOffset);
+      setZipUint16(footerView, 20, 0);
+      chunks.push(footer);
+      return new Blob(chunks, { type: 'application/zip' });
+    });
   }
 
   function hasThreadRowHiddenClass(row) {
@@ -3798,12 +4059,23 @@
       '.spx-reader .spx-preview-grid,.spx-immersive-read .spx-preview-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important;}',
       '.spx-reader .spx-preview-item,.spx-immersive-read .spx-preview-item{display:block!important;overflow:hidden!important;border:1px solid #e2e8f0!important;border-radius:8px!important;background:#fff!important;text-decoration:none!important;}',
       '.spx-reader .spx-preview-item img,.spx-immersive-read .spx-preview-item img{display:block!important;width:100%!important;height:190px!important;object-fit:cover!important;background:#fff!important;}',
+      '.spx-reader .spx-preview-item img[data-spx-preview-ready="0"],.spx-immersive-read .spx-preview-item img[data-spx-preview-ready="0"],.spx-preview-images img[data-spx-preview-ready="0"],.spx-preview-lightbox-image[data-spx-preview-ready="0"],.spx-preview-lightbox-thumb img[data-spx-preview-ready="0"]{opacity:0!important;}',
+      '.spx-reader .spx-preview-item img[data-spx-preview-ready="1"],.spx-immersive-read .spx-preview-item img[data-spx-preview-ready="1"],.spx-preview-images img[data-spx-preview-ready="1"],.spx-preview-lightbox-image[data-spx-preview-ready="1"],.spx-preview-lightbox-thumb img[data-spx-preview-ready="1"]{opacity:1!important;transition:opacity .16s ease!important;}',
       '.spx-reader .spx-preview-item .spx-preview-hover-image,.spx-immersive-read .spx-preview-item .spx-preview-hover-image{display:none!important;position:fixed!important;left:50%!important;top:50%!important;transform:translate(-50%,-50%)!important;z-index:100002!important;width:auto!important;height:auto!important;max-width:min(64vw,900px)!important;max-height:min(78vh,760px)!important;object-fit:contain!important;padding:6px!important;background:#fff!important;border:1px solid #cbd5e1!important;border-radius:10px!important;box-shadow:0 18px 52px rgba(15,23,42,.28)!important;pointer-events:none!important;transition:opacity .18s ease!important;}',
       '.spx-reader .spx-preview-item:hover .spx-preview-hover-image,.spx-immersive-read .spx-preview-item:hover .spx-preview-hover-image{display:block!important;opacity:.92!important;}',
+      '.spx-reader .spx-preview-item:hover .spx-preview-hover-image[data-spx-preview-ready="0"],.spx-immersive-read .spx-preview-item:hover .spx-preview-hover-image[data-spx-preview-ready="0"]{opacity:0!important;}',
       '.spx-reader .spx-preview-item span,.spx-immersive-read .spx-preview-item span{display:block!important;padding:5px 7px!important;font-size:12px!important;line-height:1.35!important;color:#475569!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
       '.spx-reader .spx-preview-load-more,.spx-immersive-read .spx-preview-load-more{box-sizing:border-box!important;display:block!important;width:100%!important;height:32px!important;margin:10px 0 0!important;border:1px solid #cbd5e1!important;border-radius:7px!important;background:#fff!important;color:#334155!important;font-size:12px!important;cursor:pointer!important;}',
       '.spx-reader .spx-preview-load-more:hover,.spx-reader .spx-preview-load-more:focus-visible,.spx-immersive-read .spx-preview-load-more:hover,.spx-immersive-read .spx-preview-load-more:focus-visible{border-color:#38bdf8!important;background:#e0f2fe!important;color:#075985!important;outline:none!important;}',
       '.spx-reader .spx-preview-load-more[hidden],.spx-immersive-read .spx-preview-load-more[hidden]{display:none!important;}',
+      '.spx-preview-download{box-sizing:border-box!important;display:grid!important;gap:7px!important;margin:0 0 10px!important;padding:8px 9px!important;border:1px solid var(--spx-line-soft)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;}',
+      '.spx-preview-download[hidden]{display:none!important;}.spx-preview-download-top{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;color:var(--spx-strong)!important;font-size:12px!important;font-weight:900!important;}.spx-preview-download-percent{flex:none!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:850!important;}',
+      '.spx-preview-download-track{height:8px!important;overflow:hidden!important;border-radius:999px!important;background:var(--spx-line-soft)!important;}.spx-preview-download-progress{display:block!important;width:0;height:100%!important;border-radius:inherit!important;background:linear-gradient(90deg,var(--spx-accent),var(--spx-link))!important;transition:width .16s ease!important;}',
+      '.spx-preview-download-compact{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;}.spx-preview-download-badges{display:flex!important;flex-wrap:wrap!important;gap:5px!important;min-width:0!important;}.spx-preview-download-badge{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-height:22px!important;padding:0 8px!important;border-radius:999px!important;background:#e0f2fe!important;color:#075985!important;font-size:11px!important;font-weight:900!important;white-space:nowrap!important;}.spx-preview-download-badge.spx-ok{background:var(--spx-ok-soft,#dcfce7)!important;color:var(--spx-ok,#15803d)!important;}.spx-preview-download-badge.spx-fail{background:var(--spx-danger-soft)!important;color:var(--spx-danger)!important;}.spx-preview-download-badge.spx-zip{background:#ffedd5!important;color:var(--spx-warn)!important;}',
+      '.spx-preview-download-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;flex-wrap:wrap!important;gap:6px!important;}.spx-preview-download-actions button{height:24px!important;margin:0!important;padding:0 8px!important;border:1px solid var(--spx-line)!important;border-radius:7px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:11px!important;font-weight:850!important;line-height:1!important;cursor:pointer!important;}.spx-preview-download-actions button:hover,.spx-preview-download-actions button:focus-visible{border-color:var(--spx-accent)!important;color:var(--spx-accent)!important;outline:none!important;}.spx-preview-download-actions .spx-primary{border-color:var(--spx-accent)!important;background:var(--spx-accent)!important;color:#fff!important;}.spx-preview-download-actions button[disabled]{opacity:.58!important;cursor:not-allowed!important;}',
+      '.spx-preview-download-detail{margin:0!important;border:1px solid var(--spx-line-soft)!important;border-radius:8px!important;background:var(--spx-panel)!important;}.spx-preview-download-detail summary{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;min-height:32px!important;padding:0 9px!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;cursor:pointer!important;list-style:none!important;}.spx-preview-download-detail summary::-webkit-details-marker{display:none!important;}.spx-preview-download-detail summary:after{content:"展开";flex:none!important;color:var(--spx-link)!important;font-size:11px!important;font-weight:900!important;}.spx-preview-download-detail[open] summary{border-bottom:1px solid var(--spx-line-soft)!important;}.spx-preview-download-detail[open] summary:after{content:"收起";}.spx-preview-download-detail-text{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}',
+      '.spx-preview-download-queue{display:grid!important;gap:7px!important;padding:8px!important;}.spx-preview-download-row{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:8px!important;align-items:center!important;padding:7px!important;border:1px solid var(--spx-line-soft)!important;border-radius:8px!important;background:var(--spx-panel-muted)!important;}.spx-preview-download-name{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;margin:0 0 5px!important;color:var(--spx-strong)!important;font-size:12px!important;font-weight:900!important;}.spx-preview-download-name b{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}.spx-preview-download-name em{flex:none!important;color:var(--spx-muted)!important;font-style:normal!important;font-size:11px!important;font-weight:850!important;}.spx-preview-download-meta{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;margin-top:5px!important;color:var(--spx-muted)!important;font-size:11px!important;font-weight:800!important;}.spx-preview-download-row button{height:24px!important;padding:0 8px!important;border:1px solid #fecaca!important;border-radius:7px!important;background:var(--spx-danger-soft)!important;color:var(--spx-danger)!important;font-size:11px!important;font-weight:850!important;cursor:pointer!important;}.spx-preview-download-row button[disabled]{color:var(--spx-muted)!important;background:var(--spx-panel-muted)!important;border-color:var(--spx-line-soft)!important;cursor:not-allowed!important;}',
+      '.spx-preview-download-report{display:grid!important;gap:7px!important;padding:9px!important;border:1px solid #fed7aa!important;border-radius:8px!important;background:#fff7ed!important;color:var(--spx-warn)!important;font-size:12px!important;font-weight:850!important;}.spx-preview-download-report strong{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;color:#7c2d12!important;font-size:12px!important;font-weight:900!important;}',
       '.spx-reader .spx-preview-source,.spx-immersive-read .spx-preview-source{display:none!important;}',
       '.spx-preview-panel.spx-preview-drawer{position:fixed!important;right:14px!important;top:86px!important;bottom:18px!important;z-index:99970!important;box-sizing:border-box!important;width:min(clamp(360px,28vw,500px),calc(100vw - 28px))!important;max-width:none!important;max-height:none!important;margin:0!important;padding:10px!important;overflow:auto!important;background:var(--spx-panel-muted)!important;border:1px solid #cbd5e1!important;border-radius:var(--spx-radius-lg)!important;box-shadow:var(--spx-shadow-popover)!important;}',
       '.spx-preview-panel.spx-preview-drawer .spx-preview-grid,.spx-preview-panel.spx-preview-masonry .spx-preview-grid{display:block!important;column-width:150px!important;column-gap:8px!important;}',
@@ -3811,7 +4083,7 @@
       '.spx-preview-panel.spx-preview-drawer .spx-preview-item img:not(.spx-preview-hover-image),.spx-preview-panel.spx-preview-masonry .spx-preview-item img:not(.spx-preview-hover-image){width:100%!important;height:auto!important;max-height:none!important;object-fit:contain!important;}',
       '.spx-preview-panel.spx-preview-drawer .spx-preview-drawer-tab{display:none!important;}',
       '.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed{top:120px!important;bottom:auto!important;width:48px!important;height:132px!important;padding:0!important;overflow:hidden!important;border-radius:10px 0 0 10px!important;}',
-      '.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-header,.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-grid,.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-load-more{display:none!important;}',
+      '.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-header,.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-download,.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-grid,.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-load-more{display:none!important;}',
       '.spx-preview-panel.spx-preview-drawer.spx-preview-collapsed .spx-preview-drawer-tab{display:flex!important;align-items:center!important;justify-content:center!important;width:100%!important;height:100%!important;border:0!important;border-radius:0!important;background:var(--spx-accent)!important;color:#fff!important;font-weight:900!important;writing-mode:vertical-rl!important;letter-spacing:.08em!important;cursor:pointer!important;}',
       '.spx-preview-lightbox{position:fixed!important;inset:0!important;z-index:100010!important;box-sizing:border-box!important;display:flex!important;padding:18px!important;background:rgba(2,6,23,.9)!important;backdrop-filter:blur(5px)!important;color:#e2e8f0!important;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
       '.spx-preview-lightbox-shell{box-sizing:border-box!important;display:flex!important;flex:1!important;min-width:0!important;min-height:0!important;flex-direction:column!important;overflow:hidden!important;border:1px solid rgba(148,163,184,.34)!important;border-radius:12px!important;background:#020617!important;box-shadow:0 24px 80px rgba(0,0,0,.5)!important;}',
@@ -8166,9 +8438,10 @@
     if (!image || image.src) return false;
     var src = image.dataset && image.dataset.spxPreviewLazySrc;
     if (!src) return false;
+    preparePreviewImageReveal(image);
     image.src = src;
     delete image.dataset.spxPreviewLazySrc;
-    image.dataset.spxPreviewLoaded = '1';
+    if (image.complete && image.naturalWidth) markPreviewImageLoaded(image);
     return true;
   }
 
@@ -8307,6 +8580,7 @@
         image.loading = 'lazy';
         image.decoding = 'async';
         image.alt = '预览图';
+        preparePreviewImageReveal(image);
         image.dataset.spxPreviewLazySrc = url;
         link.appendChild(image);
         grid.appendChild(link);
@@ -9700,18 +9974,18 @@
     ].join('');
   }
 
-  function downloadTextFile(filename, text) {
+  function downloadBlobFile(filename, blob) {
     if (
       typeof Blob === 'undefined' ||
       typeof URL === 'undefined' ||
       typeof URL.createObjectURL !== 'function' ||
-      !document.body
+      !document.body ||
+      !blob
     ) return false;
-    var blob = new Blob([String(text || '')], { type: 'text/plain;charset=utf-8' });
     var href = URL.createObjectURL(blob);
     var link = createEl('a');
     link.href = href;
-    link.download = filename || formatResourceDownloadFileName();
+    link.download = filename || 'download';
     link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
@@ -9720,6 +9994,11 @@
       URL.revokeObjectURL(href);
     }, 0);
     return true;
+  }
+
+  function downloadTextFile(filename, text) {
+    if (typeof Blob === 'undefined') return false;
+    return downloadBlobFile(filename || formatResourceDownloadFileName(), new Blob([String(text || '')], { type: 'text/plain;charset=utf-8' }));
   }
 
   function exportResourceDownloadList(entries) {
@@ -10393,19 +10672,28 @@
 
     function showImage(nextIndex) {
       currentIndex = (nextIndex + images.length) % images.length;
+      var nextSrc = images[currentIndex].src;
       zoom = 1;
       zoomText.textContent = '100%';
       counter.textContent = '图片 ' + (currentIndex + 1) + ' / ' + images.length;
-      urlText.textContent = images[currentIndex].src;
-      urlText.title = images[currentIndex].src;
+      urlText.textContent = nextSrc;
+      urlText.title = nextSrc;
       copyButton.textContent = '复制地址';
       image.alt = '预览图 ' + (currentIndex + 1);
-      image.onload = applyImageSize;
-      image.onerror = function showImageError() {
-        urlText.textContent = '原图加载失败：' + images[currentIndex].src;
+      image.dataset.spxPreviewReady = '0';
+      image.onload = function handleLightboxImageLoad() {
+        markPreviewImageLoaded(image);
+        applyImageSize();
       };
-      image.src = images[currentIndex].src;
-      if (image.complete && image.naturalWidth) applyImageSize();
+      image.onerror = function showImageError() {
+        markPreviewImageLoaded(image);
+        urlText.textContent = '原图加载失败：' + nextSrc;
+      };
+      image.src = nextSrc;
+      if (image.complete && image.naturalWidth) {
+        markPreviewImageLoaded(image);
+        applyImageSize();
+      }
       qsa('.spx-preview-lightbox-thumb', strip).forEach(function syncThumb(button, thumbIndex) {
         var active = thumbIndex === currentIndex;
         button.classList.toggle('spx-active', active);
@@ -10469,10 +10757,12 @@
       thumbButton.type = 'button';
       thumbButton.title = '查看第 ' + (index + 1) + ' 张';
       thumbButton.dataset.spxPreviewThumbIndex = String(index);
-      thumbImage.src = item.src;
       thumbImage.loading = 'lazy';
       thumbImage.decoding = 'async';
       thumbImage.alt = '预览缩略图 ' + (index + 1);
+      preparePreviewImageReveal(thumbImage);
+      thumbImage.src = item.src;
+      if (thumbImage.complete && thumbImage.naturalWidth) markPreviewImageLoaded(thumbImage);
       thumbButton.appendChild(thumbImage);
       strip.appendChild(thumbButton);
     });
@@ -10510,6 +10800,7 @@
     var title = createEl('strong', '', '预览图');
     var summary = createEl('span', 'spx-preview-summary');
     var actions = createEl('div', 'spx-preview-actions');
+    var downloadAllButton = createEl('button', '', '下载全部');
     var copyAllButton = createEl('button', '', '复制全部链接');
     var copyFloorButton = createEl('button', '', '按楼层复制');
     var copyMarkdownButton = createEl('button', '', '复制Markdown');
@@ -10517,16 +10808,34 @@
     var masonryButton = createEl('button', '', '瀑布流');
     var drawerButton = createEl('button', '', '侧栏');
     var collapseDrawerButton = createEl('button', '', '收起');
+    var downloadPanel = createEl('section', 'spx-preview-download');
+    var downloadTop = createEl('div', 'spx-preview-download-top');
+    var downloadTitle = createEl('strong', '', '下载准备中');
+    var downloadPercent = createEl('span', 'spx-preview-download-percent', '0%');
+    var downloadTrack = createEl('div', 'spx-preview-download-track');
+    var downloadProgress = createEl('span', 'spx-preview-download-progress');
+    var downloadCompact = createEl('div', 'spx-preview-download-compact');
+    var downloadBadges = createEl('div', 'spx-preview-download-badges');
+    var downloadActions = createEl('div', 'spx-preview-download-actions');
+    var packDownloadedButton = createEl('button', 'spx-primary', '打包已完成');
+    var retryFailedButton = createEl('button', '', '重试失败');
+    var cancelDownloadButton = createEl('button', '', '取消');
+    var downloadDetail = createEl('details', 'spx-preview-download-detail');
+    var downloadDetailSummary = createEl('summary');
+    var downloadDetailText = createEl('span', 'spx-preview-download-detail-text');
+    var downloadQueue = createEl('div', 'spx-preview-download-queue');
     var grid = createEl('div', 'spx-preview-grid');
     var loadMoreButton = createEl('button', 'spx-preview-load-more', '加载更多图片');
     var drawerTab = createEl('button', 'spx-preview-drawer-tab', '预览图');
     var showLargeOnly = false;
     var previewImages = null;
     var visiblePreviewImages = [];
+    var previewDownloadState = null;
     var renderedPreviewLimit = PREVIEW_GALLERY_BATCH_SIZE;
     var idleScanId = null;
     var idleScanType = '';
 
+    downloadAllButton.type = 'button';
     copyAllButton.type = 'button';
     copyFloorButton.type = 'button';
     copyMarkdownButton.type = 'button';
@@ -10534,8 +10843,12 @@
     masonryButton.type = 'button';
     drawerButton.type = 'button';
     collapseDrawerButton.type = 'button';
+    packDownloadedButton.type = 'button';
+    retryFailedButton.type = 'button';
+    cancelDownloadButton.type = 'button';
     loadMoreButton.type = 'button';
     drawerTab.type = 'button';
+    downloadAllButton.title = '下载当前筛选范围内的全部原图并打包为 ZIP';
     copyAllButton.title = '复制当前筛选范围内的全部原图地址';
     copyFloorButton.title = '按楼层分组复制当前筛选范围内的原图地址';
     copyMarkdownButton.title = '复制当前筛选范围内的 Markdown 图片清单';
@@ -10543,12 +10856,31 @@
     masonryButton.title = '切换瀑布流缩略图排列';
     drawerButton.title = '将预览图固定到右侧侧栏';
     collapseDrawerButton.title = '收起右侧预览图侧栏';
+    packDownloadedButton.title = '跳过仍失败的图片，只将已下载图片打包为 ZIP';
+    retryFailedButton.title = '重新下载失败图片，单轮最多重试 6 次';
+    cancelDownloadButton.title = '取消当前批量下载';
     drawerTab.title = '展开预览图侧栏';
     loadMoreButton.title = '继续加载下一批预览图';
     largeOnlyButton.setAttribute('aria-pressed', 'false');
     masonryButton.setAttribute('aria-pressed', 'false');
     drawerButton.setAttribute('aria-pressed', 'false');
     collapseDrawerButton.hidden = true;
+    downloadPanel.hidden = true;
+    downloadTrack.appendChild(downloadProgress);
+    downloadTop.appendChild(downloadTitle);
+    downloadTop.appendChild(downloadPercent);
+    downloadActions.appendChild(packDownloadedButton);
+    downloadActions.appendChild(retryFailedButton);
+    downloadActions.appendChild(cancelDownloadButton);
+    downloadCompact.appendChild(downloadBadges);
+    downloadCompact.appendChild(downloadActions);
+    downloadDetailSummary.appendChild(downloadDetailText);
+    downloadDetail.appendChild(downloadDetailSummary);
+    downloadDetail.appendChild(downloadQueue);
+    downloadPanel.appendChild(downloadTop);
+    downloadPanel.appendChild(downloadTrack);
+    downloadPanel.appendChild(downloadCompact);
+    downloadPanel.appendChild(downloadDetail);
 
     function cancelIdlePreviewScan() {
       if (idleScanId === null) return;
@@ -10651,6 +10983,421 @@
       );
     }
 
+    function getPreviewDownloadCounts() {
+      var entries = previewDownloadState && previewDownloadState.entries ? previewDownloadState.entries : [];
+      return entries.reduce(function countPreviewDownload(result, entry) {
+        result.total += 1;
+        if (entry.status === 'done') result.done += 1;
+        else if (entry.status === 'failed') result.failed += 1;
+        else if (entry.status === 'downloading' || entry.status === 'retrying') result.active += 1;
+        else if (entry.status === 'queued') result.queued += 1;
+        else if (entry.status === 'cancelled') result.cancelled += 1;
+        return result;
+      }, { total: 0, done: 0, failed: 0, active: 0, queued: 0, cancelled: 0, packing: !!(previewDownloadState && previewDownloadState.packing) });
+    }
+
+    function getPreviewDownloadProgressPercent() {
+      var entries = previewDownloadState && previewDownloadState.entries ? previewDownloadState.entries : [];
+      if (!entries.length) return 0;
+      var total = entries.reduce(function sumPreviewDownloadProgress(sum, entry) {
+        if (entry.status === 'done') return sum + 100;
+        if (entry.status === 'failed' || entry.status === 'cancelled') return sum;
+        return sum + Math.max(0, Math.min(99, Number(entry.progress) || 0));
+      }, 0);
+      return Math.round(total / entries.length);
+    }
+
+    function createPreviewDownloadBadge(text, className) {
+      return createEl('span', ['spx-preview-download-badge', className || ''].filter(Boolean).join(' '), text);
+    }
+
+    function getPreviewDownloadEntryStatusText(entry) {
+      if (!entry) return '';
+      if (entry.status === 'done') return '已完成';
+      if (entry.status === 'failed') return entry.attempts >= PREVIEW_DOWNLOAD_MAX_RETRIES ? '已达上限' : '失败';
+      if (entry.status === 'cancelled') return '已取消';
+      if (entry.status === 'retrying') return '重试中';
+      if (entry.status === 'downloading') return (entry.progress || 0) + '%';
+      return '等待';
+    }
+
+    function renderPreviewDownloadQueue() {
+      if (!previewDownloadState) return;
+      var counts = getPreviewDownloadCounts();
+      var activeEntries = previewDownloadState.entries.filter(function keepVisiblePreviewDownload(entry) {
+        return entry.status !== 'done';
+      });
+      downloadQueue.textContent = '';
+
+      activeEntries.forEach(function appendPreviewDownloadEntry(entry) {
+        var row = createEl('div', 'spx-preview-download-row');
+        var main = createEl('div');
+        var name = createEl('div', 'spx-preview-download-name');
+        var label = createEl('b', '', entry.fileName || formatPreviewImageDownloadFileName(entry.item, entry.index, entry.contentType));
+        var size = createEl('em', '', entry.loaded && entry.total ? Math.round(entry.loaded / 1024) + ' / ' + Math.round(entry.total / 1024) + ' KB' : ('第 ' + entry.attempts + ' / ' + PREVIEW_DOWNLOAD_MAX_RETRIES + ' 次'));
+        var track = createEl('div', 'spx-preview-download-track');
+        var progress = createEl('span', 'spx-preview-download-progress');
+        var meta = createEl('div', 'spx-preview-download-meta');
+        var source = [entry.item && entry.item.floorLabel, entry.item && entry.item.author].filter(Boolean).join(' · ') || '预览图';
+        var status = entry.error || getPreviewDownloadEntryStatusText(entry);
+        progress.style.width = Math.max(0, Math.min(100, Number(entry.progress) || 0)) + '%';
+        name.appendChild(label);
+        name.appendChild(size);
+        track.appendChild(progress);
+        meta.appendChild(createEl('span', '', source));
+        meta.appendChild(createEl('span', '', status));
+        main.appendChild(name);
+        main.appendChild(track);
+        main.appendChild(meta);
+        row.appendChild(main);
+        if (entry.status === 'failed') {
+          var retryButton = createEl('button', '', entry.attempts >= PREVIEW_DOWNLOAD_MAX_RETRIES ? '已达上限' : '重试');
+          retryButton.type = 'button';
+          retryButton.disabled = previewDownloadState.running || previewDownloadState.packing || entry.attempts >= PREVIEW_DOWNLOAD_MAX_RETRIES;
+          retryButton.dataset.spxPreviewDownloadRetry = String(entry.index);
+          row.appendChild(retryButton);
+        } else {
+          row.appendChild(createPreviewDownloadBadge(getPreviewDownloadEntryStatusText(entry), entry.status === 'failed' ? 'spx-fail' : ''));
+        }
+        downloadQueue.appendChild(row);
+      });
+
+      if (counts.done) {
+        var doneRow = createEl('div', 'spx-preview-download-row');
+        var doneMain = createEl('div');
+        var doneName = createEl('div', 'spx-preview-download-name');
+        var doneTrack = createEl('div', 'spx-preview-download-track');
+        var doneProgress = createEl('span', 'spx-preview-download-progress');
+        var doneMeta = createEl('div', 'spx-preview-download-meta');
+        doneName.appendChild(createEl('b', '', '已完成 ' + counts.done + ' 张'));
+        doneName.appendChild(createEl('em', '', '可打包'));
+        doneProgress.style.width = '100%';
+        doneTrack.appendChild(doneProgress);
+        doneMeta.appendChild(createEl('span', '', '完成项默认合并，避免列表过长'));
+        doneMeta.appendChild(createEl('span', '', '100%'));
+        doneMain.appendChild(doneName);
+        doneMain.appendChild(doneTrack);
+        doneMain.appendChild(doneMeta);
+        doneRow.appendChild(doneMain);
+        doneRow.appendChild(createPreviewDownloadBadge('完成', 'spx-ok'));
+        downloadQueue.appendChild(doneRow);
+      }
+
+      if (counts.failed && counts.done) {
+        var report = createEl('div', 'spx-preview-download-report');
+        var reportTitle = createEl('strong');
+        reportTitle.appendChild(createEl('span', '', 'ZIP 打包'));
+        reportTitle.appendChild(createEl('span', '', '可只打包已完成图片'));
+        report.appendChild(reportTitle);
+        report.appendChild(createEl('span', '', '失败图片和原始链接会写入 download-report.txt。'));
+        downloadQueue.appendChild(report);
+      }
+    }
+
+    function renderPreviewDownload() {
+      if (!previewDownloadState || !previewDownloadState.entries.length) {
+        downloadPanel.hidden = true;
+        return;
+      }
+      var counts = getPreviewDownloadCounts();
+      var percent = getPreviewDownloadProgressPercent();
+      downloadPanel.hidden = false;
+      downloadAllButton.disabled = previewDownloadState.running || previewDownloadState.packing;
+      if (previewDownloadState.error) {
+        downloadTitle.textContent = 'ZIP 打包失败：' + previewDownloadState.error;
+      } else if (previewDownloadState.packed) {
+        downloadTitle.textContent = counts.failed ? ('已打包 ' + counts.done + ' 张 · ' + counts.failed + ' 张失败已记录') : ('已打包 ' + counts.done + ' 张图片');
+      } else {
+        downloadTitle.textContent = getPreviewDownloadStatusSummary(counts);
+      }
+      downloadPercent.textContent = percent + '%';
+      downloadProgress.style.width = percent + '%';
+      downloadBadges.textContent = '';
+      if (counts.done) downloadBadges.appendChild(createPreviewDownloadBadge(counts.done + ' 完成', 'spx-ok'));
+      if (counts.active) downloadBadges.appendChild(createPreviewDownloadBadge(counts.active + ' 下载中', ''));
+      if (counts.queued) downloadBadges.appendChild(createPreviewDownloadBadge(counts.queued + ' 等待', ''));
+      if (counts.failed) downloadBadges.appendChild(createPreviewDownloadBadge(counts.failed + ' 失败', 'spx-fail'));
+      if (counts.done && counts.failed && !counts.active && !counts.queued) downloadBadges.appendChild(createPreviewDownloadBadge('可打包', 'spx-zip'));
+      packDownloadedButton.hidden = !counts.done;
+      packDownloadedButton.disabled = previewDownloadState.packing;
+      retryFailedButton.disabled = previewDownloadState.running || previewDownloadState.packing || !counts.failed;
+      cancelDownloadButton.hidden = !previewDownloadState.running && !previewDownloadState.packing;
+      cancelDownloadButton.disabled = previewDownloadState.packing;
+      downloadDetailText.textContent = '下载详情：' + counts.active + ' 张下载中，' + counts.failed + ' 张失败，' + counts.done + ' 张已完成';
+      renderPreviewDownloadQueue();
+    }
+
+    function formatPreviewDownloadError(error) {
+      if (!error) return '下载失败';
+      if (error.name === 'AbortError') return '已取消';
+      var message = String(error.message || error || '下载失败');
+      if (/Failed to fetch|NetworkError|Load failed|fetch/i.test(message)) return '网络或跨域限制';
+      return message.slice(0, 80);
+    }
+
+    function readPreviewImageResponseBlob(response, entry) {
+      var type = response && response.headers ? (response.headers.get('content-type') || '') : '';
+      var total = Number(response && response.headers ? response.headers.get('content-length') : 0) || 0;
+      entry.total = total;
+      if (!response || !response.body || typeof response.body.getReader !== 'function') {
+        return response.blob().then(function usePreviewResponseBlob(blob) {
+          entry.progress = 100;
+          entry.loaded = blob.size || total || 0;
+          return { blob: blob, contentType: type || blob.type || '' };
+        });
+      }
+      var reader = response.body.getReader();
+      var chunks = [];
+      var loaded = 0;
+      function readNextChunk() {
+        return reader.read().then(function handlePreviewChunk(result) {
+          if (result.done) {
+            entry.progress = 100;
+            entry.loaded = loaded;
+            return { blob: new Blob(chunks, { type: type || 'application/octet-stream' }), contentType: type };
+          }
+          var chunk = result.value;
+          if (chunk) {
+            chunks.push(chunk);
+            loaded += chunk.length || chunk.byteLength || 0;
+            entry.loaded = loaded;
+            var nextProgress = total ? Math.floor((loaded / total) * 100) : Math.min(95, (Number(entry.progress) || 0) + 6);
+            if (nextProgress !== entry.progress) {
+              entry.progress = Math.max(1, Math.min(99, nextProgress));
+              renderPreviewDownload();
+            }
+          }
+          return readNextChunk();
+        });
+      }
+      return readNextChunk();
+    }
+
+    function fetchPreviewDownloadBlob(entry) {
+      var fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
+      if (!fetchImpl) return Promise.reject(new Error('当前浏览器不支持 fetch'));
+      var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      var options = { credentials: 'same-origin', cache: 'force-cache' };
+      if (controller) {
+        options.signal = controller.signal;
+        previewDownloadState.controllers.push(controller);
+      }
+      return fetchImpl(entry.src, options).then(function inspectPreviewDownloadResponse(response) {
+        if (!response || !response.ok) throw new Error('HTTP ' + (response ? response.status : 0));
+        return readPreviewImageResponseBlob(response, entry);
+      }).finally(function removePreviewDownloadController() {
+        if (!controller || !previewDownloadState) return;
+        previewDownloadState.controllers = previewDownloadState.controllers.filter(function keepController(item) {
+          return item !== controller;
+        });
+      });
+    }
+
+    function delayPreviewDownloadRetry(ms) {
+      return new Promise(function waitPreviewDownload(resolve) {
+        window.setTimeout(resolve, ms);
+      });
+    }
+
+    function runPreviewDownloadEntry(entry) {
+      function attemptPreviewDownload() {
+        if (!previewDownloadState || previewDownloadState.cancelled) {
+          entry.status = 'cancelled';
+          entry.error = '已取消';
+          return Promise.resolve();
+        }
+        entry.attempts += 1;
+        entry.status = entry.attempts > 1 ? 'retrying' : 'downloading';
+        entry.progress = 0;
+        entry.error = '';
+        renderPreviewDownload();
+        return fetchPreviewDownloadBlob(entry).then(function markPreviewDownloadDone(result) {
+          entry.status = 'done';
+          entry.blob = result.blob;
+          entry.contentType = result.contentType || (result.blob && result.blob.type) || '';
+          entry.fileName = formatPreviewImageDownloadFileName(entry.item, entry.index, entry.contentType);
+          entry.progress = 100;
+          entry.error = '';
+          renderPreviewDownload();
+        }).catch(function handlePreviewDownloadFailure(error) {
+          entry.error = formatPreviewDownloadError(error);
+          if (previewDownloadState && previewDownloadState.cancelled) {
+            entry.status = 'cancelled';
+            renderPreviewDownload();
+            return;
+          }
+          if (entry.attempts < PREVIEW_DOWNLOAD_MAX_RETRIES) {
+            entry.status = 'retrying';
+            renderPreviewDownload();
+            return delayPreviewDownloadRetry(Math.min(1500, 220 * entry.attempts)).then(attemptPreviewDownload);
+          }
+          entry.status = 'failed';
+          entry.progress = 0;
+          renderPreviewDownload();
+        });
+      }
+      return attemptPreviewDownload();
+    }
+
+    function runPreviewDownloadQueue(entries) {
+      var queue = (entries || []).slice();
+      var active = 0;
+      return new Promise(function resolvePreviewDownloadQueue(resolve) {
+        function pumpPreviewDownloadQueue() {
+          if (!previewDownloadState || previewDownloadState.cancelled) {
+            if (!active) resolve();
+            return;
+          }
+          while (active < PREVIEW_DOWNLOAD_CONCURRENCY && queue.length) {
+            active += 1;
+            runPreviewDownloadEntry(queue.shift()).then(function finishOnePreviewDownload() {
+              active -= 1;
+              pumpPreviewDownloadQueue();
+            });
+          }
+          if (!active && !queue.length) resolve();
+        }
+        pumpPreviewDownloadQueue();
+      });
+    }
+
+    function createPreviewDownloadEntries(images) {
+      return (images || []).map(function createPreviewDownloadEntry(item, index) {
+        return {
+          index: index,
+          item: item,
+          src: getPreviewImageSource(item),
+          status: 'queued',
+          progress: 0,
+          attempts: 0,
+          loaded: 0,
+          total: 0,
+          error: '',
+          blob: null,
+          fileName: formatPreviewImageDownloadFileName(item, index, ''),
+        };
+      }).filter(function keepPreviewDownloadEntry(entry) {
+        return !!entry.src;
+      });
+    }
+
+    function getPreviewDownloadedZipFiles() {
+      if (!previewDownloadState) return [];
+      var files = previewDownloadState.entries.filter(function keepDonePreviewDownload(entry) {
+        return entry.status === 'done' && entry.blob;
+      }).map(function mapDonePreviewDownload(entry) {
+        return { name: entry.fileName || formatPreviewImageDownloadFileName(entry.item, entry.index, entry.contentType), blob: entry.blob };
+      });
+      var hasFailed = previewDownloadState.entries.some(function hasFailedPreviewDownload(entry) {
+        return entry.status === 'failed';
+      });
+      if (hasFailed) {
+        files.push({ name: 'download-report.txt', blob: new Blob([formatPreviewDownloadReport(previewDownloadState.entries)], { type: 'text/plain;charset=utf-8' }) });
+      }
+      return files;
+    }
+
+    function packPreviewDownloadedImages() {
+      if (!previewDownloadState || previewDownloadState.packing) return;
+      var files = getPreviewDownloadedZipFiles();
+      if (!files.length) {
+        downloadTitle.textContent = '没有已下载图片可打包';
+        return;
+      }
+      previewDownloadState.packing = true;
+      previewDownloadState.error = '';
+      renderPreviewDownload();
+      createPreviewZipBlob(files).then(function downloadPreviewZip(blob) {
+        downloadBlobFile(formatPreviewImageArchiveFileName(), blob);
+        previewDownloadState.packed = true;
+        previewDownloadState.packing = false;
+        renderPreviewDownload();
+      }).catch(function handlePreviewZipFailure(error) {
+        previewDownloadState.packing = false;
+        previewDownloadState.error = formatPreviewDownloadError(error);
+        downloadTitle.textContent = 'ZIP 打包失败：' + previewDownloadState.error;
+        renderPreviewDownload();
+      });
+    }
+
+    function finishPreviewDownloadQueue() {
+      if (!previewDownloadState) return;
+      previewDownloadState.running = false;
+      previewDownloadState.controllers = [];
+      renderPreviewDownload();
+      var counts = getPreviewDownloadCounts();
+      if (counts.done && !counts.failed && !counts.cancelled) packPreviewDownloadedImages();
+    }
+
+    function startPreviewDownload(entries) {
+      var downloadEntries = (entries || []).filter(function keepEntryForPreviewDownload(entry) {
+        return entry && entry.src && entry.status !== 'done';
+      });
+      if (!downloadEntries.length) {
+        renderPreviewDownload();
+        return;
+      }
+      previewDownloadState.running = true;
+      previewDownloadState.cancelled = false;
+      previewDownloadState.packing = false;
+      previewDownloadState.packed = false;
+      previewDownloadState.error = '';
+      renderPreviewDownload();
+      runPreviewDownloadQueue(downloadEntries).then(finishPreviewDownloadQueue);
+    }
+
+    function startPreviewDownloadAll() {
+      if (previewDownloadState && previewDownloadState.running) return;
+      ensurePreviewImages(false);
+      previewDownloadState = {
+        entries: createPreviewDownloadEntries(visiblePreviewImages),
+        running: false,
+        cancelled: false,
+        packing: false,
+        packed: false,
+        error: '',
+        controllers: [],
+      };
+      if (!previewDownloadState.entries.length) {
+        renderPreviewDownload();
+        setPreviewButtonText(downloadAllButton, '无可下载图片');
+        return;
+      }
+      startPreviewDownload(previewDownloadState.entries);
+    }
+
+    function cancelPreviewDownload() {
+      if (!previewDownloadState) return;
+      previewDownloadState.cancelled = true;
+      previewDownloadState.running = false;
+      previewDownloadState.controllers.forEach(function abortPreviewDownload(controller) {
+        try { controller.abort(); } catch (error) {}
+      });
+      previewDownloadState.entries.forEach(function markQueuedPreviewDownloadCancelled(entry) {
+        if (entry.status === 'queued' || entry.status === 'downloading' || entry.status === 'retrying') {
+          entry.status = 'cancelled';
+          entry.error = '已取消';
+        }
+      });
+      renderPreviewDownload();
+    }
+
+    function retryFailedPreviewDownloads(resetAll) {
+      if (!previewDownloadState || previewDownloadState.running || previewDownloadState.packing) return;
+      var failedEntries = previewDownloadState.entries.filter(function keepFailedPreviewDownload(entry) {
+        return entry.status === 'failed' && (resetAll || entry.attempts < PREVIEW_DOWNLOAD_MAX_RETRIES);
+      });
+      failedEntries.forEach(function resetFailedPreviewDownload(entry) {
+        entry.status = 'queued';
+        entry.progress = 0;
+        entry.loaded = 0;
+        entry.total = 0;
+        entry.error = '';
+        if (resetAll) entry.attempts = 0;
+      });
+      startPreviewDownload(failedEntries);
+    }
+
     function syncPreviewLayoutButtons() {
       var isDrawer = panel.classList.contains('spx-preview-drawer');
       var isMasonry = panel.classList.contains('spx-preview-masonry');
@@ -10671,6 +11418,7 @@
       drawerTab.textContent = scanned && allImages.length ? ('预览图 ' + allImages.length) : '预览图';
       largeOnlyButton.hidden = !scanned || !allImages.length || largeCount === allImages.length;
       largeOnlyButton.setAttribute('aria-pressed', showLargeOnly ? 'true' : 'false');
+      downloadAllButton.disabled = (previewDownloadState && previewDownloadState.running) || !scanned || !visiblePreviewImages.length;
       copyAllButton.disabled = !scanned || !visiblePreviewImages.length;
       copyFloorButton.disabled = !scanned || !visiblePreviewImages.length;
       copyMarkdownButton.disabled = !scanned || !visiblePreviewImages.length;
@@ -10701,14 +11449,17 @@
         link.dataset.spxPreviewIndex = String(index);
 
         var thumb = createEl('img');
-        thumb.src = item.src;
         thumb.loading = 'lazy';
         thumb.decoding = 'async';
         thumb.alt = '预览图 ' + (index + 1);
+        preparePreviewImageReveal(thumb);
+        thumb.src = item.src;
+        if (thumb.complete && thumb.naturalWidth) markPreviewImageLoaded(thumb);
 
         var hoverImage = createEl('img', 'spx-preview-hover-image');
         hoverImage.loading = 'lazy';
         hoverImage.decoding = 'async';
+        preparePreviewImageReveal(hoverImage);
         hoverImage.dataset.src = item.src;
         hoverImage.alt = '预览图 ' + (index + 1) + ' 放大预览';
 
@@ -10734,7 +11485,10 @@
       var link = target && target.closest ? target.closest('.spx-preview-item') : null;
       if (!link || !grid.contains(link)) return;
       var hoverImage = qs('.spx-preview-hover-image', link);
-      if (hoverImage && !hoverImage.src) hoverImage.src = hoverImage.dataset.src || link.href;
+      if (hoverImage && !hoverImage.src) {
+        hoverImage.src = hoverImage.dataset.src || link.href;
+        if (hoverImage.complete && hoverImage.naturalWidth) markPreviewImageLoaded(hoverImage);
+      }
     }
 
     function loadNextPreviewBatch() {
@@ -10749,6 +11503,7 @@
       if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 160) loadNextPreviewBatch();
     }
 
+    downloadAllButton.addEventListener('click', startPreviewDownloadAll);
     copyAllButton.addEventListener('click', function copyAllPreviewLinks() {
       ensurePreviewImages(false);
       copyPreviewText(copyAllButton, formatPreviewImageLinks(visiblePreviewImages), visiblePreviewImages.length);
@@ -10760,6 +11515,24 @@
     copyMarkdownButton.addEventListener('click', function copyPreviewMarkdownLinks() {
       ensurePreviewImages(false);
       copyPreviewText(copyMarkdownButton, formatPreviewImageMarkdownLinks(visiblePreviewImages), visiblePreviewImages.length);
+    });
+    packDownloadedButton.addEventListener('click', packPreviewDownloadedImages);
+    retryFailedButton.addEventListener('click', function retryAllFailedPreviewDownloads() {
+      retryFailedPreviewDownloads(true);
+    });
+    cancelDownloadButton.addEventListener('click', cancelPreviewDownload);
+    downloadQueue.addEventListener('click', function handlePreviewDownloadQueueClick(event) {
+      var button = event.target && event.target.closest ? event.target.closest('[data-spx-preview-download-retry]') : null;
+      if (!button || !downloadQueue.contains(button) || !previewDownloadState) return;
+      var index = Number(button.dataset.spxPreviewDownloadRetry);
+      var entry = previewDownloadState.entries[index];
+      if (!entry || entry.status !== 'failed') return;
+      entry.status = 'queued';
+      entry.progress = 0;
+      entry.loaded = 0;
+      entry.total = 0;
+      entry.error = '';
+      startPreviewDownload([entry]);
     });
 
     largeOnlyButton.addEventListener('click', function toggleLargeOnly() {
@@ -10801,6 +11574,7 @@
       loadDelegatedPreviewHoverImage(event.target);
     });
 
+    actions.appendChild(downloadAllButton);
     actions.appendChild(copyAllButton);
     actions.appendChild(copyFloorButton);
     actions.appendChild(copyMarkdownButton);
@@ -10812,10 +11586,14 @@
     header.appendChild(summary);
     header.appendChild(actions);
     panel.appendChild(header);
+    panel.appendChild(downloadPanel);
     panel.appendChild(grid);
     panel.appendChild(loadMoreButton);
     panel.appendChild(drawerTab);
-    panel.spxCleanup = cancelIdlePreviewScan;
+    panel.spxCleanup = function cleanupPreviewPanel() {
+      cancelIdlePreviewScan();
+      cancelPreviewDownload();
+    };
     syncPreviewHeader();
 
     mountPreviewPanel(firstPost, content, panel);
@@ -13573,6 +14351,14 @@
     formatPreviewImageLinksByFloor: formatPreviewImageLinksByFloor,
     getPreviewGalleryRenderState: getPreviewGalleryRenderState,
     formatPreviewGallerySummary: formatPreviewGallerySummary,
+    formatPreviewImageArchiveFileName: formatPreviewImageArchiveFileName,
+    sanitizePreviewDownloadName: sanitizePreviewDownloadName,
+    getPreviewImageDownloadExtension: getPreviewImageDownloadExtension,
+    formatPreviewImageDownloadFileName: formatPreviewImageDownloadFileName,
+    getPreviewDownloadStatusSummary: getPreviewDownloadStatusSummary,
+    formatPreviewDownloadReport: formatPreviewDownloadReport,
+    getZipCrc32: getZipCrc32,
+    createPreviewZipBlob: createPreviewZipBlob,
     normalizeResourceUrl: normalizeResourceUrl,
     classifyResourceLink: classifyResourceLink,
     getCloudProviderLabel: getCloudProviderLabel,
