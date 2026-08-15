@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.4\.10/);
+assert.match(source, /@version\s+0\.4\.12/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.forumDashboard, true);
@@ -393,7 +393,30 @@ assert.match(source, /getForumNavigationScopeNodes/);
 assert.match(source, /getForumNavigationParentLabel/);
 assert.match(source, /isGlobalSiteNavigationTarget/);
 assert.match(source, /shouldKeepNavigationLabel/);
-assert.match(source, /\/图墙模式\/\.test\(normalized\)/);
+assert.match(source, /isForumGalleryModeUrl/);
+assert.match(source, /thread_new\.php/);
+assert.match(source, /allowForumViewSwitch: true/);
+assert.match(source, /transient: true/);
+assert.match(source, /section: '版块导航'/);
+assert.match(source, /spx-forum-gallery-link/);
+assert.match(source, /createEl\('a', 'spx-forum-gallery-link'/);
+assert.match(source, /function enhanceForumGallery/);
+assert.match(source, /spx-forum-gallery-page/);
+assert.match(source, /spx-gallery-card-tools/);
+assert.match(source, /ensureForumGalleryCardTools/);
+assert.match(source, /introTail\.insertAdjacentElement\('afterend', tools\)/);
+assert.match(source, /watchForumGalleryStream/);
+assert.match(source, /scheduleForumGalleryToolRepair/);
+assert.match(source, /clearForumGalleryResourceBadges/);
+assert.match(source, /section-text>span\{float:none!important/);
+assert.match(source, /section-title\{[^}]*height:auto!important/);
+assert.match(source, /section-intro\{[^}]*position:static!important/);
+assert.match(source, /列表模式/);
+assert.match(source, /getForumListModeUrl/);
+assert.match(source, /getForumGalleryModeUrl/);
+assert.match(source, /collectForumViewNavigationConfigs\(scopeNodes\.concat\(listRoot \? \[listRoot\] : \[\]\), currentFid\)/);
+assert.match(source, /getCurrentForumViewNavigationConfigs/);
+assert.match(source, /collectForumViewNavigationConfigs\(\[document\], getCurrentForumId\(location\.href\)\)/);
 assert.match(source, /getReadPageNavigationConfigs/);
 assert.match(source, /getPersistentModuleNavigationConfigs/);
 assert.match(source, /rememberModuleNavigationConfigs/);
@@ -631,8 +654,21 @@ const threadListRoot = {
     }];
   },
 };
+const galleryRoot = {
+  querySelector: function querySelector() { return null; },
+  querySelectorAll: function querySelectorAll(selector) {
+    if (selector === '#wall .stream li a[href*="read.php?tid"]') {
+      return [{
+        href: 'https://south-plus.org/read.php?tid-2936811.html',
+        getAttribute: function getAttribute() { return './read.php?tid-2936811.html'; },
+      }];
+    }
+    return [];
+  },
+};
 assert.equal(enhancer.shouldUseForumDashboard('https://south-plus.org/thread.php?fid-9.html', emptyRoot), false);
 assert.equal(enhancer.shouldUseForumDashboard('https://south-plus.org/thread.php?fid-9.html', threadListRoot), true);
+assert.equal(enhancer.shouldUseForumDashboard('https://south-plus.org/thread_new.php?fid-9-page-1.html', galleryRoot), true);
 assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/search.php', emptyRoot), true);
 assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/search2.php?orderway-postdate-asc-desc-newatc-1.html', emptyRoot), true);
 assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/u.php?action-topic-uid-1.html', emptyRoot), true);
@@ -658,8 +694,30 @@ assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-
 assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/index.php', emptyRoot), true);
 assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/thread.php?fid-9.html', threadListRoot), true);
 assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/thread.php?fid-9.html', emptyRoot), false);
+assert.equal(enhancer.detectPageType('https://south-plus.org/thread_new.php?fid-9-page-1.html'), 'forum');
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/thread_new.php?fid-9-page-1.html', threadListRoot), true);
+assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/thread_new.php?fid-9-page-1.html', galleryRoot), true);
 assert.equal(enhancer.shouldUseModuleNavigation(defaultSettings, 'https://south-plus.org/read.php?tid=1', emptyRoot), true);
 assert.equal(enhancer.getCurrentForumId('https://south-plus.org/thread.php?fid-9-page-2.html'), '9');
+assert.equal(enhancer.getCurrentForumId('https://south-plus.org/thread_new.php?fid-9-page-1.html'), '9');
+assert.equal(enhancer.isForumGalleryModeUrl('https://south-plus.org/thread_new.php?fid-9-page-1.html'), true);
+assert.equal(enhancer.isForumGalleryModeUrl('https://south-plus.org/thread.php?fid-9.html'), false);
+assert.equal(enhancer.buildPageUrl('https://south-plus.org/thread_new.php?fid-9-page-1.html', 2), 'https://south-plus.org/thread_new.php?fid-9-page-2.html');
+assert.equal(enhancer.buildPageUrl('https://south-plus.org/thread.php?fid-9-page-2.html', 1), 'https://south-plus.org/thread.php?fid-9.html');
+assert.equal(enhancer.getForumListModeUrl('https://south-plus.org/thread_new.php?fid-9-page-2.html'), 'https://south-plus.org/thread.php?fid-9-page-2.html');
+assert.equal(enhancer.getForumGalleryModeUrl('https://south-plus.org/thread.php?fid-9-page-2.html'), 'https://south-plus.org/thread_new.php?fid-9-page-2.html');
+assert.equal(
+  enhancer.isForumGalleryModeLink({ textContent: '[点击进入图墙模式]', getAttribute: function getAttribute() { return 'thread_new.php?fid-9-page-1.html'; } }, '9'),
+  true
+);
+assert.equal(
+  enhancer.isForumGalleryModeLink({ textContent: '[点击进入图墙模式]', getAttribute: function getAttribute() { return 'thread_new.php?fid-48-page-1.html'; } }, '9'),
+  false
+);
+assert.equal(
+  enhancer.isForumGalleryModeLink({ textContent: 'Soulplus', getAttribute: function getAttribute() { return '/thread.php?fid-9-skinco-colorImagination.html'; } }, '9'),
+  false
+);
 assert.equal(
   enhancer.isModuleNavigationConfigActive(
     { href: 'https://south-plus.org/thread.php?fid-9.html' },
@@ -673,6 +731,20 @@ assert.equal(
     'https://south-plus.org/thread.php?fid-9-page-2.html'
   ),
   false
+);
+assert.equal(
+  enhancer.isModuleNavigationConfigActive(
+    { href: 'https://south-plus.org/thread_new.php?fid-9-page-1.html' },
+    'https://south-plus.org/thread.php?fid-9.html'
+  ),
+  false
+);
+assert.equal(
+  enhancer.isModuleNavigationConfigActive(
+    { href: 'https://south-plus.org/thread_new.php?fid-9-page-1.html' },
+    'https://south-plus.org/thread_new.php?fid-9-page-2.html'
+  ),
+  true
 );
 assert.equal(
   enhancer.isModuleNavigationConfigActive(
