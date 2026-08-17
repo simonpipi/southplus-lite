@@ -1,0 +1,1103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>South Plus +++ 现代化风格方案预览</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f3f5f7;
+      --ink: #18202a;
+      --muted: #667085;
+      --line: #d8dee8;
+      --accent: #2563eb;
+      --radius: 10px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .page {
+      width: min(1480px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 30px 0 56px;
+    }
+
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 22px;
+      align-items: end;
+      margin-bottom: 24px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 26px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .intro p {
+      max-width: 820px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .legend {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .legend span,
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #344054;
+      font-weight: 700;
+      font-size: 12px;
+    }
+
+    .option {
+      display: grid;
+      grid-template-columns: 292px minmax(0, 1fr);
+      gap: 18px;
+      align-items: stretch;
+      margin-top: 18px;
+    }
+
+    .brief {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 10px 24px rgba(20, 30, 45, .06);
+    }
+
+    .brief-head {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .number {
+      display: inline-flex;
+      width: 36px;
+      height: 36px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      background: #111827;
+      color: #fff;
+      font-weight: 900;
+    }
+
+    .brief h2 {
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    .brief .subtitle {
+      margin-top: 2px;
+      color: #667085;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .brief ul {
+      margin: 14px 0 0;
+      padding-left: 18px;
+      color: #344054;
+    }
+
+    .brief li {
+      margin: 7px 0;
+    }
+
+    .swatches {
+      display: flex;
+      gap: 7px;
+      margin-top: 16px;
+    }
+
+    .swatch {
+      width: 34px;
+      height: 22px;
+      border: 1px solid rgba(0, 0, 0, .12);
+      border-radius: 7px;
+      background: var(--c);
+    }
+
+    .preview {
+      --site-bg: #edf2f7;
+      --surface: #fff;
+      --surface-2: #f8fafc;
+      --surface-3: #f1f5f9;
+      --text: #172033;
+      --soft: #637083;
+      --border: #d7e1eb;
+      --nav: #263241;
+      --nav-text: #dbe6ef;
+      --accent-ui: #2563eb;
+      --accent-soft: #dbeafe;
+      --danger: #dc2626;
+      --shadow: 0 12px 30px rgba(15, 23, 42, .12);
+      min-height: 520px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--site-bg);
+      box-shadow: 0 14px 34px rgba(20, 30, 45, .08);
+      color: var(--text);
+    }
+
+    .browser-bar {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      height: 36px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, .72);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ef4444;
+    }
+
+    .dot:nth-child(2) {
+      background: #f59e0b;
+    }
+
+    .dot:nth-child(3) {
+      background: #22c55e;
+    }
+
+    .url {
+      min-width: 0;
+      margin-left: 8px;
+      padding: 3px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--soft);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mock-site {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(128px, 152px) minmax(0, 1fr);
+      grid-template-areas:
+        "topnav topnav"
+        "modulebar body";
+      gap: 14px;
+      min-height: 484px;
+      padding: 18px 20px 24px;
+    }
+
+    .mock-nav {
+      grid-area: topnav;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 38px;
+      padding: 0 8px;
+      border-radius: var(--nav-radius, 10px);
+      background: var(--nav);
+      box-shadow: var(--nav-shadow, 0 6px 18px rgba(15, 23, 42, .12));
+    }
+
+    .mock-brand {
+      flex: none;
+      padding: 0 12px;
+      color: #fff;
+      font-weight: 900;
+      letter-spacing: .02em;
+    }
+
+    .mock-nav a {
+      display: inline-flex;
+      align-items: center;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 8px;
+      color: var(--nav-text);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .mock-nav a.active {
+      background: var(--surface);
+      color: var(--active-text, var(--text));
+      box-shadow: inset 0 -2px 0 var(--accent-ui);
+    }
+
+    .module-nav {
+      grid-area: modulebar;
+      position: sticky;
+      top: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+      min-height: 0;
+      align-self: start;
+      padding: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--module-radius, 12px);
+      background: var(--module-bg, var(--surface));
+      box-shadow: var(--module-shadow, 0 5px 14px rgba(15, 23, 42, .05));
+    }
+
+    .module-label {
+      flex: none;
+      padding: 0 2px 9px;
+      border-bottom: 1px solid var(--border);
+      color: var(--soft);
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .module-tab {
+      display: inline-flex;
+      flex: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 7px;
+      min-height: 34px;
+      width: 100%;
+      padding: 0 10px;
+      border: 1px solid transparent;
+      border-radius: var(--module-tab-radius, 9px);
+      background: var(--surface-2);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .module-tab span {
+      display: inline-flex;
+      min-width: 22px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--soft);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .module-tab.active {
+      border-color: var(--accent-ui);
+      background: var(--accent-ui);
+      color: #fff;
+      box-shadow: 0 7px 16px rgba(37, 99, 235, .2);
+    }
+
+    .module-tab.active span {
+      background: rgba(255, 255, 255, .22);
+      color: #fff;
+    }
+
+    .mock-layout {
+      grid-area: body;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 260px;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .module-section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 38px;
+      margin-bottom: 10px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--card-radius, 12px);
+      background: var(--surface);
+      box-shadow: var(--card-shadow, 0 8px 18px rgba(15, 23, 42, .06));
+    }
+
+    .module-section-title strong {
+      font-size: 13px;
+      line-height: 1.2;
+    }
+
+    .module-section-title span {
+      color: var(--soft);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .mock-card,
+    .mock-panel,
+    .mock-thread {
+      border: 1px solid var(--border);
+      border-radius: var(--card-radius, 12px);
+      background: var(--surface);
+      box-shadow: var(--card-shadow, 0 8px 18px rgba(15, 23, 42, .06));
+    }
+
+    .mock-card {
+      overflow: hidden;
+    }
+
+    .table-head {
+      display: grid;
+      grid-template-columns: 1fr 92px 82px;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--soft);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .thread-row {
+      display: grid;
+      grid-template-columns: 1fr 92px 82px;
+      gap: 8px;
+      align-items: center;
+      min-height: 44px;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .thread-row:last-child {
+      border-bottom: 0;
+    }
+
+    .thread-title {
+      min-width: 0;
+      font-weight: 800;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .thread-meta {
+      color: var(--soft);
+      font-size: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent-ui);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .read-card {
+      margin-top: 14px;
+      padding: 18px 22px;
+    }
+
+    .read-title {
+      margin-bottom: 8px;
+      font-size: 18px;
+      line-height: 1.35;
+      font-weight: 900;
+    }
+
+    .read-meta {
+      margin-bottom: 14px;
+      color: var(--soft);
+      font-size: 12px;
+    }
+
+    .read-text {
+      max-width: 720px;
+      font-size: var(--read-size, 16px);
+      line-height: var(--read-line, 1.78);
+    }
+
+    .mock-panel {
+      padding: 12px;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-weight: 900;
+    }
+
+    .panel-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .tool {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--tool-radius, 10px);
+      background: var(--surface-2);
+    }
+
+    .tool-key {
+      display: inline-flex;
+      width: 26px;
+      height: 26px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: var(--accent-soft);
+      color: var(--accent-ui);
+      font-weight: 900;
+    }
+
+    .tool strong {
+      display: block;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+
+    .tool span:last-child {
+      display: block;
+      color: var(--soft);
+      font-size: 11px;
+    }
+
+    .float-tools {
+      position: absolute;
+      right: 16px;
+      bottom: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      padding: 7px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--float-bg, rgba(255, 255, 255, .92));
+      box-shadow: var(--shadow);
+    }
+
+    .float-tools button {
+      width: 44px;
+      height: 32px;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 900;
+    }
+
+    .float-tools button.active {
+      border-color: var(--accent-ui);
+      background: var(--accent-soft);
+      color: var(--accent-ui);
+    }
+
+    .scheme-a {
+      --site-bg: #eef2f6;
+      --surface: #ffffff;
+      --surface-2: #f7f9fc;
+      --surface-3: #e7eef8;
+      --text: #182230;
+      --soft: #667085;
+      --border: #d7dee9;
+      --nav: #283241;
+      --nav-text: #dfe7f0;
+      --accent-ui: #2563eb;
+      --accent-soft: #dbeafe;
+      --card-radius: 12px;
+      --card-shadow: 0 6px 18px rgba(15, 23, 42, .07);
+    }
+
+    .scheme-b {
+      --site-bg: #f2f4ef;
+      --surface: #fffffb;
+      --surface-2: #f5f7f1;
+      --surface-3: #e7ecdf;
+      --text: #20241e;
+      --soft: #68715f;
+      --border: #d9dfd0;
+      --nav: #314036;
+      --nav-text: #e7eee8;
+      --accent-ui: #0f766e;
+      --accent-soft: #d9f3ee;
+      --read-size: 16px;
+      --read-line: 1.86;
+      --card-radius: 8px;
+      --card-shadow: 0 4px 12px rgba(44, 58, 48, .08);
+    }
+
+    .scheme-c {
+      --site-bg: #e9eef1;
+      --surface: rgba(255, 255, 255, .78);
+      --surface-2: rgba(248, 250, 252, .68);
+      --surface-3: rgba(240, 246, 248, .9);
+      --text: #172029;
+      --soft: #667580;
+      --border: rgba(142, 158, 170, .45);
+      --nav: rgba(26, 35, 45, .78);
+      --nav-text: #edf4f7;
+      --accent-ui: #d9462f;
+      --accent-soft: #ffe1db;
+      --card-radius: 16px;
+      --tool-radius: 13px;
+      --float-bg: rgba(255, 255, 255, .72);
+      --card-shadow: 0 18px 46px rgba(33, 45, 55, .12);
+      --nav-shadow: 0 14px 36px rgba(33, 45, 55, .16);
+      --module-bg: rgba(255, 255, 255, .68);
+      --module-shadow: 0 14px 36px rgba(33, 45, 55, .1);
+    }
+
+    .scheme-c .browser-bar,
+    .scheme-c .mock-card,
+    .scheme-c .mock-panel,
+    .scheme-c .module-nav,
+    .scheme-c .float-tools {
+      backdrop-filter: blur(16px);
+    }
+
+    .scheme-d {
+      --site-bg: #111412;
+      --surface: #181d1a;
+      --surface-2: #202720;
+      --surface-3: #263029;
+      --text: #edf4ec;
+      --soft: #9ca99c;
+      --border: #303a32;
+      --nav: #070908;
+      --nav-text: #aebbae;
+      --active-text: #07100b;
+      --accent-ui: #4ade80;
+      --accent-soft: #173a25;
+      --card-radius: 10px;
+      --card-shadow: 0 10px 30px rgba(0, 0, 0, .28);
+      --shadow: 0 18px 46px rgba(0, 0, 0, .42);
+    }
+
+    .scheme-d .browser-bar {
+      background: #151a17;
+    }
+
+    .scheme-d .url,
+    .scheme-d .mock-nav a.active,
+    .scheme-d .float-tools button {
+      background: #202720;
+    }
+
+    .scheme-e {
+      --site-bg: #f6f7f4;
+      --surface: #ffffff;
+      --surface-2: #f3f5f0;
+      --surface-3: #e9eee5;
+      --text: #1e2520;
+      --soft: #657066;
+      --border: #d5dccf;
+      --nav: #1f2a22;
+      --nav-text: #dce8dd;
+      --accent-ui: #b45309;
+      --accent-soft: #ffedd5;
+      --card-radius: 6px;
+      --tool-radius: 6px;
+      --card-shadow: none;
+      --nav-shadow: none;
+      --read-size: 15px;
+      --read-line: 1.72;
+      --module-radius: 6px;
+      --module-tab-radius: 5px;
+      --module-shadow: none;
+    }
+
+    .scheme-e .mock-site {
+      padding: 14px 16px 20px;
+    }
+
+    .scheme-e .mock-layout {
+      gap: 10px;
+    }
+
+    .scheme-e .thread-row {
+      min-height: 36px;
+      padding-top: 6px;
+      padding-bottom: 6px;
+    }
+
+    .scheme-e .read-card {
+      margin-top: 10px;
+      padding: 14px 16px;
+    }
+
+    @media (max-width: 980px) {
+      .page {
+        width: calc(100vw - 20px);
+        padding-top: 18px;
+      }
+
+      .intro,
+      .option,
+      .mock-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .mock-site {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "topnav"
+          "modulebar"
+          "body";
+      }
+
+      .module-nav {
+        position: static;
+        flex-direction: row;
+        align-items: center;
+        overflow-x: auto;
+        padding: 7px;
+        scrollbar-width: thin;
+      }
+
+      .module-label {
+        padding: 0 8px;
+        border-bottom: 0;
+      }
+
+      .module-tab {
+        width: auto;
+        min-height: 30px;
+        border-radius: var(--module-tab-radius, 999px);
+      }
+
+      .legend {
+        justify-content: flex-start;
+      }
+
+      .mock-panel {
+        display: none;
+      }
+    }
+
+    @media (max-width: 620px) {
+      .mock-site {
+        padding: 12px;
+      }
+
+      .mock-nav {
+        overflow-x: auto;
+      }
+
+      .module-nav {
+        margin-bottom: 10px;
+      }
+
+      .module-section-title {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 3px;
+        height: auto;
+        padding: 9px 10px;
+      }
+
+      .table-head,
+      .thread-row {
+        grid-template-columns: 1fr 62px;
+      }
+
+      .table-head span:nth-child(2),
+      .thread-row .thread-meta:nth-child(2) {
+        display: none;
+      }
+
+      .float-tools {
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+        flex-direction: row;
+      }
+
+      .float-tools button {
+        flex: 1;
+        width: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="intro">
+      <div>
+        <h1>South Plus +++ 现代化风格方案静态预览</h1>
+        <p>这页把站点外壳、主导航、帖子模块导航、列表、阅读正文、工具箱和悬浮工具栏放到同一个 mockup 中，便于先选方向。这里只是视觉方案，不影响当前脚本。</p>
+      </div>
+      <div class="legend">
+        <span>5 套方向</span>
+        <span>静态 HTML</span>
+        <span>模块导航</span>
+      </div>
+    </section>
+
+    <section class="option">
+      <aside class="brief">
+        <div class="brief-head">
+          <span class="number">01</span>
+          <div>
+            <h2>清爽产品型</h2>
+            <p class="subtitle">推荐默认方案</p>
+          </div>
+        </div>
+        <span class="badge">稳妥 / 易落地</span>
+        <ul>
+          <li>中性浅灰背景，白色内容面板，蓝色强调。</li>
+          <li>适合全站默认样式，兼容论坛原有信息密度。</li>
+          <li>改造成本最低，风险主要在导航状态细节。</li>
+        </ul>
+        <div class="swatches">
+          <span class="swatch" style="--c:#eef2f6"></span>
+          <span class="swatch" style="--c:#ffffff"></span>
+          <span class="swatch" style="--c:#283241"></span>
+          <span class="swatch" style="--c:#2563eb"></span>
+        </div>
+      </aside>
+      <article class="preview scheme-a">
+        <div class="browser-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><div class="url">south-plus.org / thread / modern-preview</div></div>
+        <div class="mock-site">
+          <nav class="mock-nav"><strong class="mock-brand">South Plus +++</strong><a class="active">讨论</a><a>搜索</a><a>资源</a><a>消息</a></nav>
+          <div class="module-nav" aria-label="帖子模块导航">
+            <span class="module-label">帖子模块</span>
+            <a class="module-tab active">全部主题 <span>128</span></a>
+            <a class="module-tab">资源分享 <span>42</span></a>
+            <a class="module-tab">求物交流 <span>18</span></a>
+            <a class="module-tab">AI 交流 <span>9</span></a>
+            <a class="module-tab">已关注 <span>12</span></a>
+          </div>
+          <div class="mock-layout">
+            <div>
+              <div class="module-section-title"><strong>全部主题</strong><span>当前定位 · 128 个帖子</span></div>
+              <section class="mock-card">
+                <div class="table-head"><span>主题</span><span>作者</span><span>回复</span></div>
+                <div class="thread-row"><div><span class="pill">新</span> <span class="thread-title">现代化样式改版方向讨论</span></div><span class="thread-meta">admin</span><strong>128</strong></div>
+                <div class="thread-row"><div class="thread-title">资源工作台交互整理建议</div><span class="thread-meta">simon</span><strong>64</strong></div>
+                <div class="thread-row"><div class="thread-title">阅读页图片预览体验优化</div><span class="thread-meta">reader</span><strong>36</strong></div>
+              </section>
+              <section class="mock-card read-card">
+                <h3 class="read-title">帖子正文阅读区</h3>
+                <p class="read-meta">楼主 · 12 分钟前 · 已记录阅读进度 72%</p>
+                <p class="read-text">正文保持 16px，行高稳定，卡片边界弱化。视觉重点放在标题、正文和可操作按钮上，减少旧论坛表格线带来的割裂感。</p>
+              </section>
+            </div>
+            <aside class="mock-panel">
+              <div class="panel-title"><span>工具箱</span><span class="pill">8</span></div>
+              <div class="panel-grid">
+                <div class="tool"><span class="tool-key">字</span><span><strong>阅读排版</strong><span>正文宽度和字号</span></span></div>
+                <div class="tool"><span class="tool-key">图</span><span><strong>预览图集</strong><span>侧栏收起展示</span></span></div>
+                <div class="tool"><span class="tool-key">源</span><span><strong>资源工作台</strong><span>复制和标记资源</span></span></div>
+              </div>
+            </aside>
+          </div>
+          <div class="float-tools"><button>顶部</button><button>底部</button><button class="active">工具</button><button>设置</button></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="option">
+      <aside class="brief">
+        <div class="brief-head">
+          <span class="number">02</span>
+          <div>
+            <h2>阅读杂志型</h2>
+            <p class="subtitle">适合帖子阅读优先</p>
+          </div>
+        </div>
+        <span class="badge">舒服 / 慢节奏</span>
+        <ul>
+          <li>低对比浅色底，绿色强调，正文行高更舒展。</li>
+          <li>适合长帖、图文帖和沉浸阅读页。</li>
+          <li>列表页会显得没那么紧凑，不适合高频扫帖。</li>
+        </ul>
+        <div class="swatches">
+          <span class="swatch" style="--c:#f2f4ef"></span>
+          <span class="swatch" style="--c:#fffffb"></span>
+          <span class="swatch" style="--c:#314036"></span>
+          <span class="swatch" style="--c:#0f766e"></span>
+        </div>
+      </aside>
+      <article class="preview scheme-b">
+        <div class="browser-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><div class="url">south-plus.org / read / calm-reader</div></div>
+        <div class="mock-site">
+          <nav class="mock-nav"><strong class="mock-brand">South Plus +++</strong><a class="active">阅读</a><a>图集</a><a>最近</a><a>设置</a></nav>
+          <div class="module-nav" aria-label="帖子模块导航">
+            <span class="module-label">阅读模块</span>
+            <a class="module-tab active">长帖 <span>96</span></a>
+            <a class="module-tab">图文 <span>28</span></a>
+            <a class="module-tab">续读 <span>14</span></a>
+            <a class="module-tab">楼主帖 <span>31</span></a>
+            <a class="module-tab">精华 <span>7</span></a>
+          </div>
+          <div class="mock-layout">
+            <div>
+              <div class="module-section-title"><strong>长帖</strong><span>当前定位 · 96 个帖子</span></div>
+              <section class="mock-card">
+                <div class="table-head"><span>主题</span><span>作者</span><span>回复</span></div>
+                <div class="thread-row"><div><span class="pill">续读</span> <span class="thread-title">长帖阅读：排版、图片和楼层记录</span></div><span class="thread-meta">reader</span><strong>96</strong></div>
+                <div class="thread-row"><div class="thread-title">沉浸模式是否应该默认开启</div><span class="thread-meta">miki</span><strong>41</strong></div>
+                <div class="thread-row"><div class="thread-title">引用折叠和正文留白建议</div><span class="thread-meta">chen</span><strong>22</strong></div>
+              </section>
+              <section class="mock-card read-card">
+                <h3 class="read-title">更像阅读器的正文区</h3>
+                <p class="read-meta">正文宽度收敛 · 楼层工具弱化 · 图片自然展示</p>
+                <p class="read-text">这一版把阅读体验放到第一位。导航和工具仍然在，但视觉权重降低，适合把帖子内容作为页面中心。</p>
+              </section>
+            </div>
+            <aside class="mock-panel">
+              <div class="panel-title"><span>阅读工具</span><span class="pill">轻</span></div>
+              <div class="panel-grid">
+                <div class="tool"><span class="tool-key">楼</span><span><strong>只看楼主</strong><span>过滤回复楼层</span></span></div>
+                <div class="tool"><span class="tool-key">存</span><span><strong>稍后看</strong><span>记录当前进度</span></span></div>
+                <div class="tool"><span class="tool-key">引</span><span><strong>折叠引用</strong><span>降低干扰信息</span></span></div>
+              </div>
+            </aside>
+          </div>
+          <div class="float-tools"><button>顶部</button><button>底部</button><button class="active">工具</button><button>设置</button></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="option">
+      <aside class="brief">
+        <div class="brief-head">
+          <span class="number">03</span>
+          <div>
+            <h2>轻玻璃浮层型</h2>
+            <p class="subtitle">视觉最现代</p>
+          </div>
+        </div>
+        <span class="badge">高级 / 需验证</span>
+        <ul>
+          <li>半透明面板、轻模糊、红橙强调，弹层更像现代桌面应用。</li>
+          <li>适合工具箱、设置、资源中心等增强功能。</li>
+          <li>对旧站背景和浏览器性能更敏感，需要真机验证。</li>
+        </ul>
+        <div class="swatches">
+          <span class="swatch" style="--c:#e9eef1"></span>
+          <span class="swatch" style="--c:rgba(255,255,255,.78)"></span>
+          <span class="swatch" style="--c:#1a232d"></span>
+          <span class="swatch" style="--c:#d9462f"></span>
+        </div>
+      </aside>
+      <article class="preview scheme-c">
+        <div class="browser-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><div class="url">south-plus.org / tools / translucent-layer</div></div>
+        <div class="mock-site">
+          <nav class="mock-nav"><strong class="mock-brand">South Plus +++</strong><a class="active">首页</a><a>工具</a><a>资源</a><a>历史</a></nav>
+          <div class="module-nav" aria-label="帖子模块导航">
+            <span class="module-label">工作区</span>
+            <a class="module-tab active">热门 <span>184</span></a>
+            <a class="module-tab">资源 <span>67</span></a>
+            <a class="module-tab">图集 <span>36</span></a>
+            <a class="module-tab">待处理 <span>11</span></a>
+            <a class="module-tab">最近浏览 <span>24</span></a>
+          </div>
+          <div class="mock-layout">
+            <div>
+              <div class="module-section-title"><strong>热门</strong><span>当前定位 · 184 个帖子</span></div>
+              <section class="mock-card">
+                <div class="table-head"><span>主题</span><span>作者</span><span>回复</span></div>
+                <div class="thread-row"><div><span class="pill">热</span> <span class="thread-title">资源中心交互可以更像工作台</span></div><span class="thread-meta">ops</span><strong>184</strong></div>
+                <div class="thread-row"><div class="thread-title">工具箱弹层视觉统一</div><span class="thread-meta">ui</span><strong>57</strong></div>
+                <div class="thread-row"><div class="thread-title">预览图侧栏状态反馈</div><span class="thread-meta">img</span><strong>39</strong></div>
+              </section>
+              <section class="mock-card read-card">
+                <h3 class="read-title">增强功能更突出</h3>
+                <p class="read-meta">弹层、浮动按钮、面板边界统一</p>
+                <p class="read-text">这一版会让脚本新增能力更像一个独立产品层，站点原生内容则作为底层内容承载。</p>
+              </section>
+            </div>
+            <aside class="mock-panel">
+              <div class="panel-title"><span>资源工作台</span><span class="pill">12</span></div>
+              <div class="panel-grid">
+                <div class="tool"><span class="tool-key">磁</span><span><strong>磁力链接</strong><span>待下载 6 条</span></span></div>
+                <div class="tool"><span class="tool-key">盘</span><span><strong>网盘资源</strong><span>含提取码</span></span></div>
+                <div class="tool"><span class="tool-key">清</span><span><strong>批量处理</strong><span>筛选后操作</span></span></div>
+              </div>
+            </aside>
+          </div>
+          <div class="float-tools"><button>顶部</button><button>底部</button><button class="active">工具</button><button>设置</button></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="option">
+      <aside class="brief">
+        <div class="brief-head">
+          <span class="number">04</span>
+          <div>
+            <h2>夜间影院型</h2>
+            <p class="subtitle">适合夜间和图片帖</p>
+          </div>
+        </div>
+        <span class="badge">沉浸 / 差异大</span>
+        <ul>
+          <li>深色背景、绿色强调，正文和图集更聚焦。</li>
+          <li>适合夜间阅读、灯箱预览、图片密集帖。</li>
+          <li>需要处理旧站图片、表情、签名在深色下的边界。</li>
+        </ul>
+        <div class="swatches">
+          <span class="swatch" style="--c:#111412"></span>
+          <span class="swatch" style="--c:#181d1a"></span>
+          <span class="swatch" style="--c:#070908"></span>
+          <span class="swatch" style="--c:#4ade80"></span>
+        </div>
+      </aside>
+      <article class="preview scheme-d">
+        <div class="browser-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><div class="url">south-plus.org / read / night-gallery</div></div>
+        <div class="mock-site">
+          <nav class="mock-nav"><strong class="mock-brand">South Plus +++</strong><a class="active">夜读</a><a>图集</a><a>资源</a><a>历史</a></nav>
+          <div class="module-nav" aria-label="帖子模块导航">
+            <span class="module-label">夜间模块</span>
+            <a class="module-tab active">图片帖 <span>210</span></a>
+            <a class="module-tab">视频帖 <span>34</span></a>
+            <a class="module-tab">灯箱 <span>36</span></a>
+            <a class="module-tab">收藏 <span>19</span></a>
+            <a class="module-tab">未读 <span>52</span></a>
+          </div>
+          <div class="mock-layout">
+            <div>
+              <div class="module-section-title"><strong>图片帖</strong><span>当前定位 · 210 个帖子</span></div>
+              <section class="mock-card">
+                <div class="table-head"><span>主题</span><span>作者</span><span>回复</span></div>
+                <div class="thread-row"><div><span class="pill">图</span> <span class="thread-title">图片预览灯箱和键盘切换</span></div><span class="thread-meta">night</span><strong>210</strong></div>
+                <div class="thread-row"><div class="thread-title">夜间模式正文对比度测试</div><span class="thread-meta">test</span><strong>48</strong></div>
+                <div class="thread-row"><div class="thread-title">长图帖子阅读体验</div><span class="thread-meta">view</span><strong>73</strong></div>
+              </section>
+              <section class="mock-card read-card">
+                <h3 class="read-title">深色沉浸阅读</h3>
+                <p class="read-meta">弱边框 · 强焦点 · 适合夜间浏览</p>
+                <p class="read-text">深色方案能明显改变体验，但也最容易暴露旧站内联颜色和外部图片边界问题，适合作为可选主题而非第一默认。</p>
+              </section>
+            </div>
+            <aside class="mock-panel">
+              <div class="panel-title"><span>预览图集</span><span class="pill">36</span></div>
+              <div class="panel-grid">
+                <div class="tool"><span class="tool-key">图</span><span><strong>只看大图</strong><span>过滤表情图</span></span></div>
+                <div class="tool"><span class="tool-key">灯</span><span><strong>灯箱预览</strong><span>键盘切图</span></span></div>
+                <div class="tool"><span class="tool-key">链</span><span><strong>复制链接</strong><span>Markdown 清单</span></span></div>
+              </div>
+            </aside>
+          </div>
+          <div class="float-tools"><button>顶部</button><button>底部</button><button class="active">工具</button><button>设置</button></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="option">
+      <aside class="brief">
+        <div class="brief-head">
+          <span class="number">05</span>
+          <div>
+            <h2>高密度工作台型</h2>
+            <p class="subtitle">适合重度用户</p>
+          </div>
+        </div>
+        <span class="badge">高效 / 更硬朗</span>
+        <ul>
+          <li>小圆角、低阴影、紧凑行高，信息展示更密。</li>
+          <li>适合列表筛选、资源整理、自动购买记录管理。</li>
+          <li>观感不如 01 柔和，但效率最高。</li>
+        </ul>
+        <div class="swatches">
+          <span class="swatch" style="--c:#f6f7f4"></span>
+          <span class="swatch" style="--c:#ffffff"></span>
+          <span class="swatch" style="--c:#1f2a22"></span>
+          <span class="swatch" style="--c:#b45309"></span>
+        </div>
+      </aside>
+      <article class="preview scheme-e">
+        <div class="browser-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><div class="url">south-plus.org / forum / dense-workbench</div></div>
+        <div class="mock-site">
+          <nav class="mock-nav"><strong class="mock-brand">South Plus +++</strong><a class="active">列表</a><a>未读</a><a>稍后</a><a>资源</a></nav>
+          <div class="module-nav" aria-label="帖子模块导航">
+            <span class="module-label">快速筛选</span>
+            <a class="module-tab active">未读 <span>132</span></a>
+            <a class="module-tab">资源 <span>89</span></a>
+            <a class="module-tab">购买记录 <span>58</span></a>
+            <a class="module-tab">待下载 <span>21</span></a>
+            <a class="module-tab">屏蔽后 <span>76</span></a>
+          </div>
+          <div class="mock-layout">
+            <div>
+              <div class="module-section-title"><strong>未读</strong><span>当前定位 · 132 个帖子</span></div>
+              <section class="mock-card">
+                <div class="table-head"><span>主题</span><span>作者</span><span>回复</span></div>
+                <div class="thread-row"><div><span class="pill">未读</span> <span class="thread-title">列表筛选、预载下页和稍后看批量操作</span></div><span class="thread-meta">power</span><strong>132</strong></div>
+                <div class="thread-row"><div class="thread-title">自动购买记录状态筛选</div><span class="thread-meta">auto</span><strong>58</strong></div>
+                <div class="thread-row"><div class="thread-title">资源工作台来源分组</div><span class="thread-meta">repo</span><strong>89</strong></div>
+              </section>
+              <section class="mock-card read-card">
+                <h3 class="read-title">高密度信息区</h3>
+                <p class="read-meta">表格边界清晰 · 操作按钮紧凑 · 列表扫描优先</p>
+                <p class="read-text">这一版更像管理后台或开发工具。它牺牲一点柔和观感，换来更高的信息承载和更低的滚动成本。</p>
+              </section>
+            </div>
+            <aside class="mock-panel">
+              <div class="panel-title"><span>批量操作</span><span class="pill">快</span></div>
+              <div class="panel-grid">
+                <div class="tool"><span class="tool-key">筛</span><span><strong>当前筛选</strong><span>关键词和作者</span></span></div>
+                <div class="tool"><span class="tool-key">批</span><span><strong>批量处理</strong><span>标记或移除</span></span></div>
+                <div class="tool"><span class="tool-key">导</span><span><strong>导出清单</strong><span>复制 Markdown</span></span></div>
+              </div>
+            </aside>
+          </div>
+          <div class="float-tools"><button>顶部</button><button>底部</button><button class="active">工具</button><button>设置</button></div>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

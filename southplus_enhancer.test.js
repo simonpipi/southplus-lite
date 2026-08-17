@@ -3,11 +3,17 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.4\.12/);
+assert.match(source, /@version\s+0\.5\.0/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.forumDashboard, true);
 assert.equal(defaultSettings.moduleNavDensity, 'comfortable');
+assert.equal(enhancer.getSettingsPresetDefinitions().resource.label, '资源');
+const lightPreset = enhancer.applySettingsPreset({ forumDashboard: true, unifiedPreviewGallery: true, titleKeywords: ['foo'] }, 'light');
+assert.equal(lightPreset.forumDashboard, false);
+assert.equal(lightPreset.unifiedPreviewGallery, false);
+assert.deepEqual(lightPreset.titleKeywords, ['foo']);
+assert.deepEqual(enhancer.normalizeBatchConfirmItems(['a', { title: 'b', meta: 'm' }]), [{ title: 'a', meta: '' }, { title: 'b', meta: 'm' }]);
 assert.match(source, /spx-quick-reply-launcher/);
 assert.match(source, /spx-quick-reply-attach/);
 assert.match(source, /panel\.classList\.add\('spx-quick-reply-collapsed'\)/);
@@ -485,6 +491,24 @@ assert.match(source, /bindNativeReadFavoriteSync\(settings, state, tid, original
 assert.match(source, /a\[onclick\*="action=favor"\]\[onclick\*="tid"\]/);
 assert.match(source, /isNewThreadFavoriteResult\(guideText\)/);
 assert.match(source, /spx-preview-popover-actions[\s\S]*收藏/);
+assert.match(source, /spx-preview-chip-row/);
+assert.match(source, /getThreadPreviewStatusChips/);
+assert.match(source, /spx-read-summary-card/);
+assert.match(source, /spx-read-summary-card\{[^}]*width:100%;max-width:100%;min-width:0;overflow:hidden/);
+assert.match(source, /spx-read-summary-metrics\{[^}]*repeat\(auto-fit,minmax\(168px,1fr\)\)/);
+assert.match(source, /createReadThreadSummaryCard\(settings, state, posts, tid, originalAuthor\)/);
+assert.match(source, /showBatchConfirmDialog/);
+assert.match(source, /confirmBatchAction/);
+assert.match(source, /data-action="apply-settings-preset"/);
+assert.match(source, /spx-content-center/);
+assert.deepEqual(
+  enhancer.getThreadPreviewStatusChips(
+    { id: 'td_42', title: '百度资源', titleLink: { href: 'https://south-plus.org/read.php?tid-42.html' } },
+    { resourceBadges: [{ type: 'baidu', label: '百度', source: 'preview', guessed: false }] },
+    { watch: { 42: { title: '百度资源' } }, resources: {} }
+  ).map(function mapPreviewChip(chip) { return chip.label; }),
+  ['未收藏', '已稍后', '百度']
+);
 assert.doesNotMatch(source, /createEl\('button', '', '本页屏人'\)/);
 assert.match(source, /spx-home-dashboard \.spx-home-module\{[^}]*width:100%!important;max-width:100%!important;min-width:0!important/);
 assert.match(source, /spx-home-dashboard \.spx-home-module tr\.tr2\{grid-template-columns:minmax\(360px,620px\) 96px minmax\(180px,260px\)!important;justify-content:start!important;\}/);

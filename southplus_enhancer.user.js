@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.4.12
+// @version      0.5.0
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -58,6 +58,7 @@
   var READ_RESOURCE_RAIL_COLLAPSED_KEY = APP + ':readResourceRailCollapsed:v1';
   var NAVIGATION_KEY = APP + ':navigation:v1';
   var NAVIGATION_COLLAPSE_KEY = APP + ':navigationCollapse:v1';
+  var NAVIGATION_COLLAPSE_DEFAULT_KEY = APP + ':navigationCollapseDefault:v1';
   var NAVIGATION_PIN_KEY = APP + ':navigationPins:v1';
   var NAVIGATION_REFRESH_KEY = APP + ':navigationRefresh:v1';
   var FAVORITE_NAV_COUNT_CACHE_KEY = APP + ':favoriteNavCountCache:v1';
@@ -103,6 +104,7 @@
   var threadPreviewCacheOrder = [];
   var spBalanceCache = { value: null, expiresAt: 0 };
   var readResourceRailContext = { posts: null, state: null, filter: 'all' };
+  var readSummaryContext = { settings: null, state: null, posts: null, tid: '', originalAuthor: '' };
   var enhanceCycle = 0;
   var RESOURCE_STATUSES = {
     saved: '已保存',
@@ -3098,6 +3100,60 @@
     return settings;
   }
 
+  function getSettingsPresetDefinitions() {
+    return {
+      light: {
+        label: '轻量',
+        description: '减少后台和视觉增强，保留基础清爽阅读。',
+        values: {
+          cleanMode: true,
+          readerMode: true,
+          immersiveRead: false,
+          unifiedPreviewGallery: false,
+          forumDashboard: false,
+          compactRead: true,
+          networkFriendly: true,
+        },
+      },
+      resource: {
+        label: '资源',
+        description: '强化图集、资源识别、仪表盘和工作台入口。',
+        values: {
+          cleanMode: true,
+          readerMode: true,
+          immersiveRead: true,
+          unifiedPreviewGallery: true,
+          forumDashboard: true,
+          compactRead: true,
+          networkFriendly: true,
+        },
+      },
+      reading: {
+        label: '阅读',
+        description: '聚焦帖子正文、进度续读和长引用折叠。',
+        values: {
+          cleanMode: true,
+          readerMode: true,
+          immersiveRead: true,
+          unifiedPreviewGallery: true,
+          forumDashboard: false,
+          compactRead: false,
+          foldQuotes: true,
+          hideUserProfile: false,
+          networkFriendly: true,
+        },
+      },
+    };
+  }
+
+  function applySettingsPreset(settings, presetKey) {
+    var presets = getSettingsPresetDefinitions();
+    var preset = presets[String(presetKey || '')];
+    if (!preset) return normalizeSettings(settings);
+    var nextSettings = Object.assign({}, settings || {}, preset.values || {});
+    return normalizeSettings(nextSettings);
+  }
+
   function createBackupPayload(data, timestamp) {
     var source = data || {};
     return {
@@ -3655,6 +3711,37 @@
     return !!(state && state[getModuleNavigationGroupKey(label)]);
   }
 
+  function hasActiveModuleNavigationNode(node) {
+    if (!node) return false;
+    if (node.config && node.config.active) return true;
+    return (node.children || []).some(hasActiveModuleNavigationNode);
+  }
+
+  function getDefaultModuleNavigationCollapseState(groups) {
+    var result = {};
+    (groups || []).forEach(function defaultCollapseGroup(group) {
+      var label = normalizeNavigationLabel(group && group.label);
+      var hasActive = (group.nodes || []).some(hasActiveModuleNavigationNode);
+      if (!label || hasActive) return;
+      if (/版块导航|历史导航|已发现/.test(label) || (group.nodes || []).length > 18) {
+        result[getModuleNavigationGroupKey(label)] = true;
+      }
+    });
+    return result;
+  }
+
+  function applyInitialModuleNavigationCollapseState(groups, collapseState) {
+    var current = normalizeNavigationCollapseState(collapseState);
+    var storage = getStorage();
+    if (!storage || storage.getItem(NAVIGATION_COLLAPSE_DEFAULT_KEY) === '1') return current;
+    storage.setItem(NAVIGATION_COLLAPSE_DEFAULT_KEY, '1');
+    if (Object.keys(current).length) return current;
+    var defaults = getDefaultModuleNavigationCollapseState(groups);
+    if (!Object.keys(defaults).length) return current;
+    saveNavigationCollapseState(defaults);
+    return defaults;
+  }
+
   function loadReadProgress() {
     return pruneReadProgress(loadMap(PROGRESS_KEY));
   }
@@ -4208,6 +4295,12 @@
       '.spx-settings button{border:1px solid var(--spx-line);border-radius:var(--spx-radius-sm);background:#fff;padding:6px 10px;cursor:pointer;color:var(--spx-text);}',
       '.spx-settings .spx-primary{background:var(--spx-accent);border-color:var(--spx-accent);color:#fff;}',
       '.spx-settings .spx-danger{border-color:#fecaca;background:var(--spx-danger-soft);color:var(--spx-danger);}',
+      '.spx-settings-presets .spx-preset-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}.spx-settings-presets .spx-preset-tabs button{min-height:34px;font-weight:900;background:#fff;border-color:var(--spx-line);}.spx-settings-presets .spx-preset-tabs button:hover{border-color:var(--spx-accent);color:var(--spx-accent);}',
+      '.spx-batch-confirm-overlay{position:fixed;inset:0;z-index:100090;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:18px;background:rgba(15,23,42,.36);backdrop-filter:blur(4px);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;color:var(--spx-text);}',
+      '.spx-batch-confirm{box-sizing:border-box;width:min(520px,calc(100vw - 32px));max-height:min(78vh,680px);overflow:auto;padding:14px;border:1px solid var(--spx-line);border-radius:16px;background:var(--spx-panel);box-shadow:var(--spx-shadow-popover);}.spx-batch-confirm-head{display:grid;gap:5px;margin-bottom:11px;}.spx-batch-confirm-head strong{color:var(--spx-strong);font-size:16px;font-weight:900;line-height:1.3;}.spx-batch-confirm-head span{color:var(--spx-sub);font-size:12px;}',
+      '.spx-batch-impact-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:11px;}.spx-batch-impact{box-sizing:border-box;display:grid;gap:2px;padding:10px;border:1px solid var(--spx-line-soft);border-radius:11px;background:var(--spx-panel-muted);}.spx-batch-impact b{color:var(--spx-strong);font-size:20px;line-height:1;font-weight:900;}.spx-batch-impact span{color:var(--spx-text);font-size:12px;font-weight:900;}.spx-batch-impact em{color:var(--spx-sub);font-size:11px;font-style:normal;}',
+      '.spx-batch-list{display:grid;gap:6px;max-height:240px;overflow:auto;margin:0 0 12px;padding:8px;border:1px solid var(--spx-line-soft);border-radius:12px;background:#fff;}.spx-batch-item{display:grid;gap:2px;min-width:0;padding:6px 7px;border-radius:8px;background:var(--spx-panel-muted);}.spx-batch-item span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--spx-strong);font-weight:900;}.spx-batch-item em,.spx-batch-more{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--spx-sub);font-size:11px;font-style:normal;}',
+      '.spx-batch-confirm-foot{display:flex;justify-content:flex-end;gap:8px;}.spx-batch-confirm-foot button{min-height:34px;padding:0 12px;border:1px solid var(--spx-line);border-radius:9px;background:#fff;color:var(--spx-text);font-weight:900;cursor:pointer;}.spx-batch-confirm-foot .spx-primary{border-color:var(--spx-danger);background:var(--spx-danger);color:#fff;}.spx-batch-confirm:not(.spx-batch-danger) .spx-batch-confirm-foot .spx-primary{border-color:var(--spx-accent);background:var(--spx-accent);}',
       '.spx-data-health{box-sizing:border-box;margin-top:10px;padding:10px;border:1px solid #e2e8f0;border-radius:var(--spx-radius);background:#fff;}',
       '.spx-data-health[hidden]{display:none!important;}',
       '.spx-storage-usage{display:grid;gap:6px;margin:7px 0 9px;font-size:12px;color:#334155;}',
@@ -4221,6 +4314,10 @@
       '.spx-storage-suggestions{margin:6px 0 8px;padding:7px 8px;border-radius:7px;background:#fff;border:1px solid #e5e7eb;color:#475569;font-size:12px;line-height:1.45;}',
       '.spx-watch-center{position:fixed;right:66px;bottom:18px;width:var(--spx-panel-width);max-height:var(--spx-panel-max-height);overflow:auto;z-index:100000;background:var(--spx-panel);border:1px solid var(--spx-line);box-shadow:var(--spx-shadow-popover);border-radius:var(--spx-radius-lg);padding:14px;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;scrollbar-width:thin;}',
       '.spx-resource-panel,#spx-resource-center{width:min(720px,calc(100vw - 96px));}',
+      '#spx-content-center{width:min(680px,calc(100vw - 96px));}.spx-content-center-header p{margin:3px 0 0;color:var(--spx-sub);font-size:12px;}.spx-content-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:12px 0;}.spx-content-stat{box-sizing:border-box;display:grid;gap:2px;min-width:0;padding:10px;border:1px solid var(--spx-line-soft);border-radius:12px;background:var(--spx-panel-muted);}.spx-content-stat b{color:var(--spx-strong);font-size:19px;line-height:1;font-weight:900;}.spx-content-stat span{color:var(--spx-text);font-size:12px;font-weight:900;}.spx-content-stat em{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--spx-sub);font-size:11px;font-style:normal;}.spx-content-stat.spx-ok{border-color:#bbf7d0;background:#f0fdf4;}.spx-content-stat.spx-warn{border-color:#fde68a;background:#fffbeb;}',
+      '.spx-content-shortcuts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}.spx-content-shortcuts button{min-height:32px;padding:0 10px;border:1px solid var(--spx-line);border-radius:9px;background:#fff;color:var(--spx-text);font-weight:900;cursor:pointer;}.spx-content-shortcuts .spx-primary{border-color:var(--spx-accent);background:var(--spx-accent);color:#fff;}.spx-content-recent-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}.spx-content-recent-section{box-sizing:border-box;padding:10px;border:1px solid var(--spx-line-soft);border-radius:12px;background:var(--spx-panel-muted);}.spx-content-recent-section h4{margin:0 0 8px;color:var(--spx-strong);font-size:13px;font-weight:900;}.spx-content-recent-list{display:grid;gap:7px;}.spx-content-recent{display:grid;gap:3px;min-width:0;padding:7px;border-radius:9px;background:#fff;border:1px solid var(--spx-line-soft);}.spx-content-recent strong,.spx-content-recent span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.spx-content-recent strong{color:var(--spx-strong);font-size:12px;}.spx-content-recent span,.spx-content-empty{color:var(--spx-sub);font-size:11px;}',
+      '.spx-read-summary-card{box-sizing:border-box;width:100%;max-width:100%;min-width:0;overflow:hidden;margin:10px 0 12px;padding:14px;border:1px solid var(--spx-line);border-radius:16px;background:var(--spx-panel);box-shadow:var(--spx-shadow-card);color:var(--spx-text);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;}.spx-read-summary-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;margin-bottom:11px;}.spx-read-summary-copy{min-width:0;}.spx-read-summary-eyebrow{margin-bottom:3px;color:var(--spx-accent);font-size:11px;font-weight:900;letter-spacing:.04em;}.spx-read-summary-copy h3{margin:0;color:var(--spx-strong);font-size:17px;line-height:1.35;font-weight:900;word-break:break-word;}.spx-read-summary-copy p{margin:4px 0 0;color:var(--spx-sub);font-size:12px;}.spx-read-summary-chips{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;}.spx-chip{display:inline-flex;align-items:center;min-height:24px;padding:0 8px;border:1px solid var(--spx-line);border-radius:999px;background:var(--spx-panel-muted);color:var(--spx-sub);font-size:11px;font-weight:900;}.spx-chip.spx-ok{border-color:#bbf7d0;background:#f0fdf4;color:#15803d;}.spx-chip.spx-warn{border-color:#fde68a;background:#fffbeb;color:#92400e;}.spx-chip.spx-danger{border-color:#fecaca;background:#fef2f2;color:#b91c1c;}',
+      '.spx-read-summary-progress{display:grid;grid-template-columns:auto minmax(140px,1fr);gap:10px;align-items:center;margin-bottom:11px;color:var(--spx-sub);font-size:12px;font-weight:900;}.spx-read-summary-track{height:8px;border-radius:999px;background:#e2e8f0;overflow:hidden;}.spx-read-summary-track i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--spx-accent),#22c55e);}.spx-read-summary-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px;margin-bottom:12px;}.spx-read-summary-metric{box-sizing:border-box;display:grid;gap:2px;min-width:0;padding:9px;border:1px solid var(--spx-line-soft);border-radius:12px;background:var(--spx-panel-muted);}.spx-read-summary-metric b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--spx-strong);font-size:16px;font-weight:900;}.spx-read-summary-metric span{color:var(--spx-text);font-size:12px;font-weight:900;}.spx-read-summary-metric em{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--spx-sub);font-size:11px;font-style:normal;}.spx-read-summary-metric.spx-ok{border-color:#bbf7d0;background:#f0fdf4;}.spx-read-summary-metric.spx-warn{border-color:#fde68a;background:#fffbeb;}.spx-read-summary-metric.spx-danger{border-color:#fecaca;background:#fef2f2;}.spx-read-summary-actions{display:flex;flex-wrap:wrap;gap:7px;}.spx-read-summary-actions button{min-height:32px;padding:0 10px;border:1px solid var(--spx-line);border-radius:9px;background:#fff;color:var(--spx-text);font-weight:900;cursor:pointer;}.spx-read-summary-actions button:disabled{cursor:default;opacity:.56;}.spx-read-summary-actions .spx-primary{border-color:var(--spx-accent);background:var(--spx-accent);color:#fff;}.spx-read-summary-actions button:hover:not(:disabled){border-color:var(--spx-accent);color:var(--spx-accent);background:var(--spx-accent-wash);}',
       '.spx-read-resource-rail{position:fixed!important;right:76px!important;top:72px!important;z-index:100015!important;box-sizing:border-box!important;display:flex!important;flex-direction:column!important;width:320px!important;max-height:calc(100vh - 112px)!important;padding:12px!important;border:1px solid var(--spx-line)!important;border-radius:16px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-popover)!important;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif!important;}',
       '.spx-read-resource-rail[hidden]{display:none!important;}',
       '.spx-read-resource-rail-head{display:flex!important;align-items:flex-start!important;justify-content:space-between!important;gap:10px!important;margin:-12px -12px 10px!important;padding:12px!important;border-bottom:1px solid var(--spx-line-soft)!important;border-radius:16px 16px 0 0!important;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%)!important;}',
@@ -4276,6 +4373,7 @@
       '.spx-watch-actions button[data-action*="clear"],.spx-watch-actions button[data-action*="remove"],.spx-watch-actions button[data-action*="delete"],.spx-watch-actions button[data-action*="invalid"]{border-color:#fecaca;background:var(--spx-danger-soft);color:var(--spx-danger);}',
       '.spx-watch-actions button:hover,.spx-watch-actions a:hover,.spx-watch-center-header button:hover{border-color:var(--spx-accent);color:var(--spx-accent);}',
       '.spx-watch-empty{padding:14px 2px;color:var(--spx-sub);font-size:13px;}',
+      '@media(max-width:900px){.spx-read-summary-card{width:100%;max-width:100%;margin:8px 0 10px;padding:12px;border-radius:14px;}.spx-read-summary-head{grid-template-columns:1fr;}.spx-read-summary-chips{justify-content:flex-start;}.spx-read-summary-progress{grid-template-columns:1fr;gap:6px;}.spx-read-summary-metrics,.spx-content-stats{grid-template-columns:repeat(2,minmax(0,1fr));}.spx-content-recent-grid{grid-template-columns:1fr;}#spx-content-center{width:auto;}.spx-batch-impact-grid{grid-template-columns:1fr;}}',
       '.spx-status-badge{display:inline-block;margin-right:6px;padding:1px 6px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:800;}',
       '.spx-status-badge.spx-status-saved{background:#e0f2fe;color:#075985;}',
       '.spx-status-badge.spx-status-todo{background:#fef3c7;color:#92400e;}',
@@ -4365,7 +4463,8 @@
       '.spx-module-nav-ready.spx-home-dashboard #content>*:not(.spx-module-nav):not(.spx-module-body),.spx-module-nav-ready.spx-forum-dashboard #content>*:not(.spx-module-nav):not(.spx-module-body){grid-column:2!important;min-width:0!important;}',
       '.spx-module-nav-ready .spx-forum-tools{width:100%!important;margin:0 0 10px!important;}',
       '.spx-module-nav{grid-column:1!important;position:sticky!important;top:46px!important;z-index:20!important;box-sizing:border-box!important;display:flex!important;flex-direction:column!important;align-self:start!important;gap:8px!important;max-height:calc(100vh - var(--spx-module-max-offset))!important;padding:12px!important;overflow:auto!important;border:1px solid var(--spx-line)!important;border-radius:var(--spx-radius-lg)!important;background:var(--spx-panel)!important;box-shadow:var(--spx-shadow-card)!important;color:var(--spx-text)!important;scrollbar-width:thin!important;}',
-      '.spx-module-nav-title{padding:0 2px 8px!important;border-bottom:1px solid var(--spx-line-soft)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;line-height:1.25!important;white-space:nowrap!important;}',
+      '.spx-module-nav-title{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;padding:0 2px 8px!important;border-bottom:1px solid var(--spx-line-soft)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;line-height:1.25!important;white-space:nowrap!important;}',
+      '.spx-module-nav-title strong{color:var(--spx-strong)!important;font-size:12px!important;font-weight:900!important;line-height:1.2!important;}.spx-module-nav-title span{flex:none!important;color:var(--spx-muted)!important;font-size:11px!important;font-weight:900!important;}',
       '.spx-module-nav-controls{display:flex!important;align-items:center!important;width:100%!important;min-width:0!important;}',
       'input.spx-module-nav-search{box-sizing:border-box!important;flex:1 1 auto!important;width:100%!important;min-width:0!important;max-width:100%!important;height:30px!important;padding:0 10px!important;border:1px solid var(--spx-line)!important;border-radius:9px!important;background:var(--spx-input-bg)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:800!important;line-height:30px!important;outline:none!important;}',
       'input.spx-module-nav-search:focus{border-color:var(--spx-accent)!important;box-shadow:0 0 0 2px rgba(37,99,235,.12)!important;}',
@@ -4437,6 +4536,7 @@
       '.spx-preview-popover{position:fixed;z-index:100001;width:min(520px,calc(100vw - 28px));max-height:min(74vh,620px);overflow:auto;padding:12px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 18px 48px rgba(15,23,42,.28);color:#172033;font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;}',
       '.spx-preview-popover h4{display:block;margin:0 0 6px;font-size:15px;line-height:1.35;color:#0f172a;}',
       '.spx-preview-meta{margin-bottom:8px;color:#64748b;font-size:12px;}',
+      '.spx-preview-chip-row{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 9px;}.spx-preview-chip{box-sizing:border-box;display:inline-flex;align-items:center;min-height:24px;padding:0 8px;border:1px solid #dbe4ee;border-radius:999px;background:#f8fafc;color:#475569;font-size:11px;font-weight:900;line-height:1.2;}.spx-preview-chip.spx-ok{border-color:#bbf7d0;background:#f0fdf4;color:#15803d;}.spx-preview-chip.spx-resource{border-color:#bae6fd;background:#f0f9ff;color:#0369a1;}.spx-preview-chip.spx-guess{border-style:dashed;color:#64748b;}.spx-preview-chip-row button{cursor:pointer;}.spx-preview-chip-row button:hover{border-color:#2563eb;color:#2563eb;background:#eff6ff;}',
       '.spx-preview-popover-actions{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px;}',
       '.spx-preview-popover-actions a,.spx-preview-popover-actions button{box-sizing:border-box;min-height:28px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#1f2937;padding:4px 9px;font-size:12px;line-height:18px;text-decoration:none;cursor:pointer;}',
       '.spx-preview-popover-actions a:hover,.spx-preview-popover-actions button:hover{border-color:#2563eb;color:#2563eb;}',
@@ -4464,12 +4564,12 @@
       '.spx-theme-night #wrapA,.spx-theme-night #main,.spx-theme-night #content,.spx-theme-night.spx-reader #wrapA,.spx-theme-night.spx-reader #main,.spx-theme-night.spx-reader #content,.spx-theme-night.spx-immersive-read #wrapA,.spx-theme-night.spx-immersive-read #main,.spx-theme-night.spx-immersive-read #content{background:var(--spx-page-bg)!important;background-image:none!important;color:var(--spx-text)!important;}',
       '.spx-theme-night a{color:var(--spx-link)!important;}',
       '.spx-theme-night input,.spx-theme-night textarea,.spx-theme-night select{background:var(--spx-input-bg)!important;color:var(--spx-text)!important;border-color:var(--spx-line)!important;}',
-      '.spx-theme-night .t,.spx-theme-night .t3,.spx-theme-night .t5,.spx-theme-night .bdbA,.spx-theme-night table.js-post,.spx-theme-night .spx-home-module,.spx-theme-night .spx-watch-center,.spx-theme-night .spx-settings,.spx-theme-night .spx-toolbox,.spx-theme-night .spx-command-palette,.spx-theme-night .spx-command-detail,.spx-theme-night .spx-preview-panel,.spx-theme-night .spx-preview-popover,.spx-theme-night .spx-author-popover,.spx-theme-night .spx-quick-reply,.spx-theme-night .spx-forum-tools,.spx-theme-night .spx-read-resource-rail,.spx-theme-night .spx-read-resource-card,.spx-theme-night .spx-read-resource-filters,.spx-theme-night .spx-data-health,.spx-theme-night .spx-storage-usage-row,.spx-theme-night .spx-storage-suggestions{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;}',
+      '.spx-theme-night .t,.spx-theme-night .t3,.spx-theme-night .t5,.spx-theme-night .bdbA,.spx-theme-night table.js-post,.spx-theme-night .spx-home-module,.spx-theme-night .spx-watch-center,.spx-theme-night .spx-settings,.spx-theme-night .spx-toolbox,.spx-theme-night .spx-command-palette,.spx-theme-night .spx-command-detail,.spx-theme-night .spx-preview-panel,.spx-theme-night .spx-preview-popover,.spx-theme-night .spx-author-popover,.spx-theme-night .spx-quick-reply,.spx-theme-night .spx-forum-tools,.spx-theme-night .spx-read-resource-rail,.spx-theme-night .spx-read-resource-card,.spx-theme-night .spx-read-resource-filters,.spx-theme-night .spx-read-summary-card,.spx-theme-night .spx-batch-confirm,.spx-theme-night .spx-data-health,.spx-theme-night .spx-storage-usage-row,.spx-theme-night .spx-storage-suggestions{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;}',
       '.spx-theme-night .tr1,.spx-theme-night .tr2,.spx-theme-night .tr3,.spx-theme-night td,.spx-theme-night th,.spx-theme-night .spx-home-module tr.tr3,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3{background:var(--spx-row-bg)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night .spx-home-module tr.tr3:hover,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3:hover{background:var(--spx-row-hover)!important;}',
       '.spx-theme-night .spx-home-module>h2,.spx-theme-night .spx-home-module .h,.spx-theme-night .spx-settings-header,.spx-theme-night .spx-settings-footer,.spx-theme-night .spx-toolbox-header,.spx-theme-night .spx-watch-center-header,.spx-theme-night .spx-read-resource-rail-head,.spx-theme-night .spx-preview-lightbox-toolbar,.spx-theme-night .spx-preview-lightbox-caption{background:var(--spx-panel-muted)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-strong)!important;}',
       '.spx-theme-night .spx-read-resource-rail button{background:var(--spx-panel)!important;color:var(--spx-text)!important;border-color:var(--spx-line)!important;}',
-      '.spx-theme-night .spx-toolbox-action,.spx-theme-night .spx-watch-item,.spx-theme-night .spx-watch-controls,.spx-theme-night .spx-settings-section,.spx-theme-night .spx-preview-item,.spx-theme-night .spx-preview-images a,.spx-theme-night .spx-fold-box,.spx-theme-night .spx-auto-resource-actions a,.spx-theme-night .spx-auto-resource-actions button{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
+      '.spx-theme-night .spx-toolbox-action,.spx-theme-night .spx-watch-item,.spx-theme-night .spx-watch-controls,.spx-theme-night .spx-settings-section,.spx-theme-night .spx-preview-item,.spx-theme-night .spx-preview-images a,.spx-theme-night .spx-read-summary-metric,.spx-theme-night .spx-content-stat,.spx-theme-night .spx-content-recent-section,.spx-theme-night .spx-content-recent,.spx-theme-night .spx-batch-list,.spx-theme-night .spx-batch-item,.spx-theme-night .spx-batch-impact,.spx-theme-night .spx-fold-box,.spx-theme-night .spx-auto-resource-actions a,.spx-theme-night .spx-auto-resource-actions button{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night button,.spx-theme-night .spx-toolbar button,.spx-theme-night .spx-toolbar a,.spx-theme-night .spx-thread-tools button,.spx-theme-night .spx-post-tools button,.spx-theme-night .spx-watch-actions button,.spx-theme-night .spx-watch-actions a{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night .spx-toolbox-action:hover,.spx-theme-night .spx-toolbox-action:focus-visible,.spx-theme-night button:hover,.spx-theme-night .spx-toolbar button:hover,.spx-theme-night .spx-toolbar a:hover{border-color:var(--spx-accent)!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;}',
       '.spx-theme-night .spx-toolbox-action.spx-active,.spx-theme-night .spx-toolbar .spx-active,.spx-theme-night .spx-settings .spx-primary{border-color:var(--spx-accent)!important;background:var(--spx-accent-soft)!important;color:var(--spx-accent)!important;}',
@@ -4488,6 +4588,7 @@
       '.spx-theme-night .spx-preview-popover-actions a:hover,.spx-theme-night .spx-preview-popover-actions button:hover{border-color:var(--spx-accent)!important;color:var(--spx-accent)!important;}',
       '.spx-theme-night .spx-preview-popover .spx-preview-text{color:var(--spx-text)!important;}',
       '.spx-theme-night .spx-preview-popover .spx-preview-images a{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;}',
+      '.spx-theme-night .spx-read-summary-track{background:var(--spx-line)!important;}.spx-theme-night .spx-preview-chip,.spx-theme-night .spx-chip{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-sub)!important;}',
     ];
   }
 
@@ -5894,24 +5995,34 @@
           var confirmText = entriesToDelete.length > 1
             ? '确定删除选中的 ' + entriesToDelete.length + ' 条站内收藏？此操作会同步到原站收藏夹。'
             : '删除这个站内收藏？此操作会同步到原站收藏夹。';
-          if (typeof window.confirm === 'function' && !window.confirm(confirmText)) return;
-          var originalText = target.textContent || '删除';
-          target.disabled = true;
-          target.textContent = '删除中';
-          deleteSiteFavoriteEntries(entriesToDelete, settings).then(function handleFavoriteDeleteResult(result) {
-            if (result.deleted.length) {
-              removeDeletedSiteFavoriteEntries(panelState, result.deleted);
-              updateFavoriteNavTrigger(wrapper, panelState, state);
-              renderFavoriteNavPanel(panel, settings, state, wrapper);
-            }
-            if (result.errors.length && !result.deleted.length) {
-              target.disabled = false;
-              setTemporaryText(target, '删除失败', originalText);
-              return;
-            }
-            if (result.errors.length && typeof window.alert === 'function') {
-              window.alert('部分收藏删除失败：' + result.errors.length + ' 条');
-            }
+          confirmBatchAction({
+            title: entriesToDelete.length > 1 ? '删除所选站内收藏' : '删除站内收藏',
+            message: '此操作会同步到原站收藏夹，不只是本地隐藏。',
+            confirmText: '删除收藏',
+            impacts: [{ label: '站内收藏', value: entriesToDelete.length, note: '同步原站' }],
+            items: entriesToDelete.map(function mapFavoriteConfirmItem(entry) {
+              return { title: entry.title, meta: [entry.author, entry.url].filter(Boolean).join(' · ') };
+            }),
+          }, confirmText).then(function deleteFavoriteAfterConfirm(ok) {
+            if (!ok) return;
+            var originalText = target.textContent || '删除';
+            target.disabled = true;
+            target.textContent = '删除中';
+            deleteSiteFavoriteEntries(entriesToDelete, settings).then(function handleFavoriteDeleteResult(result) {
+              if (result.deleted.length) {
+                removeDeletedSiteFavoriteEntries(panelState, result.deleted);
+                updateFavoriteNavTrigger(wrapper, panelState, state);
+                renderFavoriteNavPanel(panel, settings, state, wrapper);
+              }
+              if (result.errors.length && !result.deleted.length) {
+                target.disabled = false;
+                setTemporaryText(target, '删除失败', originalText);
+                return;
+              }
+              if (result.errors.length && typeof window.alert === 'function') {
+                window.alert('部分收藏删除失败：' + result.errors.length + ' 条');
+              }
+            });
           });
           return;
         }
@@ -6287,6 +6398,116 @@
       }
     }
     return node;
+  }
+
+  function normalizeBatchConfirmItems(items) {
+    return (items || []).map(function normalizeBatchConfirmItem(item) {
+      if (!item) return null;
+      if (typeof item === 'string') return { title: item, meta: '' };
+      return {
+        title: compactText(item.title || item.text || item.url || item.key || '未命名项目'),
+        meta: compactText(item.meta || item.description || item.url || ''),
+      };
+    }).filter(Boolean);
+  }
+
+  function showBatchConfirmDialog(options) {
+    var config = options || {};
+    var fallbackText = config.fallbackText || config.message || config.title || '确认执行此操作？';
+    if (typeof document === 'undefined' || !document.body) {
+      return Promise.resolve(typeof window === 'undefined' || typeof window.confirm !== 'function' || window.confirm(fallbackText));
+    }
+
+    return new Promise(function openBatchConfirmDialog(resolve) {
+      var existing = qs('#spx-batch-confirm-overlay');
+      if (existing) existing.remove();
+
+      var overlay = createEl('div', 'spx-batch-confirm-overlay');
+      overlay.id = 'spx-batch-confirm-overlay';
+      var dialog = createEl('section', 'spx-batch-confirm' + (config.danger === false ? '' : ' spx-batch-danger'));
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      dialog.setAttribute('aria-label', config.title || '确认操作');
+
+      var header = createEl('div', 'spx-batch-confirm-head');
+      header.appendChild(createEl('strong', '', config.title || '确认操作'));
+      header.appendChild(createEl('span', '', config.message || '这个操作会修改本地或站内数据。'));
+      dialog.appendChild(header);
+
+      var impacts = config.impacts || [];
+      if (impacts.length) {
+        var impactGrid = createEl('div', 'spx-batch-impact-grid');
+        impacts.forEach(function appendBatchImpact(item) {
+          var card = createEl('div', 'spx-batch-impact' + (item.className ? ' ' + item.className : ''));
+          card.appendChild(createEl('b', '', String(item.value === undefined ? '' : item.value)));
+          card.appendChild(createEl('span', '', item.label || '影响项'));
+          if (item.note) card.appendChild(createEl('em', '', item.note));
+          impactGrid.appendChild(card);
+        });
+        dialog.appendChild(impactGrid);
+      }
+
+      var items = normalizeBatchConfirmItems(config.items);
+      if (items.length) {
+        var list = createEl('div', 'spx-batch-list');
+        items.slice(0, 8).forEach(function appendBatchItem(item) {
+          var row = createEl('div', 'spx-batch-item');
+          row.appendChild(createEl('span', '', item.title));
+          if (item.meta) row.appendChild(createEl('em', '', item.meta));
+          list.appendChild(row);
+        });
+        if (items.length > 8) {
+          list.appendChild(createEl('div', 'spx-batch-more', '其余 ' + (items.length - 8) + ' 项将在确认后一起处理。'));
+        }
+        dialog.appendChild(list);
+      }
+
+      var footer = createEl('div', 'spx-batch-confirm-foot');
+      var cancel = createEl('button', '', config.cancelText || '取消');
+      var confirm = createEl('button', 'spx-primary', config.confirmText || '确认执行');
+      cancel.type = 'button';
+      confirm.type = 'button';
+      cancel.dataset.action = 'cancel';
+      confirm.dataset.action = 'confirm';
+      footer.appendChild(cancel);
+      footer.appendChild(confirm);
+      dialog.appendChild(footer);
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+
+      function closeBatchConfirm(result) {
+        document.removeEventListener('keydown', handleBatchConfirmKeydown, true);
+        if (overlay.isConnected) overlay.remove();
+        resolve(!!result);
+      }
+
+      function handleBatchConfirmKeydown(event) {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        closeBatchConfirm(false);
+      }
+
+      overlay.addEventListener('click', function handleBatchConfirmClick(event) {
+        var target = event.target;
+        if (target === overlay) {
+          closeBatchConfirm(false);
+          return;
+        }
+        var action = target && target.dataset && target.dataset.action;
+        if (action === 'cancel') closeBatchConfirm(false);
+        if (action === 'confirm') closeBatchConfirm(true);
+      });
+      document.addEventListener('keydown', handleBatchConfirmKeydown, true);
+      if (typeof confirm.focus === 'function') confirm.focus();
+    });
+  }
+
+  function confirmBatchAction(options, fallbackText) {
+    var config = Object.assign({ fallbackText: fallbackText }, options || {});
+    return showBatchConfirmDialog(config).catch(function fallbackBatchConfirm() {
+      var message = config.fallbackText || config.message || config.title || '确认执行此操作？';
+      return typeof window === 'undefined' || typeof window.confirm !== 'function' || window.confirm(message);
+    });
   }
 
   function createCenterTitleElement(options) {
@@ -6670,25 +6891,46 @@
             ensureCenterPanelState(panel, { query: '', filter: 'all', tag: 'all' })
           );
           if (!visibleEntries.length) return;
-          if (typeof window.confirm === 'function' && !window.confirm('移除当前筛选结果中的稍后看主题？')) return;
-          visibleEntries.forEach(function removeVisibleEntry(entry) {
-            delete state.watch[entry.id];
+          confirmBatchAction({
+            title: '移除稍后看筛选结果',
+            message: '将从本地稍后看移除当前筛选结果，阅读进度不会删除。',
+            confirmText: '移除筛选',
+            impacts: [{ label: '稍后看主题', value: visibleEntries.length, note: '仅移除保存状态' }],
+            items: visibleEntries.map(function mapWatchConfirmItem(entry) {
+              return { title: entry.title, meta: [entry.progressText, entry.nextFloorLabel].filter(Boolean).join(' · ') };
+            }),
+          }, '移除当前筛选结果中的稍后看主题？').then(function removeVisibleWatchAfterConfirm(ok) {
+            if (!ok) return;
+            visibleEntries.forEach(function removeVisibleEntry(entry) {
+              delete state.watch[entry.id];
+            });
+            saveMap(WATCH_KEY, state.watch);
+            qsa('.spx-watch-badge').forEach(function removeMatchingBadge(badge) {
+              if (!state.watch[badge.dataset.spxWatchId]) badge.remove();
+            });
+            renderWatchCenter(panel, state);
           });
-          saveMap(WATCH_KEY, state.watch);
-          qsa('.spx-watch-badge').forEach(function removeMatchingBadge(badge) {
-            if (!state.watch[badge.dataset.spxWatchId]) badge.remove();
-          });
-          renderWatchCenter(panel, state);
           return;
         }
         if (action === 'clear-watch') {
-          if (typeof window.confirm === 'function' && !window.confirm('清空全部稍后看主题？')) return;
-          state.watch = {};
-          saveMap(WATCH_KEY, state.watch);
-          qsa('.spx-watch-badge').forEach(function removeBadge(badge) {
-            badge.remove();
+          var allWatchEntries = getWatchCenterEntries(state.watch, state.progress);
+          confirmBatchAction({
+            title: '清空稍后看',
+            message: '将清空全部本地稍后看主题，阅读进度仍会保留在最近浏览。',
+            confirmText: '清空稍后看',
+            impacts: [{ label: '稍后看主题', value: allWatchEntries.length, note: '不可自动恢复' }],
+            items: allWatchEntries.map(function mapClearWatchConfirmItem(entry) {
+              return { title: entry.title, meta: entry.url };
+            }),
+          }, '清空全部稍后看主题？').then(function clearWatchAfterConfirm(ok) {
+            if (!ok) return;
+            state.watch = {};
+            saveMap(WATCH_KEY, state.watch);
+            qsa('.spx-watch-badge').forEach(function removeBadge(badge) {
+              badge.remove();
+            });
+            renderWatchCenter(panel, state);
           });
-          renderWatchCenter(panel, state);
           return;
         }
         var id = target.dataset.id;
@@ -6819,22 +7061,43 @@
             ensureCenterPanelState(panel, { query: '', filter: 'all', tag: 'all' })
           );
           if (!visibleEntries.length) return;
-          if (typeof window.confirm === 'function' && !window.confirm('移除当前筛选结果中的阅读记录？')) return;
-          visibleEntries.forEach(function removeVisibleHistory(entry) {
-            delete state.progress[entry.id];
+          confirmBatchAction({
+            title: '移除阅读记录筛选结果',
+            message: '将移除当前筛选结果中的阅读进度记录，稍后看保存状态不会删除。',
+            confirmText: '移除筛选',
+            impacts: [{ label: '阅读记录', value: visibleEntries.length, note: '影响续读位置' }],
+            items: visibleEntries.map(function mapHistoryConfirmItem(entry) {
+              return { title: entry.title, meta: [entry.progressText, entry.nextFloorLabel].filter(Boolean).join(' · ') };
+            }),
+          }, '移除当前筛选结果中的阅读记录？').then(function removeVisibleHistoryAfterConfirm(ok) {
+            if (!ok) return;
+            visibleEntries.forEach(function removeVisibleHistory(entry) {
+              delete state.progress[entry.id];
+            });
+            saveReadProgress(state.progress);
+            refreshWatchCenter();
+            renderHistoryCenter(panel, state);
           });
-          saveReadProgress(state.progress);
-          refreshWatchCenter();
-          renderHistoryCenter(panel, state);
           return;
         }
         if (action === 'clear-history') {
-          if (typeof window.confirm === 'function' && !window.confirm('清空全部阅读记录？')) return;
-          state.progress = {};
-          saveReadProgress(state.progress);
-          clearReadProgressRestoreRequest(parseThreadId(location.href));
-          refreshWatchCenter();
-          renderHistoryCenter(panel, state);
+          var allHistoryEntries = getHistoryCenterEntries(state.progress);
+          confirmBatchAction({
+            title: '清空阅读记录',
+            message: '将清空全部阅读进度和最近浏览记录。',
+            confirmText: '清空阅读记录',
+            impacts: [{ label: '阅读记录', value: allHistoryEntries.length, note: '不可自动恢复' }],
+            items: allHistoryEntries.map(function mapClearHistoryConfirmItem(entry) {
+              return { title: entry.title, meta: entry.progressText || entry.url };
+            }),
+          }, '清空全部阅读记录？').then(function clearHistoryAfterConfirm(ok) {
+            if (!ok) return;
+            state.progress = {};
+            saveReadProgress(state.progress);
+            clearReadProgressRestoreRequest(parseThreadId(location.href));
+            refreshWatchCenter();
+            renderHistoryCenter(panel, state);
+          });
           return;
         }
         var id = target.dataset.id;
@@ -6962,21 +7225,42 @@
             ensureCenterPanelState(panel, { query: '', filter: 'all' })
           );
           if (!visibleEntries.length) return;
-          if (typeof window.confirm === 'function' && !window.confirm('删除当前筛选结果中的自动购买记录？')) return;
-          visibleEntries.forEach(function removeVisibleAutoBuyEntry(entry) {
-            delete attempts[entry.key];
+          confirmBatchAction({
+            title: '删除自动购买筛选记录',
+            message: '将删除当前筛选结果中的自动购买执行记录。',
+            confirmText: '删除筛选',
+            impacts: [{ label: '购买记录', value: visibleEntries.length, note: '可能影响重复购买拦截' }],
+            items: visibleEntries.map(function mapAutoBuyConfirmItem(entry) {
+              return { title: entry.key, meta: [entry.statusLabel, entry.message].filter(Boolean).join(' · ') };
+            }),
+          }, '删除当前筛选结果中的自动购买记录？').then(function removeVisibleAutoBuyAfterConfirm(ok) {
+            if (!ok) return;
+            visibleEntries.forEach(function removeVisibleAutoBuyEntry(entry) {
+              delete attempts[entry.key];
+            });
+            saveAutoBuyAttempts(attempts);
+            renderAutoBuyCenter(panel);
           });
-          saveAutoBuyAttempts(attempts);
-          renderAutoBuyCenter(panel);
           return;
         }
         if (action === 'clear-auto-buy-records') {
-          if (typeof window.confirm === 'function' && !window.confirm('清空全部自动购买记录？')) return;
-          saveAutoBuyAttempts({});
-          delete document.documentElement.dataset.spxAutoBuyStatus;
-          var status = qs('#spx-auto-buy-status');
-          if (status) status.remove();
-          renderAutoBuyCenter(panel);
+          var allAutoBuyEntries = getAutoBuyCenterEntries(loadAutoBuyAttempts());
+          confirmBatchAction({
+            title: '清空自动购买记录',
+            message: '将清空全部自动购买执行记录。',
+            confirmText: '清空记录',
+            impacts: [{ label: '购买记录', value: allAutoBuyEntries.length, note: '不可自动恢复' }],
+            items: allAutoBuyEntries.map(function mapClearAutoBuyConfirmItem(entry) {
+              return { title: entry.key, meta: entry.statusLabel };
+            }),
+          }, '清空全部自动购买记录？').then(function clearAutoBuyAfterConfirm(ok) {
+            if (!ok) return;
+            saveAutoBuyAttempts({});
+            delete document.documentElement.dataset.spxAutoBuyStatus;
+            var status = qs('#spx-auto-buy-status');
+            if (status) status.remove();
+            renderAutoBuyCenter(panel);
+          });
           return;
         }
         if (action === 'remove-auto-buy-record') {
@@ -6986,6 +7270,122 @@
           delete attempts[key];
           saveAutoBuyAttempts(attempts);
           renderAutoBuyCenter(panel);
+        }
+      },
+    });
+  }
+
+  function createMyContentStat(label, value, note, className) {
+    var stat = createEl('div', 'spx-content-stat' + (className ? ' ' + className : ''));
+    stat.appendChild(createEl('b', '', String(value)));
+    stat.appendChild(createEl('span', '', label));
+    if (note) stat.appendChild(createEl('em', '', note));
+    return stat;
+  }
+
+  function createMyContentShortcut(label, action, primary) {
+    var button = createEl('button', primary ? 'spx-primary' : '', label);
+    button.type = 'button';
+    button.dataset.action = action;
+    return button;
+  }
+
+  function appendMyContentRecentList(section, entries, emptyText, formatter) {
+    var list = createEl('div', 'spx-content-recent-list');
+    if (!(entries || []).length) {
+      list.appendChild(createEl('div', 'spx-content-empty', emptyText));
+    } else {
+      entries.slice(0, 3).forEach(function appendRecentEntry(entry) {
+        var row = createEl('div', 'spx-content-recent');
+        var formatted = formatter(entry);
+        row.appendChild(createEl('strong', '', formatted.title));
+        row.appendChild(createEl('span', '', formatted.meta));
+        list.appendChild(row);
+      });
+    }
+    section.appendChild(list);
+  }
+
+  function renderMyContentCenter(panel, settings, state) {
+    state.watch = state.watch || {};
+    state.progress = state.progress || {};
+    state.resources = pruneResourceLibrary(state.resources || {});
+    var watchEntries = getWatchCenterEntries(state.watch, state.progress);
+    var historyEntries = getHistoryCenterEntries(state.progress);
+    var resourceEntries = getResourceCenterEntries(state.resources);
+    var autoBuyEntries = getAutoBuyCenterEntries(loadAutoBuyAttempts());
+    var favoriteSeenCount = Object.keys(loadMap(FAVORITE_NAV_SEEN_KEY)).length;
+    var unreadWatchCount = watchEntries.filter(function countUnreadWatch(entry) {
+      return !entry.progressAt || !isCompletedReadProgress(state.progress && state.progress[entry.id]);
+    }).length;
+    var queueCount = getResourceDownloadQueueEntries(resourceEntries).length;
+
+    panel.textContent = '';
+    var header = createEl('div', 'spx-watch-center-header spx-content-center-header');
+    var title = createEl('div');
+    title.appendChild(createEl('h3', '', '我的内容'));
+    title.appendChild(createEl('p', '', '收藏、稍后、阅读进度和资源工作台的本地汇总。'));
+    header.appendChild(title);
+    header.appendChild(createMyContentShortcut('关闭', 'close-content-center'));
+    panel.appendChild(header);
+
+    var stats = createEl('div', 'spx-content-stats');
+    stats.appendChild(createMyContentStat('稍后看', watchEntries.length, unreadWatchCount ? ('未读 ' + unreadWatchCount) : '已同步进度', unreadWatchCount ? 'spx-warn' : 'spx-ok'));
+    stats.appendChild(createMyContentStat('最近浏览', historyEntries.length, '阅读进度记录'));
+    stats.appendChild(createMyContentStat('资源', resourceEntries.length, queueCount ? ('待下载 ' + queueCount) : '无待处理', queueCount ? 'spx-warn' : 'spx-ok'));
+    stats.appendChild(createMyContentStat('购买记录', autoBuyEntries.length, '自动购买执行状态'));
+    stats.appendChild(createMyContentStat('收藏标记', favoriteSeenCount, '本地已识别站内收藏'));
+    panel.appendChild(stats);
+
+    var shortcuts = createEl('div', 'spx-content-shortcuts');
+    shortcuts.appendChild(createMyContentShortcut('打开稍后看', 'open-watch-center', true));
+    shortcuts.appendChild(createMyContentShortcut('打开最近浏览', 'open-history-center', false));
+    shortcuts.appendChild(createMyContentShortcut('打开资源工作台', 'open-resource-center', false));
+    shortcuts.appendChild(createMyContentShortcut('打开购买记录', 'open-auto-buy-center', false));
+    panel.appendChild(shortcuts);
+
+    var grid = createEl('div', 'spx-content-recent-grid');
+    var watchSection = createEl('section', 'spx-content-recent-section');
+    watchSection.appendChild(createEl('h4', '', '稍后看积压'));
+    appendMyContentRecentList(watchSection, watchEntries, '暂无稍后看主题。', function formatWatchRecent(entry) {
+      return { title: entry.title, meta: [entry.progressText, entry.nextFloorLabel, entry.tagText].filter(Boolean).join(' · ') || entry.url };
+    });
+    grid.appendChild(watchSection);
+
+    var resourceSection = createEl('section', 'spx-content-recent-section');
+    resourceSection.appendChild(createEl('h4', '', '资源待处理'));
+    appendMyContentRecentList(resourceSection, getResourceDownloadQueueEntries(resourceEntries), '暂无待下载资源。', function formatResourceRecent(entry) {
+      return { title: entry.label || entry.url, meta: [entry.sourceTitle, entry.floorLabel, entry.author].filter(Boolean).join(' · ') || entry.url };
+    });
+    grid.appendChild(resourceSection);
+    panel.appendChild(grid);
+  }
+
+  function createMyContentCenterPanel(settings, state) {
+    return createCenterPanel({
+      id: 'spx-content-center',
+      render: function render(panel) {
+        renderMyContentCenter(panel, settings, state);
+      },
+      onAction: function onAction(action, target, panel) {
+        if (action === 'close-content-center') {
+          setCenterPanelHidden(panel, true, '[data-spx-content-center-button="1"]');
+          return;
+        }
+        if (action === 'open-watch-center') {
+          setCenterPanelHidden(createWatchCenterPanel(settings, state), false, '[data-spx-watch-center-button="1"]');
+          return;
+        }
+        if (action === 'open-history-center') {
+          setCenterPanelHidden(createHistoryCenterPanel(settings, state), false, '[data-spx-history-center-button="1"]');
+          return;
+        }
+        if (action === 'open-resource-center') {
+          setCenterPanelHidden(createResourceCenterPanel(settings, state), false, '[data-spx-resource-center-button="1"]');
+          return;
+        }
+        if (action === 'open-auto-buy-center') {
+          setCenterPanelHidden(createAutoBuyCenterPanel(settings, state), false, '[data-spx-auto-buy-center-button="1"]');
         }
       },
     });
@@ -7206,6 +7606,7 @@
     saveResourceLibrary(state.resources);
     refreshResourceCenter();
     refreshReadResourceRail();
+    refreshReadThreadSummaryCard();
   }
 
   function createResourceCenterPanel(settings, state) {
@@ -7273,11 +7674,27 @@
           var statusKeys = action === 'mark-resource-group'
             ? getResourceEntryKeys(getResourceGroupEntriesFromPanel(panel, state, target.dataset.sourceKey))
             : selectedKeys;
-          updateResourceRecords(state, statusKeys, function markSelectedResource(record) {
-            record.status = normalizeResourceStatus(target.dataset.status);
+          if (!statusKeys.length) return;
+          var nextStatus = normalizeResourceStatus(target.dataset.status);
+          var statusLabel = getResourceStatusLabel(nextStatus);
+          var statusEntries = getResourceEntriesByKeys(allEntries, statusKeys);
+          confirmBatchAction({
+            title: '批量标记资源',
+            message: '将把选中的资源统一标记为“' + statusLabel + '”。',
+            confirmText: '标记为' + statusLabel,
+            danger: nextStatus === 'invalid',
+            impacts: [{ label: '资源记录', value: statusKeys.length, note: '状态改为 ' + statusLabel }],
+            items: statusEntries.map(function mapStatusConfirmItem(entry) {
+              return { title: entry.label || entry.url, meta: [entry.sourceTitle, entry.floorLabel, entry.author].filter(Boolean).join(' · ') };
+            }),
+          }, '批量标记选中的资源？').then(function markResourcesAfterConfirm(ok) {
+            if (!ok) return;
+            updateResourceRecords(state, statusKeys, function markSelectedResource(record) {
+              record.status = nextStatus;
+            });
+            saveResourceCenterState(state);
+            renderResourceCenter(panel, state);
           });
-          saveResourceCenterState(state);
-          renderResourceCenter(panel, state);
           return;
         }
         if (action === 'tag-selected-resources') {
@@ -7344,21 +7761,41 @@
         if (action === 'remove-visible-resources') {
           var visibleEntries = visibleEntriesNow;
           if (!visibleEntries.length) return;
-          if (typeof window.confirm === 'function' && !window.confirm('删除当前筛选结果中的资源？')) return;
-          visibleEntries.forEach(function removeVisibleResource(entry) {
-            delete state.resources[entry.key];
-            delete ensureResourceSelection(panelState)[entry.key];
+          confirmBatchAction({
+            title: '删除资源筛选结果',
+            message: '将从资源工作台删除当前筛选结果。',
+            confirmText: '删除筛选',
+            impacts: [{ label: '资源记录', value: visibleEntries.length, note: '不可自动恢复' }],
+            items: visibleEntries.map(function mapVisibleResourceConfirmItem(entry) {
+              return { title: entry.label || entry.url, meta: [entry.sourceTitle, entry.floorLabel, entry.author].filter(Boolean).join(' · ') };
+            }),
+          }, '删除当前筛选结果中的资源？').then(function removeVisibleResourcesAfterConfirm(ok) {
+            if (!ok) return;
+            visibleEntries.forEach(function removeVisibleResource(entry) {
+              delete state.resources[entry.key];
+              delete ensureResourceSelection(panelState)[entry.key];
+            });
+            saveResourceCenterState(state);
+            renderResourceCenter(panel, state);
           });
-          saveResourceCenterState(state);
-          renderResourceCenter(panel, state);
           return;
         }
         if (action === 'clear-resources') {
-          if (typeof window.confirm === 'function' && !window.confirm('清空全部资源库记录？')) return;
-          state.resources = {};
-          panelState.selectedResources = {};
-          saveResourceCenterState(state);
-          renderResourceCenter(panel, state);
+          confirmBatchAction({
+            title: '清空资源工作台',
+            message: '将清空全部本地资源记录，包括备注、标签和处理状态。',
+            confirmText: '清空资源',
+            impacts: [{ label: '资源记录', value: allEntries.length, note: '不可自动恢复' }],
+            items: allEntries.map(function mapClearResourceConfirmItem(entry) {
+              return { title: entry.label || entry.url, meta: entry.sourceTitle || entry.url };
+            }),
+          }, '清空全部资源库记录？').then(function clearResourcesAfterConfirm(ok) {
+            if (!ok) return;
+            state.resources = {};
+            panelState.selectedResources = {};
+            saveResourceCenterState(state);
+            renderResourceCenter(panel, state);
+          });
           return;
         }
 
@@ -7740,6 +8177,13 @@
     return controls;
   }
 
+  function createModuleNavigationTitle(title, count) {
+    var node = createEl('div', 'spx-module-nav-title');
+    node.appendChild(createEl('strong', '', title || '导航中心'));
+    node.appendChild(createEl('span', '', (Number(count) || 0) + ' 项'));
+    return node;
+  }
+
   function getModuleNavigationHost() {
     return qs('#content') || qs('#main') || qs('#wrapA');
   }
@@ -7911,14 +8355,15 @@
     var nav = createEl('nav', 'spx-module-nav');
     nav.id = 'spx-module-nav';
     nav.setAttribute('aria-label', title || '导航中心');
-    nav.appendChild(createEl('div', 'spx-module-nav-title', title || '导航中心'));
+    nav.appendChild(createModuleNavigationTitle(title || '导航中心', visibleConfigs.length));
     nav.appendChild(createModuleNavigationSearch(nav));
     var hasActive = visibleConfigs.some(function hasActiveConfig(config) {
       return !!config.active;
     });
     var state = { index: 0 };
-    var collapseState = loadNavigationCollapseState();
-    buildModuleNavigationTree(visibleConfigs).forEach(function appendGroup(group) {
+    var groups = buildModuleNavigationTree(visibleConfigs);
+    var collapseState = applyInitialModuleNavigationCollapseState(groups, loadNavigationCollapseState());
+    groups.forEach(function appendGroup(group) {
       var groupNode = createEl('div', 'spx-module-nav-group');
       appendModuleNavigationSection(groupNode, group.label, collapseState);
       group.nodes.forEach(function appendNode(node) {
@@ -8704,6 +9149,45 @@
     return '共 ' + count + ' 张预览图';
   }
 
+  function getThreadPreviewStatusChips(info, payload, state) {
+    var chips = [];
+    var tid = parseThreadId(info && info.id);
+    chips.push({ label: tid && isThreadFavoriteSeen(tid) ? '已收藏' : '未收藏', className: tid && isThreadFavoriteSeen(tid) ? 'spx-ok' : '' });
+    chips.push({ label: state && state.watch && state.watch[tid] ? '已稍后' : '未稍后', className: state && state.watch && state.watch[tid] ? 'spx-ok' : '' });
+    getThreadResourceBadges(info, getThreadResourceBadgeIndex(state && state.resources), payload).forEach(function appendPreviewResourceChip(badge) {
+      chips.push({
+        label: badge.label,
+        className: badge.guessed ? 'spx-guess' : 'spx-resource',
+        resourceType: badge.type,
+        title: (badge.guessed ? '标题推测：' : '已识别资源：') + badge.label,
+      });
+    });
+    return chips;
+  }
+
+  function appendThreadPreviewStatusChips(panel, info, payload, state) {
+    var chips = getThreadPreviewStatusChips(info, payload, state);
+    if (!chips.length) return;
+    var row = createEl('div', 'spx-preview-chip-row');
+    chips.forEach(function appendPreviewStatusChip(chip) {
+      var node = chip.resourceType
+        ? createEl('button', 'spx-preview-chip ' + (chip.className || ''), chip.label)
+        : createEl('span', 'spx-preview-chip ' + (chip.className || ''), chip.label);
+      if (chip.title) node.title = chip.title;
+      if (chip.resourceType) {
+        node.type = 'button';
+        node.dataset.spxResourceType = chip.resourceType;
+        node.addEventListener('click', function filterPreviewResource(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          dispatchResourceBadgeFilter(chip.resourceType);
+        });
+      }
+      row.appendChild(node);
+    });
+    panel.appendChild(row);
+  }
+
   function getThreadPreviewHoverDelay(settings) {
     return isNetworkFriendlyMode(settings) ? THREAD_PREVIEW_HOVER_DELAY : THREAD_PREVIEW_FAST_HOVER_DELAY;
   }
@@ -8839,6 +9323,7 @@
     var text = createEl('div', 'spx-preview-text', payload.text || '未提取到文字预览');
     panel.appendChild(title);
     panel.appendChild(meta);
+    appendThreadPreviewStatusChips(panel, info, payload, state);
     appendPreviewActions(panel, info, state, settings);
     panel.appendChild(text);
 
@@ -9375,6 +9860,7 @@
     saveReadProgress(state.progress);
     refreshWatchCenter();
     refreshHistoryCenter();
+    refreshReadThreadSummaryCard();
     return state.progress[tid];
   }
 
@@ -9440,6 +9926,229 @@
       event.preventDefault();
       restoreReadProgress(state, tid, target.dataset.spxReadJump);
     }, true);
+  }
+
+  function getReadPageImageCount(posts) {
+    var count = 0;
+    (posts || []).forEach(function countPostImages(post, postIndex) {
+      var content = qs('.tpc_content', post) || post;
+      qsa('img', content).forEach(function countPreviewCandidate(image) {
+        if (isPreviewImageCandidate({
+          src: image.currentSrc || image.src,
+          naturalWidth: image.naturalWidth,
+          naturalHeight: image.naturalHeight,
+          width: image.width,
+          height: image.height,
+          className: image.className,
+          alt: image.alt,
+          postIndex: postIndex,
+        })) count += 1;
+      });
+    });
+    return count;
+  }
+
+  function getReadSummaryAutoBuyStatus(settings) {
+    if (!settings || !settings.autoBuyPost) return { text: '已关闭', detail: '设置中未开启自动购买', className: 'spx-muted' };
+    var status = document.documentElement && document.documentElement.dataset
+      ? document.documentElement.dataset.spxAutoBuyStatus
+      : '';
+    var labels = {
+      checking: '检查中',
+      skipped: '已跳过',
+      buying: '购买中',
+      done: '已完成',
+      failed: '失败',
+      blocked: '已拦截',
+    };
+    if (status) {
+      return {
+        text: labels[status] || status,
+        detail: '当前页执行状态',
+        className: status === 'done' ? 'spx-ok' : status === 'failed' || status === 'blocked' ? 'spx-danger' : 'spx-warn',
+      };
+    }
+    var target = findAutoBuyTarget(document, location.href);
+    if (target) {
+      return { text: target.price + ' SP', detail: '待自动购买判断', className: 'spx-warn' };
+    }
+    return { text: '无购买项', detail: '当前页未发现付费入口', className: 'spx-ok' };
+  }
+
+  function getReadThreadSummaryData(settings, state, posts, tid, originalAuthor) {
+    state.progress = state.progress || {};
+    state.watch = state.watch || {};
+    var record = tid ? state.progress[tid] : null;
+    var floors = getReadProgressFloorLabels(record);
+    var resources = getCurrentReadResourceRailEntries(posts, state);
+    var resourceSummary = formatResourceRailSummary(resources);
+    var autoBuy = getReadSummaryAutoBuyStatus(settings);
+    return {
+      tid: tid,
+      title: getReadPageTitle(document) || '当前帖子',
+      author: originalAuthor || '',
+      url: location.href.split('#')[0],
+      watched: !!(tid && state.watch[tid]),
+      favorited: isThreadFavoriteSeen(tid),
+      progressText: formatReadProgress(record) || '暂无记录',
+      progressPercent: getReadProgressPercent(record),
+      lastFloor: floors.last || '暂无',
+      nextFloor: floors.next || floors.last || '暂无',
+      resources: resources,
+      resourceSummary: resourceSummary,
+      imageCount: getReadPageImageCount(posts),
+      autoBuy: autoBuy,
+    };
+  }
+
+  function createReadSummaryMetric(label, value, note, className) {
+    var metric = createEl('div', 'spx-read-summary-metric' + (className ? ' ' + className : ''));
+    metric.appendChild(createEl('b', '', String(value)));
+    metric.appendChild(createEl('span', '', label));
+    if (note) metric.appendChild(createEl('em', '', note));
+    return metric;
+  }
+
+  function createReadSummaryAction(action, text, primary) {
+    var button = createEl('button', primary ? 'spx-primary' : '', text);
+    button.type = 'button';
+    button.dataset.spxReadSummaryAction = action;
+    return button;
+  }
+
+  function setReadSummaryWatchState(data, state) {
+    if (!data || !data.tid || !state) return;
+    state.watch = state.watch || {};
+    if (state.watch[data.tid]) {
+      delete state.watch[data.tid];
+    } else {
+      state.watch[data.tid] = {
+        title: data.title,
+        url: data.url,
+        savedAt: Date.now(),
+      };
+    }
+    saveMap(WATCH_KEY, state.watch);
+    refreshWatchCenter();
+  }
+
+  function openReadSummaryResourceCenter(settings, state) {
+    var panel = createResourceCenterPanel(settings, state || { resources: loadResourceLibrary() });
+    setCenterPanelHidden(panel, false, '[data-spx-resource-center-button="1"]');
+  }
+
+  function renderReadThreadSummaryCard(card, settings, state, posts, tid, originalAuthor) {
+    var data = getReadThreadSummaryData(settings, state, posts, tid, originalAuthor);
+    card.textContent = '';
+    card.dataset.spxReadTid = data.tid || '';
+    card.spxSummaryData = data;
+
+    var head = createEl('div', 'spx-read-summary-head');
+    var copy = createEl('div', 'spx-read-summary-copy');
+    copy.appendChild(createEl('div', 'spx-read-summary-eyebrow', '帖子详情摘要'));
+    copy.appendChild(createEl('h3', '', data.title));
+    copy.appendChild(createEl('p', '', [data.author ? ('楼主 ' + data.author) : '', data.tid ? ('TID ' + data.tid) : ''].filter(Boolean).join(' · ') || '当前阅读页'));
+    head.appendChild(copy);
+    var chips = createEl('div', 'spx-read-summary-chips');
+    chips.appendChild(createEl('span', data.favorited ? 'spx-chip spx-ok' : 'spx-chip', data.favorited ? '已收藏' : '未收藏'));
+    chips.appendChild(createEl('span', data.watched ? 'spx-chip spx-ok' : 'spx-chip', data.watched ? '已稍后' : '未稍后'));
+    chips.appendChild(createEl('span', 'spx-chip ' + data.autoBuy.className, '自动购买 ' + data.autoBuy.text));
+    head.appendChild(chips);
+    card.appendChild(head);
+
+    var progress = createEl('div', 'spx-read-summary-progress');
+    progress.appendChild(createEl('span', '', '阅读进度 ' + data.progressText));
+    var track = createEl('div', 'spx-read-summary-track');
+    var bar = createEl('i');
+    bar.style.width = Math.max(0, Math.min(100, data.progressPercent)) + '%';
+    track.appendChild(bar);
+    progress.appendChild(track);
+    card.appendChild(progress);
+
+    var metrics = createEl('div', 'spx-read-summary-metrics');
+    metrics.appendChild(createReadSummaryMetric('未读楼层', data.nextFloor, '继续阅读位置'));
+    metrics.appendChild(createReadSummaryMetric('上次楼层', data.lastFloor, '最近停留位置'));
+    metrics.appendChild(createReadSummaryMetric('资源', data.resourceSummary.total, formatResourceRailSummaryText(data.resources)));
+    metrics.appendChild(createReadSummaryMetric('图片', data.imageCount, data.imageCount ? '正文可预览图片' : '暂无正文图片'));
+    metrics.appendChild(createReadSummaryMetric('自动购买', data.autoBuy.text, data.autoBuy.detail, data.autoBuy.className));
+    card.appendChild(metrics);
+
+    var actions = createEl('div', 'spx-read-summary-actions');
+    if (data.tid) {
+      var continueButton = createReadSummaryAction('continue', '继续阅读', true);
+      var lastButton = createReadSummaryAction('last', '上次楼层', false);
+      continueButton.disabled = !state.progress || !state.progress[data.tid];
+      lastButton.disabled = !state.progress || !state.progress[data.tid];
+      actions.appendChild(continueButton);
+      actions.appendChild(lastButton);
+      actions.appendChild(createReadSummaryAction('watch', data.watched ? '取消稍后' : '加入稍后', false));
+      var favoriteButton = createReadSummaryAction('favorite', data.favorited ? '已收藏' : '收藏', false);
+      favoriteButton.disabled = data.favorited;
+      actions.appendChild(favoriteButton);
+    }
+    actions.appendChild(createReadSummaryAction('resources', '资源工作台', false));
+    card.appendChild(actions);
+  }
+
+  function refreshReadThreadSummaryCard() {
+    var card = qs('#spx-read-summary-card');
+    if (!card || !readSummaryContext.tid) return;
+    renderReadThreadSummaryCard(
+      card,
+      readSummaryContext.settings,
+      readSummaryContext.state,
+      readSummaryContext.posts || [],
+      readSummaryContext.tid,
+      readSummaryContext.originalAuthor
+    );
+  }
+
+  function createReadThreadSummaryCard(settings, state, posts, tid, originalAuthor) {
+    if (!document.body || !tid) return null;
+    var existing = qs('#spx-read-summary-card');
+    if (existing) existing.remove();
+    var card = createEl('section', 'spx-read-summary-card');
+    card.id = 'spx-read-summary-card';
+    readSummaryContext = { settings: settings, state: state, posts: posts || [], tid: tid, originalAuthor: originalAuthor || '' };
+    renderReadThreadSummaryCard(card, settings, state, posts || [], tid, originalAuthor || '');
+    card.addEventListener('click', function handleReadSummaryClick(event) {
+      var target = event.target && event.target.closest
+        ? event.target.closest('[data-spx-read-summary-action]')
+        : null;
+      if (!target || !card.contains(target)) return;
+      var action = target.dataset.spxReadSummaryAction;
+      var data = card.spxSummaryData || getReadThreadSummaryData(settings, state, posts, tid, originalAuthor);
+      if (action === 'continue') {
+        restoreReadProgress(state, tid, 'next');
+        return;
+      }
+      if (action === 'last') {
+        restoreReadProgress(state, tid, 'last');
+        return;
+      }
+      if (action === 'watch') {
+        setReadSummaryWatchState(data, state);
+        refreshReadThreadSummaryCard();
+        return;
+      }
+      if (action === 'favorite') {
+        runThreadFavoriteAction(createReadPageFavoriteInfo(tid, data.title, data.author, data.url), settings, state, target, '已收藏');
+        window.setTimeout(refreshReadThreadSummaryCard, 900);
+        return;
+      }
+      if (action === 'resources') {
+        openReadSummaryResourceCenter(settings, state);
+      }
+    });
+
+    var firstPost = posts && posts[0];
+    if (firstPost && firstPost.parentNode) {
+      firstPost.parentNode.insertBefore(card, firstPost);
+    } else {
+      var host = qs('#content') || qs('#main') || document.body;
+      host.insertBefore(card, host.firstChild || null);
+    }
+    return card;
   }
 
   function bindReadProgressTracking(state, tid) {
@@ -10125,6 +10834,7 @@
     var posts = qsa('table.js-post');
     var originalAuthor = posts.length ? getPostAuthor(posts[0]) : '';
     bindNativeReadFavoriteSync(settings, state, tid, originalAuthor);
+    createReadThreadSummaryCard(settings, state, posts, tid, originalAuthor);
 
     posts.forEach(function enhancePost(post, index) {
       var author = getPostAuthor(post);
@@ -12884,6 +13594,19 @@
       '</select></label>',
       '</section>',
     ];
+    var presetDefinitions = getSettingsPresetDefinitions();
+    var presetControls = [
+      '<section class="spx-settings-section spx-settings-presets">',
+      '<h4>配置预设</h4>',
+      '<div class="spx-help">按使用场景批量切换本地设置，不覆盖收藏、稍后看、资源和阅读进度。</div>',
+      '<div class="spx-preset-tabs">',
+    ].concat(Object.keys(presetDefinitions).map(function renderPresetButton(key) {
+      var preset = presetDefinitions[key];
+      return '<button type="button" data-action="apply-settings-preset" data-preset="' + key + '" title="' + preset.description + '">' + preset.label + '</button>';
+    }), [
+      '</div>',
+      '</section>',
+    ]);
 
     panel = createEl('div', 'spx-settings');
     panel.id = 'spx-settings';
@@ -12894,7 +13617,7 @@
       '<p class="spx-settings-subtitle">按场景分组管理阅读、列表、购买和本地数据。</p>',
       '</div>',
       '<div class="spx-settings-body">',
-    ].concat(readingControls, listControls, networkControls, navigationControls, autoBuyControls, [
+    ].concat(presetControls, readingControls, listControls, networkControls, navigationControls, autoBuyControls, [
       '<section class="spx-settings-section">',
       '<h4>本地屏蔽</h4>',
       '<div class="spx-help">标题和作者关键词每行一个，保存后立即应用到当前页面。</div>',
@@ -13066,10 +13789,17 @@
         renderDataHealthPanel('暂无重复或过期数据需要清理。');
         return;
       }
-      if (typeof window.confirm === 'function' && !window.confirm('将清理重复稍后看、重复/过期阅读进度和异常记录，确认继续？')) return;
-      var done = applyBackupPayload(cleanup.payload, settings, state);
-      renderDataHealthPanel(done ? '已清理 ' + cleanup.before.cleanupCount + ' 项数据。' : '清理失败。');
-      setTemporaryButtonText(button, done ? '已清理' : '清理失败');
+      confirmBatchAction({
+        title: '清理本地数据',
+        message: '将清理重复稍后看、重复 / 过期阅读进度和异常记录。',
+        confirmText: '清理数据',
+        impacts: [{ label: '待清理项目', value: cleanup.before.cleanupCount, note: '按健康检查结果处理' }],
+      }, '将清理重复稍后看、重复/过期阅读进度和异常记录，确认继续？').then(function cleanupAfterConfirm(ok) {
+        if (!ok) return;
+        var done = applyBackupPayload(cleanup.payload, settings, state);
+        renderDataHealthPanel(done ? '已清理 ' + cleanup.before.cleanupCount + ' 项数据。' : '清理失败。');
+        setTemporaryButtonText(button, done ? '已清理' : '清理失败');
+      });
     }
 
     panel.addEventListener('click', function handleSettingsClick(event) {
@@ -13099,27 +13829,70 @@
       if (action === 'cleanup-data-health') {
         applyDataHealthCleanup(event.target);
       }
-      if (action === 'clear-read') {
-        state.read = {};
-        saveMap(READ_KEY, state.read);
+      if (action === 'apply-settings-preset') {
+        var presetKey = event.target.dataset.preset;
+        Object.assign(settings, applySettingsPreset(settings, presetKey));
+        saveSettings(settings);
+        syncForm();
         enhanceAll(settings, state);
-        setTemporaryButtonText(event.target, '已清空已读');
+        setTemporaryButtonText(event.target, '已应用');
+      }
+      if (action === 'clear-read') {
+        var readCount = Object.keys((state && state.read) || {}).length;
+        confirmBatchAction({
+          title: '清空已读记录',
+          message: '将清空本地已读主题标记。',
+          confirmText: '清空已读',
+          impacts: [{ label: '已读主题', value: readCount, note: '影响列表未读筛选' }],
+        }, '清空全部已读记录？').then(function clearReadAfterConfirm(ok) {
+          if (!ok) return;
+          state.read = {};
+          saveMap(READ_KEY, state.read);
+          enhanceAll(settings, state);
+          setTemporaryButtonText(event.target, '已清空已读');
+        });
       }
       if (action === 'clear-progress') {
-        state.progress = {};
-        saveReadProgress(state.progress);
-        clearReadProgressRestoreRequest(parseThreadId(location.href));
-        refreshWatchCenter();
-        refreshHistoryCenter();
-        setTemporaryButtonText(event.target, '已清空阅读进度');
+        var progressEntries = getHistoryCenterEntries(state.progress);
+        confirmBatchAction({
+          title: '清空阅读进度',
+          message: '将清空全部阅读进度、楼层位置和最近浏览。',
+          confirmText: '清空进度',
+          impacts: [{ label: '阅读记录', value: progressEntries.length, note: '影响继续阅读' }],
+          items: progressEntries.map(function mapProgressConfirmItem(entry) {
+            return { title: entry.title, meta: entry.progressText || entry.url };
+          }),
+        }, '清空全部阅读进度？').then(function clearProgressAfterConfirm(ok) {
+          if (!ok) return;
+          state.progress = {};
+          saveReadProgress(state.progress);
+          clearReadProgressRestoreRequest(parseThreadId(location.href));
+          refreshWatchCenter();
+          refreshHistoryCenter();
+          refreshReadThreadSummaryCard();
+          setTemporaryButtonText(event.target, '已清空阅读进度');
+        });
       }
       if (action === 'clear-auto-buy') {
-        saveAutoBuyAttempts({});
-        delete document.documentElement.dataset.spxAutoBuyStatus;
-        var autoBuyStatus = qs('#spx-auto-buy-status');
-        if (autoBuyStatus) autoBuyStatus.remove();
-        refreshAutoBuyCenter();
-        setTemporaryButtonText(event.target, '已清空购买记录');
+        var autoBuyEntries = getAutoBuyCenterEntries(loadAutoBuyAttempts());
+        confirmBatchAction({
+          title: '清空自动购买记录',
+          message: '将清空全部自动购买执行记录。',
+          confirmText: '清空购买记录',
+          impacts: [{ label: '购买记录', value: autoBuyEntries.length, note: '可能影响重复购买拦截' }],
+          items: autoBuyEntries.map(function mapSettingsAutoBuyConfirmItem(entry) {
+            return { title: entry.key, meta: entry.statusLabel };
+          }),
+        }, '清空全部自动购买记录？').then(function clearAutoBuySettingsAfterConfirm(ok) {
+          if (!ok) return;
+          saveAutoBuyAttempts({});
+          delete document.documentElement.dataset.spxAutoBuyStatus;
+          var autoBuyStatus = qs('#spx-auto-buy-status');
+          if (autoBuyStatus) autoBuyStatus.remove();
+          refreshAutoBuyCenter();
+          refreshReadThreadSummaryCard();
+          setTemporaryButtonText(event.target, '已清空购买记录');
+        });
       }
     });
 
@@ -13220,6 +13993,18 @@
 
   function getToolbarCenterConfigs() {
     return [
+      {
+        show: true,
+        group: '我的中心',
+        text: '合',
+        label: '我的内容',
+        title: '打开我的内容中心',
+        description: '汇总收藏、稍后看、阅读进度、资源和购买记录',
+        panelId: 'spx-content-center',
+        buttonDataset: 'spxContentCenterButton',
+        buttonSelector: '[data-spx-content-center-button="1"]',
+        createPanel: createMyContentCenterPanel,
+      },
       {
         show: true,
         group: '我的中心',
@@ -14702,6 +15487,11 @@
     formatResourceJumpSummary: formatResourceJumpSummary,
     normalizeResourceTags: normalizeResourceTags,
     formatResourceTags: formatResourceTags,
+    getSettingsPresetDefinitions: getSettingsPresetDefinitions,
+    applySettingsPreset: applySettingsPreset,
+    normalizeBatchConfirmItems: normalizeBatchConfirmItems,
+    showBatchConfirmDialog: showBatchConfirmDialog,
+    confirmBatchAction: confirmBatchAction,
     pruneResourceLibrary: pruneResourceLibrary,
     saveResourceLinksToLibrary: saveResourceLinksToLibrary,
     getResourceCenterEntries: getResourceCenterEntries,
@@ -14790,6 +15580,7 @@
     getThreadPreviewMetaText: getThreadPreviewMetaText,
     getThreadPreviewImageUrls: getThreadPreviewImageUrls,
     getThreadPreviewImageSummary: getThreadPreviewImageSummary,
+    getThreadPreviewStatusChips: getThreadPreviewStatusChips,
     getThreadPreviewHoverDelay: getThreadPreviewHoverDelay,
     createQuickReplyRequest: createQuickReplyRequest,
     getQuickReplyAttachmentFiles: getQuickReplyAttachmentFiles,

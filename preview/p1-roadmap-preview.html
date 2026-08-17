@@ -1,0 +1,1158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SouthPlus Lite 0.5.0 P1 预览</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #eef3f7;
+      --surface: #ffffff;
+      --surface-soft: #f8fafc;
+      --surface-warm: #fff8ed;
+      --ink: #172033;
+      --muted: #647083;
+      --line: #d6dee9;
+      --line-soft: #e7edf4;
+      --accent: #0f766e;
+      --accent-strong: #0b5f59;
+      --accent-soft: #d9f4ef;
+      --blue: #2563eb;
+      --blue-soft: #dbeafe;
+      --amber: #b45309;
+      --amber-soft: #ffedd5;
+      --rose: #be123c;
+      --rose-soft: #ffe4e6;
+      --green: #15803d;
+      --green-soft: #dcfce7;
+      --shadow: 0 16px 42px rgba(17, 24, 39, .12);
+      --radius: 8px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--page);
+      color: var(--ink);
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    button,
+    input,
+    select { font: inherit; }
+
+    .board {
+      width: min(1560px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 26px 0 48px;
+    }
+
+    .topline {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 22px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p { margin: 0; }
+
+    h1 {
+      color: #101828;
+      font-size: 24px;
+      line-height: 1.24;
+      letter-spacing: 0;
+    }
+
+    .topline p {
+      max-width: 860px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .legend {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .pill,
+    .chip,
+    .status {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 26px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .pill.teal,
+    .chip.teal,
+    .status.teal { border-color: #99d6cb; background: var(--accent-soft); color: var(--accent-strong); }
+    .pill.blue,
+    .chip.blue,
+    .status.blue { border-color: #bfdbfe; background: var(--blue-soft); color: #1d4ed8; }
+    .pill.amber,
+    .chip.amber,
+    .status.amber { border-color: #fed7aa; background: var(--amber-soft); color: var(--amber); }
+    .pill.rose,
+    .chip.rose,
+    .status.rose { border-color: #fecdd3; background: var(--rose-soft); color: var(--rose); }
+    .pill.green,
+    .chip.green,
+    .status.green { border-color: #bbf7d0; background: var(--green-soft); color: var(--green); }
+
+    .preview-shell {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #f4f7fb;
+      box-shadow: 0 18px 46px rgba(15, 23, 42, .10);
+    }
+
+    .browser-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 36px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, .78);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ef4444;
+    }
+
+    .dot:nth-child(2) { background: #f59e0b; }
+    .dot:nth-child(3) { background: #22c55e; }
+
+    .url {
+      min-width: 0;
+      margin-left: 8px;
+      padding: 3px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .site {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr) 340px;
+      min-height: 860px;
+    }
+
+    .side-nav {
+      padding: 16px 12px;
+      border-right: 1px solid var(--line);
+      background: #f8fafc;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 14px;
+      color: #111827;
+      font-size: 18px;
+      font-weight: 950;
+    }
+
+    .brand-mark {
+      display: inline-flex;
+      width: 28px;
+      height: 28px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: #111827;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .nav-search {
+      width: 100%;
+      height: 34px;
+      margin-bottom: 13px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      color: var(--ink);
+      outline: none;
+    }
+
+    .nav-section {
+      margin-top: 12px;
+      border-top: 1px solid var(--line-soft);
+      padding-top: 10px;
+    }
+
+    .nav-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 26px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .nav-count {
+      color: #98a2b3;
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .nav-list {
+      display: grid;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 34px;
+      padding: 7px 9px;
+      border-radius: var(--radius);
+      color: #344054;
+      text-decoration: none;
+      font-weight: 850;
+    }
+
+    .nav-item.active {
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+    }
+
+    .nav-item.muted {
+      color: #98a2b3;
+    }
+
+    .nav-icon {
+      display: inline-flex;
+      width: 18px;
+      height: 18px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 5px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: #667085;
+      font-size: 11px;
+      line-height: 1;
+    }
+
+    .content {
+      min-width: 0;
+      padding: 18px;
+      background: #edf2f7;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+
+    .toolbar-title {
+      min-width: 0;
+    }
+
+    .toolbar-title strong {
+      display: block;
+      color: #111827;
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    .toolbar-title span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .toolbar-actions,
+    .inline-actions,
+    .button-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .button,
+    .ghost-button,
+    .danger-button {
+      min-height: 32px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      color: #344054;
+      font-weight: 900;
+      cursor: default;
+      white-space: nowrap;
+    }
+
+    .button {
+      border-color: #9bd2c8;
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .danger-button {
+      border-color: #fda4af;
+      background: #fff1f2;
+      color: var(--rose);
+    }
+
+    .thread-summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(260px, .9fr);
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .summary-card,
+    .post-card,
+    .info-panel,
+    .preset-panel,
+    .confirm-panel {
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 8px 22px rgba(15, 23, 42, .05);
+    }
+
+    .summary-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      padding: 14px;
+    }
+
+    .summary-main h2 {
+      margin-bottom: 8px;
+      font-size: 17px;
+      line-height: 1.3;
+      letter-spacing: 0;
+    }
+
+    .summary-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .summary-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 9px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: #f8fafc;
+    }
+
+    .metric strong {
+      display: block;
+      color: #101828;
+      font-size: 16px;
+      line-height: 1.2;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .progress-box {
+      width: 170px;
+      padding: 12px;
+      border: 1px solid #c7e7e1;
+      border-radius: var(--radius);
+      background: #effaf7;
+    }
+
+    .progress-box strong {
+      display: block;
+      color: var(--accent-strong);
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .progress-track {
+      height: 8px;
+      margin: 10px 0 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #d1e9e2;
+    }
+
+    .progress-fill {
+      display: block;
+      width: 68%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+    }
+
+    .progress-box span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .status-strip {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .read-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 270px;
+      gap: 12px;
+    }
+
+    .post-card {
+      padding: 14px;
+    }
+
+    .post-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .post-body p {
+      margin: 0 0 10px;
+      color: #344054;
+    }
+
+    .image-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .image-tile,
+    .preview-image,
+    .thumb {
+      display: block;
+      min-height: 96px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(135deg, rgba(15, 118, 110, .20), rgba(37, 99, 235, .12)),
+        linear-gradient(45deg, #f8fafc 25%, #dbe4ee 25%, #dbe4ee 50%, #f8fafc 50%, #f8fafc 75%, #dbe4ee 75%);
+      background-size: auto, 18px 18px;
+    }
+
+    .image-tile:nth-child(2),
+    .preview-image.tone-b,
+    .thumb.tone-b {
+      background:
+        linear-gradient(135deg, rgba(180, 83, 9, .20), rgba(21, 128, 61, .14)),
+        linear-gradient(45deg, #fff7ed 25%, #fed7aa 25%, #fed7aa 50%, #fff7ed 50%, #fff7ed 75%, #fed7aa 75%);
+      background-size: auto, 18px 18px;
+    }
+
+    .image-tile:nth-child(3),
+    .preview-image.tone-c,
+    .thumb.tone-c {
+      background:
+        linear-gradient(135deg, rgba(190, 18, 60, .16), rgba(37, 99, 235, .14)),
+        linear-gradient(45deg, #fff1f2 25%, #fecdd3 25%, #fecdd3 50%, #fff1f2 50%, #fff1f2 75%, #fecdd3 75%);
+      background-size: auto, 18px 18px;
+    }
+
+    .info-panel {
+      padding: 12px;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .panel-title strong {
+      color: #101828;
+      font-size: 15px;
+      font-weight: 950;
+    }
+
+    .resource-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .resource-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 8px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: #f8fafc;
+    }
+
+    .resource-row strong {
+      min-width: 0;
+      overflow: hidden;
+      color: #344054;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .preview-popover {
+      position: absolute;
+      left: 370px;
+      top: 354px;
+      z-index: 4;
+      width: 410px;
+      overflow: hidden;
+      border: 1px solid #bdd7ef;
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .preview-popover::before {
+      content: "";
+      position: absolute;
+      left: 28px;
+      top: -8px;
+      width: 14px;
+      height: 14px;
+      border-left: 1px solid #bdd7ef;
+      border-top: 1px solid #bdd7ef;
+      background: #fff;
+      transform: rotate(45deg);
+    }
+
+    .preview-head {
+      padding: 12px 12px 10px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .preview-head h3 {
+      margin-bottom: 8px;
+      color: #101828;
+      font-size: 15px;
+      line-height: 1.35;
+    }
+
+    .preview-body {
+      padding: 12px;
+    }
+
+    .preview-text {
+      color: #475467;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .preview-images {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 10px 0;
+    }
+
+    .preview-image {
+      min-height: 74px;
+    }
+
+    .right-rail {
+      min-width: 0;
+      padding: 18px 14px;
+      border-left: 1px solid var(--line);
+      background: #f8fafc;
+    }
+
+    .rail-stack {
+      display: grid;
+      gap: 12px;
+      position: sticky;
+      top: 14px;
+    }
+
+    .preset-panel,
+    .confirm-panel {
+      padding: 12px;
+    }
+
+    .preset-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin-bottom: 10px;
+      padding: 4px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: #f1f5f9;
+    }
+
+    .preset-tabs button {
+      min-height: 30px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .preset-tabs button.active {
+      background: #fff;
+      color: var(--accent-strong);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, .08);
+    }
+
+    .toggle-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .toggle-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 34px;
+      padding: 7px 8px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: #fff;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .switch {
+      position: relative;
+      flex: 0 0 auto;
+      width: 36px;
+      height: 20px;
+      border-radius: 999px;
+      background: #d0d5dd;
+    }
+
+    .switch::after {
+      content: "";
+      position: absolute;
+      left: 3px;
+      top: 3px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, .24);
+    }
+
+    .switch.on {
+      background: var(--accent);
+    }
+
+    .switch.on::after {
+      left: 19px;
+    }
+
+    .confirm-list {
+      display: grid;
+      gap: 8px;
+      margin: 10px 0;
+    }
+
+    .confirm-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 8px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+
+    .confirm-row strong {
+      overflow: hidden;
+      color: #344054;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .small-note {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .compact-card {
+      padding: 10px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+
+    .compact-card + .compact-card { margin-top: 8px; }
+
+    .compact-card strong {
+      display: block;
+      margin-bottom: 6px;
+      color: #101828;
+      font-size: 13px;
+    }
+
+    .thumb-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .thumb {
+      min-height: 46px;
+    }
+
+    .modal-backdrop {
+      position: absolute;
+      inset: 36px 340px 0 220px;
+      z-index: 3;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 0 18px 22px;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0), rgba(15, 23, 42, .12));
+      pointer-events: none;
+    }
+
+    .batch-modal {
+      width: min(680px, 100%);
+      overflow: hidden;
+      border: 1px solid #cfd8e3;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .batch-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .batch-head strong {
+      color: #101828;
+      font-size: 16px;
+    }
+
+    .batch-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 210px;
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .impact-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .impact {
+      padding: 9px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: #f8fafc;
+    }
+
+    .impact strong {
+      display: block;
+      color: #101828;
+      font-size: 17px;
+      line-height: 1.2;
+    }
+
+    .impact span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .affected-list {
+      display: grid;
+      gap: 7px;
+    }
+
+    .affected-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 8px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: #fff;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .affected-row span:nth-child(2) {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .batch-side {
+      padding: 10px;
+      border: 1px solid #fed7aa;
+      border-radius: var(--radius);
+      background: #fff8ed;
+    }
+
+    .batch-side strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--amber);
+      font-size: 13px;
+    }
+
+    .batch-foot {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px 14px;
+      border-top: 1px solid var(--line-soft);
+      background: #f8fafc;
+    }
+
+    @media (max-width: 1180px) {
+      .site { grid-template-columns: 190px minmax(0, 1fr); }
+      .right-rail { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
+      .rail-stack { position: static; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .modal-backdrop { inset: 36px 0 260px 190px; }
+      .preview-popover { left: 300px; }
+    }
+
+    @media (max-width: 860px) {
+      .board { width: min(100vw - 20px, 760px); padding-top: 18px; }
+      .topline { grid-template-columns: 1fr; align-items: start; }
+      .legend { justify-content: flex-start; }
+      .site { grid-template-columns: 1fr; }
+      .side-nav { border-right: 0; border-bottom: 1px solid var(--line); }
+      .nav-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .thread-summary,
+      .read-layout,
+      .batch-body { grid-template-columns: 1fr; }
+      .summary-card { grid-template-columns: 1fr; }
+      .progress-box { width: 100%; }
+      .summary-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .rail-stack { grid-template-columns: 1fr; }
+      .right-rail { padding: 14px; }
+      .modal-backdrop { position: static; padding: 14px; background: transparent; }
+      .preview-popover { position: static; width: auto; margin-top: 12px; }
+      .preview-popover::before { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="board">
+    <section class="topline">
+      <div>
+        <h1>SouthPlus Lite 0.5.0 P1 交互预览</h1>
+        <p>把 P1 的五个建议需求放在同一个真实使用场景里：阅读页顶部摘要、悬停预览升级、批量操作确认、导航中心瘦身和配置预设。</p>
+      </div>
+      <div class="legend" aria-label="预览范围">
+        <span class="pill teal">阅读状态</span>
+        <span class="pill blue">预览弹层</span>
+        <span class="pill amber">批量确认</span>
+        <span class="pill green">配置预设</span>
+      </div>
+    </section>
+
+    <section class="preview-shell" aria-label="P1 预览看板">
+      <div class="browser-bar">
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="url">https://south-plus.org/read.php?tid-505050.html · 0.5.0 P1 preview</span>
+      </div>
+
+      <div class="site">
+        <aside class="side-nav" aria-label="瘦身后的导航中心">
+          <div class="brand"><span class="brand-mark">SP</span><span>导航中心</span></div>
+          <input class="nav-search" value="资源" aria-label="搜索导航" readonly>
+
+          <section class="nav-section">
+            <div class="nav-head"><span>置顶导航</span><span class="nav-count">3</span></div>
+            <div class="nav-list">
+              <a class="nav-item active" href="#"><span>资源工作台</span><span class="nav-icon">1</span></a>
+              <a class="nav-item" href="#"><span>我的内容</span><span class="nav-icon">2</span></a>
+              <a class="nav-item" href="#"><span>综合交流</span><span class="nav-icon">3</span></a>
+            </div>
+          </section>
+
+          <section class="nav-section">
+            <div class="nav-head"><span>当前页面</span><span class="nav-count">展开</span></div>
+            <div class="nav-list">
+              <a class="nav-item" href="#"><span>帖子摘要</span><span class="nav-icon">卡</span></a>
+              <a class="nav-item" href="#"><span>本页资源</span><span class="nav-icon">源</span></a>
+              <a class="nav-item" href="#"><span>预览图片</span><span class="nav-icon">图</span></a>
+            </div>
+          </section>
+
+          <section class="nav-section">
+            <div class="nav-head"><span>版块导航</span><span class="nav-count">收起</span></div>
+            <div class="nav-list">
+              <a class="nav-item muted" href="#"><span>茶馆</span><span class="nav-icon">+</span></a>
+              <a class="nav-item muted" href="#"><span>图墙模式</span><span class="nav-icon">+</span></a>
+            </div>
+          </section>
+        </aside>
+
+        <section class="content" aria-label="阅读页主内容">
+          <div class="toolbar">
+            <div class="toolbar-title">
+              <strong>资源整理示例帖：预览、收藏与处理状态联动</strong>
+              <span>作者 demoUser · 2026-08-15 · 第 1 页 · 已同步本地状态</span>
+            </div>
+            <div class="toolbar-actions">
+              <button class="ghost-button">稍后</button>
+              <button class="button">已收藏</button>
+              <button class="ghost-button">资源</button>
+            </div>
+          </div>
+
+          <section class="thread-summary" aria-label="帖子详情摘要卡">
+            <div class="summary-card">
+              <div class="summary-main">
+                <h2>帖子详情摘要卡</h2>
+                <div class="summary-meta">
+                  <span>收藏于 2 天前</span>
+                  <span>稍后看未完成</span>
+                  <span>资源已保存 6 条</span>
+                  <span>图片 24 张</span>
+                </div>
+                <div class="summary-metrics">
+                  <div class="metric"><strong>68%</strong><span>阅读进度</span></div>
+                  <div class="metric"><strong>12F</strong><span>上次楼层</span></div>
+                  <div class="metric"><strong>6</strong><span>资源数量</span></div>
+                  <div class="metric"><strong>4</strong><span>待处理</span></div>
+                </div>
+                <div class="status-strip">
+                  <span class="status teal">已加入稍后</span>
+                  <span class="status blue">站内已收藏</span>
+                  <span class="status amber">自动购买已跳过</span>
+                  <span class="status green">资源队列可复制</span>
+                </div>
+              </div>
+              <aside class="progress-box">
+                <strong>继续阅读</strong>
+                <div class="progress-track"><span class="progress-fill"></span></div>
+                <span>跳到第 12 楼 · 68%</span>
+              </aside>
+            </div>
+
+            <div class="info-panel">
+              <div class="panel-title">
+                <strong>本帖资源</strong>
+                <span class="chip amber">待处理 4</span>
+              </div>
+              <div class="resource-list">
+                <div class="resource-row"><span class="chip blue">百度</span><strong>合集网盘 · 提取码已识别</strong><span class="chip amber">待下载</span></div>
+                <div class="resource-row"><span class="chip teal">磁力</span><strong>magnet:?xt=urn:btih...</strong><span class="chip green">已复制</span></div>
+                <div class="resource-row"><span class="chip rose">压缩包</span><strong>解压码在 3 楼</strong><span class="chip amber">待确认</span></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="read-layout">
+            <article class="post-card">
+              <div class="post-head"><span>#1 楼主 · demoUser</span><span>正文图片与资源已完成轻量扫描</span></div>
+              <div class="post-body">
+                <p>阅读页保留原正文结构，顶部摘要只补充本地状态和下一步操作。用户不需要分别打开稍后看、收藏和资源工作台确认当前帖子状态。</p>
+                <p>悬停列表标题时，预览弹层会提前展示资源类型、首批图片、收藏状态和稍后状态，降低误点进帖子的概率。</p>
+                <div class="image-grid" aria-label="正文图片占位">
+                  <span class="image-tile"></span>
+                  <span class="image-tile"></span>
+                  <span class="image-tile"></span>
+                </div>
+              </div>
+            </article>
+
+            <aside class="info-panel">
+              <div class="panel-title"><strong>图片摘要</strong><span class="chip blue">24 张</span></div>
+              <div class="compact-card">
+                <strong>预览图集</strong>
+                <p class="small-note">默认收起，展开后保留下载全部、只看大图和楼层筛选。</p>
+                <div class="thumb-row"><span class="thumb"></span><span class="thumb tone-b"></span><span class="thumb tone-c"></span><span class="thumb"></span></div>
+              </div>
+              <div class="compact-card">
+                <strong>快捷动作</strong>
+                <div class="button-row"><button class="ghost-button">复制图链</button><button class="ghost-button">下载全部</button></div>
+              </div>
+            </aside>
+          </section>
+
+          <section class="preview-popover" aria-label="升级后的悬停预览弹层">
+            <div class="preview-head">
+              <h3>悬停预览升级：资源、图片和收藏状态一次展示</h3>
+              <div class="status-strip">
+                <span class="status blue">已收藏</span>
+                <span class="status teal">稍后看</span>
+                <span class="status amber">百度 2</span>
+                <span class="status green">磁力 1</span>
+              </div>
+            </div>
+            <div class="preview-body">
+              <p class="preview-text">读取首段正文和首批图片，不立即请求全部图片；用户可直接收藏、稍后、复制链接或打开帖子。</p>
+              <div class="preview-images"><span class="preview-image"></span><span class="preview-image tone-b"></span><span class="preview-image tone-c"></span></div>
+              <div class="button-row"><button class="button">打开帖子</button><button class="ghost-button">加入稍后</button><button class="ghost-button">复制链接</button></div>
+            </div>
+          </section>
+
+          <div class="modal-backdrop" aria-label="批量操作确认层预览">
+            <section class="batch-modal">
+              <div class="batch-head">
+                <strong>批量操作确认层</strong>
+                <span class="chip rose">将影响 18 条记录</span>
+              </div>
+              <div class="batch-body">
+                <div>
+                  <div class="impact-grid">
+                    <div class="impact"><strong>12</strong><span>站内收藏</span></div>
+                    <div class="impact"><strong>6</strong><span>本地稍后</span></div>
+                    <div class="impact"><strong>4</strong><span>资源状态</span></div>
+                  </div>
+                  <div class="affected-list">
+                    <div class="affected-row"><span class="chip blue">收藏</span><span>资源整理示例帖</span><span>删除</span></div>
+                    <div class="affected-row"><span class="chip teal">稍后</span><span>阅读到第 12 楼的主题</span><span>移除</span></div>
+                    <div class="affected-row"><span class="chip amber">资源</span><span>待下载队列中的 4 条资源</span><span>标记完成</span></div>
+                  </div>
+                </div>
+                <aside class="batch-side">
+                  <strong>执行前预览影响</strong>
+                  <p class="small-note">高风险批量操作先展示数量、来源和不可逆范围，确认后才提交原站请求或改写本地数据。</p>
+                </aside>
+              </div>
+              <div class="batch-foot"><button class="ghost-button">取消</button><button class="danger-button">确认执行</button></div>
+            </section>
+          </div>
+        </section>
+
+        <aside class="right-rail" aria-label="配置预设与我的内容中心">
+          <div class="rail-stack">
+            <section class="preset-panel">
+              <div class="panel-title"><strong>配置预设</strong><span class="chip green">P1</span></div>
+              <div class="preset-tabs" role="tablist" aria-label="配置预设">
+                <button>轻量</button>
+                <button class="active">资源</button>
+                <button>阅读</button>
+              </div>
+              <p class="small-note">预设只批量切换本地设置，不覆盖收藏、稍后、资源和阅读进度。</p>
+              <div class="toggle-list">
+                <div class="toggle-item"><span>网络友好模式</span><span class="switch on"></span></div>
+                <div class="toggle-item"><span>资源固定栏</span><span class="switch on"></span></div>
+                <div class="toggle-item"><span>悬停预览图片</span><span class="switch on"></span></div>
+                <div class="toggle-item"><span>首页仪表盘</span><span class="switch"></span></div>
+              </div>
+            </section>
+
+            <section class="confirm-panel">
+              <div class="panel-title"><strong>我的内容中心 2.0</strong><span class="chip blue">合并视图</span></div>
+              <div class="confirm-list">
+                <div class="confirm-row"><span class="chip blue">收藏</span><strong>站内收藏 128</strong><span>未读 14</span></div>
+                <div class="confirm-row"><span class="chip teal">稍后</span><strong>本地稍后 43</strong><span>积压 9</span></div>
+                <div class="confirm-row"><span class="chip amber">资源</span><strong>待处理资源 31</strong><span>队列</span></div>
+                <div class="confirm-row"><span class="chip green">进度</span><strong>最近浏览 86</strong><span>继续</span></div>
+              </div>
+              <div class="button-row"><button class="button">打开中心</button><button class="ghost-button">复制日报</button></div>
+            </section>
+
+            <section class="confirm-panel">
+              <div class="panel-title"><strong>导航中心瘦身</strong><span class="chip teal">分组</span></div>
+              <p class="small-note">站点导航、版块导航、当前页面和我的中心分层展示；低频项默认收起，搜索仍可命中。</p>
+              <div class="status-strip">
+                <span class="status teal">常用置顶</span>
+                <span class="status blue">页面动作</span>
+                <span class="status amber">低频收起</span>
+              </div>
+            </section>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

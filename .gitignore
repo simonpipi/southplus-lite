@@ -1,7 +1,2 @@
 .worktrees/
 docs/
-*.html
-!command-palette-preview.html
-!resource-badge-preview.html
-!read-resource-rail-preview.html
-!ui-experience-preview.html

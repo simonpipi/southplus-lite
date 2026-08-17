@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SouthPlus Lite - 预览图批量下载方案</title>
+  <style>
+    :root {
+      --spx-bg: #eef3f7;
+      --spx-panel: #ffffff;
+      --spx-panel-muted: #f8fafc;
+      --spx-line: #cbd5e1;
+      --spx-line-soft: #e2e8f0;
+      --spx-text: #334155;
+      --spx-strong: #0f172a;
+      --spx-sub: #64748b;
+      --spx-muted: #94a3b8;
+      --spx-accent: #0f766e;
+      --spx-accent-strong: #0d9488;
+      --spx-accent-soft: #ccfbf1;
+      --spx-link: #0284c7;
+      --spx-danger: #b91c1c;
+      --spx-danger-soft: #fee2e2;
+      --spx-warning: #b45309;
+      --spx-warning-soft: #ffedd5;
+      --spx-ok: #15803d;
+      --spx-ok-soft: #dcfce7;
+      --spx-shadow: 0 18px 46px rgba(15, 23, 42, .16);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--spx-bg);
+      color: var(--spx-text);
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .page-shell {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .side-nav {
+      padding: 18px 14px;
+      background: #f8fafc;
+      border-right: 1px solid var(--spx-line);
+    }
+
+    .brand {
+      margin: 0 0 16px;
+      color: var(--spx-strong);
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .nav-group {
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .nav-group strong {
+      color: var(--spx-sub);
+      font-size: 12px;
+    }
+
+    .nav-item {
+      min-height: 34px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      color: var(--spx-text);
+      text-decoration: none;
+      font-weight: 800;
+    }
+
+    .nav-item.active {
+      background: var(--spx-accent-soft);
+      color: var(--spx-accent);
+    }
+
+    .content {
+      position: relative;
+      min-width: 0;
+      padding: 22px 540px 44px 24px;
+    }
+
+    .thread-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      max-width: 880px;
+      margin: 0 0 12px;
+      padding: 12px 14px;
+      background: var(--spx-panel);
+      border: 1px solid var(--spx-line-soft);
+      border-radius: 8px;
+    }
+
+    .thread-bar h1 {
+      margin: 0;
+      color: var(--spx-strong);
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    .thread-bar span {
+      color: var(--spx-sub);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .post {
+      max-width: 880px;
+      margin-bottom: 14px;
+      padding: 16px;
+      background: var(--spx-panel);
+      border: 1px solid var(--spx-line-soft);
+      border-radius: 8px;
+    }
+
+    .post-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      color: var(--spx-sub);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .post p {
+      margin: 0 0 12px;
+    }
+
+    .inline-images {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .inline-image,
+    .thumb-art {
+      display: block;
+      min-height: 120px;
+      border-radius: 8px;
+      border: 1px solid var(--spx-line-soft);
+      background:
+        linear-gradient(135deg, rgba(15, 118, 110, .18), rgba(2, 132, 199, .12)),
+        linear-gradient(45deg, #f8fafc 25%, #e2e8f0 25%, #e2e8f0 50%, #f8fafc 50%, #f8fafc 75%, #e2e8f0 75%);
+      background-size: auto, 20px 20px;
+    }
+
+    .inline-image:nth-child(2), .thumb-art.tone-b {
+      background:
+        linear-gradient(135deg, rgba(180, 83, 9, .18), rgba(15, 118, 110, .14)),
+        linear-gradient(45deg, #fff7ed 25%, #fed7aa 25%, #fed7aa 50%, #fff7ed 50%, #fff7ed 75%, #fed7aa 75%);
+      background-size: auto, 20px 20px;
+    }
+
+    .inline-image:nth-child(3), .thumb-art.tone-c {
+      background:
+        linear-gradient(135deg, rgba(2, 132, 199, .18), rgba(22, 163, 74, .14)),
+        linear-gradient(45deg, #ecfeff 25%, #bae6fd 25%, #bae6fd 50%, #ecfeff 50%, #ecfeff 75%, #bae6fd 75%);
+      background-size: auto, 20px 20px;
+    }
+
+    .preview-panel {
+      position: fixed;
+      right: 14px;
+      top: 86px;
+      bottom: 18px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      width: min(500px, calc(100vw - 28px));
+      overflow: hidden;
+      padding: 10px;
+      background: var(--spx-panel-muted);
+      border: 1px solid var(--spx-line);
+      border-radius: 12px;
+      box-shadow: var(--spx-shadow);
+    }
+
+    .preview-header {
+      display: grid;
+      gap: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--spx-line-soft);
+      background: inherit;
+    }
+
+    .preview-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .preview-title strong {
+      color: var(--spx-strong);
+      font-size: 15px;
+      font-weight: 900;
+    }
+
+    .preview-title span {
+      min-width: 0;
+      color: var(--spx-sub);
+      font-size: 12px;
+      font-weight: 800;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .preview-actions,
+    .download-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .preview-actions button,
+    .download-actions button,
+    .retry-button {
+      height: 28px;
+      padding: 0 9px;
+      border: 1px solid var(--spx-line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--spx-text);
+      font-size: 12px;
+      font-weight: 850;
+      cursor: pointer;
+    }
+
+    .preview-actions button.primary,
+    .download-actions button.primary {
+      border-color: var(--spx-accent);
+      background: var(--spx-accent);
+      color: #fff;
+    }
+
+    .preview-actions button[aria-pressed="true"] {
+      border-color: var(--spx-link);
+      background: #e0f2fe;
+      color: #075985;
+    }
+
+    .download-strip {
+      display: grid;
+      gap: 7px;
+      padding: 8px 9px;
+      border: 1px solid var(--spx-line-soft);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .download-topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .download-topline strong {
+      color: var(--spx-strong);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .download-topline span {
+      color: var(--spx-sub);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .progress-track {
+      height: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e2e8f0;
+    }
+
+    .progress-bar {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--spx-accent), var(--spx-link));
+    }
+
+    .progress-bar.warn {
+      background: linear-gradient(90deg, #f59e0b, #0f766e);
+    }
+
+    .download-compact {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .download-compact-status {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .download-compact .download-actions {
+      flex: none;
+    }
+
+    .download-actions button {
+      height: 24px;
+      padding: 0 8px;
+      font-size: 11px;
+    }
+
+    .preview-body {
+      min-height: 0;
+      overflow: auto;
+      padding-top: 10px;
+    }
+
+    .preview-grid {
+      column-width: 150px;
+      column-gap: 8px;
+    }
+
+    .preview-item {
+      display: block;
+      break-inside: avoid;
+      margin: 0 0 8px;
+      overflow: hidden;
+      border: 1px solid var(--spx-line-soft);
+      border-radius: 8px;
+      background: #fff;
+      text-decoration: none;
+    }
+
+    .preview-item .thumb-art {
+      min-height: 104px;
+      border: 0;
+      border-radius: 0;
+    }
+
+    .preview-item span {
+      display: block;
+      padding: 5px 7px;
+      color: var(--spx-text);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .preview-item span small {
+      color: var(--spx-muted);
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .download-detail {
+      margin: 0 0 10px;
+      border: 1px solid var(--spx-line-soft);
+      border-radius: 9px;
+      background: #fff;
+    }
+
+    .download-detail summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 34px;
+      padding: 0 9px;
+      color: var(--spx-text);
+      font-size: 12px;
+      font-weight: 900;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .download-detail summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .download-detail summary::after {
+      content: '展开';
+      flex: none;
+      min-width: 42px;
+      text-align: right;
+      color: var(--spx-link);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .download-detail[open] summary {
+      border-bottom: 1px solid var(--spx-line-soft);
+    }
+
+    .download-detail[open] summary::after {
+      content: '收起';
+    }
+
+    .download-detail-summary {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .queue {
+      display: grid;
+      gap: 8px;
+      padding: 8px;
+    }
+
+    .queue-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--spx-sub);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .queue-title small {
+      color: var(--spx-muted);
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .queue-row {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: center;
+      padding: 7px;
+      border: 1px solid var(--spx-line-soft);
+      border-radius: 9px;
+      background: #fff;
+    }
+
+    .queue-thumb {
+      width: 42px;
+      height: 34px;
+      border-radius: 7px;
+      border: 1px solid var(--spx-line-soft);
+      background-size: auto, 16px 16px;
+    }
+
+    .queue-main {
+      min-width: 0;
+    }
+
+    .queue-name {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 5px;
+      color: var(--spx-strong);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .queue-name b {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .queue-name em {
+      flex: none;
+      color: var(--spx-muted);
+      font-style: normal;
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .queue-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 5px;
+      color: var(--spx-muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 22px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: #e0f2fe;
+      color: #075985;
+      font-size: 11px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .badge.ok { background: var(--spx-ok-soft); color: var(--spx-ok); }
+    .badge.fail { background: var(--spx-danger-soft); color: var(--spx-danger); }
+    .badge.wait { background: #f1f5f9; color: var(--spx-sub); }
+    .badge.zip { background: var(--spx-warning-soft); color: var(--spx-warning); }
+
+    .retry-button {
+      min-width: 58px;
+      color: var(--spx-danger);
+      background: var(--spx-danger-soft);
+      border-color: #fecaca;
+    }
+
+    .retry-button[disabled] {
+      color: var(--spx-muted);
+      background: #f8fafc;
+      cursor: not-allowed;
+    }
+
+    .zip-footer {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid #fed7aa;
+      border-radius: 10px;
+      background: #fff7ed;
+    }
+
+    .zip-footer strong {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: #7c2d12;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .zip-footer span {
+      color: var(--spx-warning);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .toast {
+      position: fixed;
+      right: 534px;
+      bottom: 24px;
+      z-index: 12;
+      max-width: 360px;
+      padding: 10px 12px;
+      border: 1px solid var(--spx-line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, .96);
+      box-shadow: var(--spx-shadow);
+      color: var(--spx-text);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    @media (max-width: 980px) {
+      .page-shell { grid-template-columns: 1fr; }
+      .side-nav { display: none; }
+      .content { padding: 12px 12px 380px; }
+      .preview-panel {
+        left: 8px;
+        right: 8px;
+        top: auto;
+        bottom: 8px;
+        width: auto;
+        max-height: 58vh;
+        border-radius: 16px;
+      }
+      .toast { left: 12px; right: 12px; bottom: calc(58vh + 20px); max-width: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-shell">
+    <aside class="side-nav" aria-label="模块导航">
+      <h2 class="brand">SouthPlus Lite</h2>
+      <div class="nav-group">
+        <strong>阅读模式</strong>
+        <a class="nav-item active" href="#">预览图集</a>
+        <a class="nav-item" href="#">资源栏</a>
+        <a class="nav-item" href="#">稍后看</a>
+      </div>
+      <div class="nav-group">
+        <strong>快捷工具</strong>
+        <a class="nav-item" href="#">快捷回复</a>
+        <a class="nav-item" href="#">命令面板</a>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section class="thread-bar">
+        <h1>图集示例主题：批量下载交互预览</h1>
+        <span>12 张预览图 · 右侧侧栏</span>
+      </section>
+
+      <article class="post">
+        <div class="post-meta"><span>楼主 · imagefan</span><span>#1</span></div>
+        <p>正文里的图片仍然保留在原位置，右侧预览图集只做聚合、查看和批量下载入口。</p>
+        <div class="inline-images" aria-label="原帖图片示例">
+          <span class="inline-image"></span>
+          <span class="inline-image"></span>
+          <span class="inline-image"></span>
+        </div>
+      </article>
+
+      <article class="post">
+        <div class="post-meta"><span>2 楼 · helper</span><span>#2</span></div>
+        <p>下载全部会进入队列：每张图片有独立进度、失败状态和最多 6 次重试；若个别图片最终失败，也允许先把已下载图片打包。</p>
+      </article>
+    </main>
+  </div>
+
+  <section class="preview-panel" aria-label="预览图侧栏">
+    <header class="preview-header">
+      <div class="preview-title">
+        <strong>预览图</strong>
+        <span>共 12 张，已显示 12 张</span>
+      </div>
+      <div class="preview-actions" aria-label="预览图操作">
+        <button class="primary" type="button">下载全部</button>
+        <button type="button">复制全部链接</button>
+        <button type="button">按楼层复制</button>
+        <button type="button" aria-pressed="true">侧栏</button>
+        <button type="button">收起</button>
+      </div>
+      <section class="download-strip" aria-label="批量下载进度">
+        <div class="download-topline">
+          <strong>已完成 10 / 12 · 2 张失败可跳过</strong>
+          <span>83%</span>
+        </div>
+        <div class="progress-track" aria-hidden="true"><span class="progress-bar" style="width:83%"></span></div>
+        <div class="download-compact">
+          <div class="download-compact-status">
+            <span class="badge ok">10 完成</span>
+            <span class="badge fail">2 失败</span>
+            <span class="badge zip">可打包</span>
+          </div>
+          <div class="download-actions">
+            <button class="primary" type="button">打包已完成</button>
+            <button type="button">重试失败</button>
+            <button type="button">取消</button>
+          </div>
+        </div>
+      </section>
+    </header>
+
+    <div class="preview-body">
+      <details class="download-detail">
+        <summary><span class="download-detail-summary">下载详情：2 张失败已达上限，10 张可打包</span></summary>
+        <div class="queue">
+          <div class="queue-row">
+            <span class="queue-thumb thumb-art tone-b"></span>
+            <div class="queue-main">
+              <div class="queue-name"><b>spx-image-002.png</b><em>3.4 MB</em></div>
+              <div class="progress-track"><span class="progress-bar warn" style="width:64%"></span></div>
+              <div class="queue-meta"><span>#1 · imagefan</span><span>响应中断 · 已重试 6 / 6</span></div>
+            </div>
+            <button class="retry-button" type="button" disabled>已达上限</button>
+          </div>
+          <div class="queue-row">
+            <span class="queue-thumb thumb-art"></span>
+            <div class="queue-main">
+              <div class="queue-name"><b>spx-image-004.webp</b><em>4.7 MB</em></div>
+              <div class="progress-track"><span class="progress-bar warn" style="width:38%"></span></div>
+              <div class="queue-meta"><span>#3 · blue</span><span>跨域失败 · 已重试 6 / 6</span></div>
+            </div>
+            <button class="retry-button" type="button" disabled>已达上限</button>
+          </div>
+          <div class="queue-row">
+            <span class="queue-thumb thumb-art tone-c"></span>
+            <div class="queue-main">
+              <div class="queue-name"><b>已完成 10 张</b><em>24.8 MB</em></div>
+              <div class="progress-track"><span class="progress-bar" style="width:100%"></span></div>
+              <div class="queue-meta"><span>完成项默认合并，避免列表过长</span><span>100%</span></div>
+            </div>
+            <span class="badge ok">完成</span>
+          </div>
+          <section class="zip-footer" aria-label="ZIP 打包状态">
+            <strong>ZIP 打包 <span>可只打包已完成图片</span></strong>
+            <div class="progress-track"><span class="progress-bar warn" style="width:83%"></span></div>
+            <span>点击“打包已完成”会生成 southplus-images-20260813.zip；2 张失败图片和原始链接写入 download-report.txt。</span>
+          </section>
+        </div>
+      </details>
+
+      <div class="preview-grid" aria-label="预览图缩略图">
+        <a class="preview-item" href="#"><span class="thumb-art"></span><span>#1 · imagefan · 图 1 <small>已完成</small></span></a>
+        <a class="preview-item" href="#"><span class="thumb-art tone-b"></span><span>#1 · imagefan · 图 2 <small>失败 6/6</small></span></a>
+        <a class="preview-item" href="#"><span class="thumb-art tone-c"></span><span>#2 · helper · 图 3 <small>已完成</small></span></a>
+        <a class="preview-item" href="#"><span class="thumb-art"></span><span>#3 · blue · 图 4 <small>失败 6/6</small></span></a>
+        <a class="preview-item" href="#"><span class="thumb-art tone-b"></span><span>#4 · guest · 图 5 <small>已完成</small></span></a>
+        <a class="preview-item" href="#"><span class="thumb-art tone-c"></span><span>#4 · guest · 图 6 <small>已完成</small></span></a>
+      </div>
+    </div>
+  </section>
+
+  <div class="toast">失败图片重试 6 次后不阻断 ZIP；用户可继续重试，也可立即打包已完成图片并带失败清单。</div>
+</body>
+</html>
