@@ -1,0 +1,1404 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>South Plus +++ 我的工作台并入导航预览</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #eef2f6;
+      --ink: #172033;
+      --muted: #647184;
+      --soft: #8a96a8;
+      --line: #d7e0eb;
+      --line-strong: #bdc9d8;
+      --surface: #fff;
+      --surface-2: #f7f9fc;
+      --surface-3: #edf3f9;
+      --nav: #1f2a37;
+      --nav-2: #2e3b4d;
+      --blue: #2563eb;
+      --blue-soft: #dbeafe;
+      --green: #0f8b63;
+      --green-soft: #d9f4ea;
+      --amber: #b7791f;
+      --amber-soft: #fff3d7;
+      --red: #c2410c;
+      --red-soft: #ffedd5;
+      --purple: #7c3aed;
+      --purple-soft: #ede9fe;
+      --shadow: 0 18px 42px rgba(23, 32, 51, .12);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .page {
+      width: min(1440px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 28px 0 52px;
+    }
+
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 26px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .intro p {
+      max-width: 880px;
+      margin-top: 8px;
+      color: var(--muted);
+    }
+
+    .legend {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .pill,
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 26px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #354156;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .pill.active {
+      border-color: rgba(37, 99, 235, .28);
+      background: var(--blue-soft);
+      color: #1d4ed8;
+    }
+
+    .shell {
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      background: #e9eef5;
+      box-shadow: var(--shadow);
+    }
+
+    .browser-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, .76);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ef4444;
+    }
+
+    .dot:nth-child(2) {
+      background: #f59e0b;
+    }
+
+    .dot:nth-child(3) {
+      background: #22c55e;
+    }
+
+    .address {
+      min-width: 0;
+      flex: 1;
+      margin-left: 8px;
+      padding: 4px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--soft);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mock-page {
+      position: relative;
+      min-height: 760px;
+      padding: 24px;
+      background: linear-gradient(180deg, #f6f8fb 0%, #eef2f6 100%);
+    }
+
+    .site-header {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 900;
+    }
+
+    .brand-mark {
+      display: inline-grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 9px;
+      background: var(--nav);
+      color: #fff;
+      font-size: 13px;
+    }
+
+    .top-tabs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+
+    .top-tab {
+      min-height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      color: #465468;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .top-tab.active {
+      background: #edf3fb;
+      color: #0f172a;
+    }
+
+    .floating-toolbar {
+      position: absolute;
+      right: 22px;
+      bottom: 22px;
+      z-index: 12;
+      display: flex;
+      gap: 7px;
+      padding: 6px;
+      border: 1px solid rgba(203, 213, 225, .86);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .94);
+      box-shadow: 0 18px 46px rgba(15, 23, 42, .18);
+      backdrop-filter: blur(10px);
+    }
+
+    .toolbar-button {
+      display: inline-flex;
+      width: 52px;
+      height: 36px;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      background: #fff;
+      color: #334155;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, .08);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .toolbar-button.active {
+      border-color: rgba(37, 99, 235, .38);
+      background: var(--blue-soft);
+      color: #1d4ed8;
+      box-shadow: inset 0 0 0 1px rgba(37, 99, 235, .12), 0 6px 16px rgba(37, 99, 235, .14);
+    }
+
+    .toolbar-note {
+      position: absolute;
+      right: 22px;
+      bottom: 72px;
+      z-index: 11;
+      max-width: 270px;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      color: var(--muted);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, .12);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .site-grid {
+      display: grid;
+      grid-template-columns: 268px minmax(0, 1fr);
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .left-nav,
+    .thread-list,
+    .quick-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+    }
+
+    .left-nav {
+      position: sticky;
+      top: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: calc(100vh - 86px);
+      overflow: auto;
+      padding: 12px;
+      align-self: start;
+    }
+
+    .left-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 4px 4px 10px;
+      border-bottom: 1px solid var(--line);
+      color: #334155;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .nav-group {
+      display: grid;
+      gap: 5px;
+    }
+
+    .nav-section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 4px 6px;
+      color: var(--soft);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .05em;
+    }
+
+    .nav-link,
+    .nav-button {
+      display: flex;
+      width: 100%;
+      min-height: 36px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 9px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      background: transparent;
+      color: #435064;
+      text-align: left;
+      font-weight: 800;
+    }
+
+    .nav-link.active,
+    .nav-button.active {
+      border-color: rgba(37, 99, 235, .18);
+      background: #eef4ff;
+      color: #1d4ed8;
+    }
+
+    .nav-button:hover,
+    .nav-button:focus-visible {
+      border-color: rgba(37, 99, 235, .24);
+      background: #f4f8ff;
+      outline: none;
+    }
+
+    .nav-main {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-icon {
+      display: inline-grid;
+      width: 24px;
+      height: 24px;
+      flex: none;
+      place-items: center;
+      border-radius: 8px;
+      background: #f1f5f9;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .nav-button.active .nav-icon {
+      background: var(--blue-soft);
+      color: #1d4ed8;
+    }
+
+    .nav-copy {
+      min-width: 0;
+    }
+
+    .nav-copy strong,
+    .nav-copy small {
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .nav-copy strong {
+      font-size: 13px;
+      line-height: 1.2;
+    }
+
+    .nav-copy small {
+      margin-top: 2px;
+      color: var(--soft);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .nav-count {
+      min-width: 24px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #f1f5f9;
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .nav-button.active .nav-count {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+
+    .main-content {
+      display: grid;
+      grid-template-columns: minmax(280px, .72fr) minmax(560px, 1.28fr);
+      gap: 18px;
+    }
+
+    .thread-list {
+      overflow: hidden;
+    }
+
+    .thread-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-2);
+    }
+
+    .thread-head strong {
+      font-size: 16px;
+    }
+
+    .thread-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid #edf1f6;
+    }
+
+    .thread-row:last-child {
+      border-bottom: 0;
+    }
+
+    .thread-title {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
+      font-weight: 900;
+    }
+
+    .thread-title span:last-child {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .meta {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .quick-column {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .quick-card {
+      padding: 14px;
+    }
+
+    .quick-card h3 {
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+
+    .metric-list,
+    .activity-list,
+    .resource-list,
+    .purchase-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .metric,
+    .activity,
+    .resource,
+    .purchase-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 9px 10px;
+      border: 1px solid #e4eaf2;
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .metric b,
+    .activity b,
+    .resource b,
+    .purchase-row b {
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .metric small,
+    .activity small,
+    .resource small,
+    .purchase-row small {
+      display: block;
+      color: var(--soft);
+      font-size: 12px;
+    }
+
+    .center-panel {
+      position: relative;
+      width: 100%;
+      height: 610px;
+      overflow: hidden;
+      border: 1px solid rgba(122, 137, 158, .38);
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 16px 36px rgba(23, 32, 51, .12);
+    }
+
+    .center-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      height: 100%;
+    }
+
+    .center-nav {
+      display: none;
+      flex-direction: column;
+      min-width: 0;
+      border-right: 1px solid var(--line);
+      background: var(--nav);
+      color: #dce6f2;
+    }
+
+    .center-brand {
+      padding: 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, .12);
+    }
+
+    .center-brand strong {
+      display: block;
+      color: #fff;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .center-brand span {
+      display: block;
+      margin-top: 5px;
+      color: #9fb0c6;
+      font-size: 12px;
+    }
+
+    .section-label {
+      padding: 16px 16px 6px;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .08em;
+    }
+
+    .center-tabs {
+      display: grid;
+      gap: 4px;
+      padding: 0 10px;
+    }
+
+    .center-tab {
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      width: 100%;
+      min-height: 44px;
+      padding: 7px 8px;
+      border: 0;
+      border-radius: 11px;
+      background: transparent;
+      color: #cbd5e1;
+      text-align: left;
+    }
+
+    .center-tab:hover,
+    .center-tab.active {
+      background: rgba(255, 255, 255, .1);
+      color: #fff;
+    }
+
+    .center-tab.active {
+      outline: 1px solid rgba(255, 255, 255, .14);
+    }
+
+    .tab-icon {
+      display: inline-grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 9px;
+      background: rgba(255, 255, 255, .12);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .tab-copy {
+      min-width: 0;
+    }
+
+    .tab-copy strong,
+    .tab-copy span {
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .tab-copy strong {
+      font-size: 13px;
+    }
+
+    .tab-copy span {
+      color: #9fb0c6;
+      font-size: 11px;
+    }
+
+    .count {
+      min-width: 26px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .14);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .center-foot {
+      margin-top: auto;
+      padding: 14px;
+      border-top: 1px solid rgba(255, 255, 255, .12);
+    }
+
+    .backup-card {
+      padding: 11px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, .08);
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+
+    .backup-card strong {
+      display: block;
+      color: #fff;
+      margin-bottom: 3px;
+    }
+
+    .center-main {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      background: #f7f9fc;
+    }
+
+    .center-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .center-title h2 {
+      font-size: 20px;
+      line-height: 1.2;
+    }
+
+    .center-title p {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .button {
+      min-height: 34px;
+      padding: 0 12px;
+      border: 1px solid rgba(37, 99, 235, .38);
+      border-radius: 10px;
+      background: var(--blue);
+      color: #fff;
+      font-weight: 900;
+    }
+
+    .ghost-button {
+      min-height: 34px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      color: #334155;
+      font-weight: 900;
+    }
+
+    .center-body {
+      min-height: 0;
+      overflow: auto;
+      padding: 16px 18px 18px;
+    }
+
+    .view {
+      display: none;
+    }
+
+    .view.active {
+      display: block;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .summary-card {
+      min-height: 112px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+    }
+
+    .summary-card .chip {
+      margin-bottom: 14px;
+    }
+
+    .summary-card strong {
+      display: block;
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .summary-card span:last-child {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .content-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.24fr) minmax(280px, .76fr);
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .panel-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .panel-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+
+    .panel-card-head strong {
+      font-size: 15px;
+    }
+
+    .filter-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .search {
+      flex: 1 1 220px;
+      min-width: 160px;
+      height: 34px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .select {
+      height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      color: #334155;
+      font-weight: 800;
+    }
+
+    .list {
+      display: grid;
+      gap: 0;
+    }
+
+    .item-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      min-height: 64px;
+      padding: 12px 14px;
+      border-bottom: 1px solid #edf1f6;
+    }
+
+    .item-row:last-child {
+      border-bottom: 0;
+    }
+
+    .item-row h3 {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-size: 14px;
+    }
+
+    .item-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+      color: var(--soft);
+      font-size: 12px;
+    }
+
+    .row-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .small-button {
+      min-height: 30px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .queue {
+      display: grid;
+      gap: 8px;
+      padding: 12px 14px 14px;
+    }
+
+    .queue-step {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr);
+      gap: 9px;
+      padding: 10px;
+      border: 1px solid #e4eaf2;
+      border-radius: 11px;
+      background: #fff;
+    }
+
+    .step-dot {
+      display: inline-grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--blue-soft);
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .queue-step strong,
+    .queue-step span {
+      display: block;
+    }
+
+    .queue-step span {
+      margin-top: 2px;
+      color: var(--soft);
+      font-size: 12px;
+    }
+
+    .resource-board {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 260px;
+      gap: 12px;
+    }
+
+    .resource-row {
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 14px;
+      border-bottom: 1px solid #edf1f6;
+    }
+
+    .check {
+      display: inline-grid;
+      width: 18px;
+      height: 18px;
+      place-items: center;
+      border: 1px solid #9fb2c8;
+      border-radius: 5px;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .check.on {
+      border-color: var(--blue);
+      background: var(--blue);
+    }
+
+    .status-board {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+    }
+
+    .status-card {
+      padding: 12px;
+      border: 1px solid #e4eaf2;
+      border-radius: 12px;
+      background: #fff;
+    }
+
+    .status-card strong,
+    .status-card span {
+      display: block;
+    }
+
+    .status-card span {
+      margin-top: 4px;
+      color: var(--soft);
+      font-size: 12px;
+    }
+
+    .mobile-note {
+      display: none;
+      margin-top: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .blue {
+      background: var(--blue-soft);
+      color: #1d4ed8;
+      border-color: rgba(37, 99, 235, .22);
+    }
+
+    .green {
+      background: var(--green-soft);
+      color: var(--green);
+      border-color: rgba(15, 139, 99, .22);
+    }
+
+    .amber {
+      background: var(--amber-soft);
+      color: var(--amber);
+      border-color: rgba(183, 121, 31, .22);
+    }
+
+    .red {
+      background: var(--red-soft);
+      color: var(--red);
+      border-color: rgba(194, 65, 12, .22);
+    }
+
+    .purple {
+      background: var(--purple-soft);
+      color: var(--purple);
+      border-color: rgba(124, 58, 237, .22);
+    }
+
+    @media (max-width: 1100px) {
+      .site-grid,
+      .main-content {
+        grid-template-columns: 1fr;
+      }
+
+      .quick-column {
+        display: none;
+      }
+
+      .left-nav {
+        position: static;
+        max-height: none;
+      }
+
+      .left-nav .nav-group {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .left-nav .nav-section-title,
+      .left-title {
+        grid-column: 1 / -1;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        width: min(100vw - 20px, 520px);
+        padding-top: 16px;
+      }
+
+      .intro {
+        display: block;
+      }
+
+      .legend {
+        justify-content: flex-start;
+        margin-top: 12px;
+      }
+
+      .mock-page {
+        min-height: 820px;
+        padding: 12px;
+      }
+
+      .site-header {
+        grid-template-columns: 1fr;
+      }
+
+      .center-panel {
+        height: 690px;
+        border-radius: 14px;
+      }
+
+      .center-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .center-header {
+        grid-template-columns: 1fr;
+      }
+
+      .header-actions {
+        justify-content: flex-start;
+      }
+
+      .summary-grid,
+      .content-grid,
+      .resource-board {
+        grid-template-columns: 1fr;
+      }
+
+      .left-nav .nav-group {
+        display: flex;
+        gap: 8px;
+        overflow: auto;
+        padding-bottom: 2px;
+      }
+
+      .left-nav .nav-section-title,
+      .left-title {
+        display: none;
+      }
+
+      .floating-toolbar {
+        left: 16px;
+        right: 16px;
+        bottom: 16px;
+        justify-content: space-between;
+        overflow: auto;
+      }
+
+      .toolbar-note {
+        left: 16px;
+        right: 16px;
+        bottom: 68px;
+        max-width: none;
+      }
+
+      .nav-link,
+      .nav-button {
+        min-width: 138px;
+      }
+
+      .nav-button .nav-count,
+      .nav-link span:last-child {
+        display: none;
+      }
+
+      .mobile-note {
+        display: block;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="intro">
+      <div>
+        <h1>我的工作台并入导航预览</h1>
+        <p>只把“我的内容、稍后看、最近浏览、购买记录、资源工作台”收进左侧导航中心；页面动作、阅读模式、工具箱、命令和设置仍保持原来的工具栏入口。</p>
+      </div>
+      <div class="legend" aria-label="方案重点">
+        <span class="pill active">我的工作台入导航</span>
+        <span class="pill">其他工具栏保留</span>
+        <span class="pill">中心类不再多弹窗</span>
+        <span class="pill">右侧内联工作区</span>
+      </div>
+    </header>
+
+    <section class="shell" aria-label="统一工作区静态预览">
+      <div class="browser-bar">
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="address">https://south-plus.org/read.php?tid=2333333</span>
+      </div>
+
+      <div class="mock-page">
+        <header class="site-header">
+          <div class="brand"><span class="brand-mark">SP</span><span>South Plus +++</span></div>
+          <nav class="top-tabs" aria-label="站点导航">
+            <span class="top-tab active">论坛</span>
+            <span class="top-tab">最新</span>
+            <span class="top-tab">搜索</span>
+            <span class="top-tab">任务</span>
+            <span class="top-tab">个人中心</span>
+          </nav>
+          <span class="pill active">我的工作台并入导航中心</span>
+        </header>
+
+        <div class="site-grid">
+          <aside class="left-nav" aria-label="论坛导航中心">
+            <div class="left-title"><span>导航中心</span><span class="chip blue">统一入口</span></div>
+
+            <div class="nav-group" aria-label="站点导航">
+              <div class="nav-section-title"><span>站点导航</span><span>原站入口</span></div>
+              <div class="nav-link active"><span class="nav-main"><span class="nav-icon">版</span><span>亚洲无码</span></span><span class="nav-count">42</span></div>
+              <div class="nav-link"><span class="nav-main"><span class="nav-icon">中</span><span>中文字幕</span></span><span class="nav-count">18</span></div>
+              <div class="nav-link"><span class="nav-main"><span class="nav-icon">搜</span><span>搜索结果</span></span><span class="nav-count">8</span></div>
+            </div>
+
+            <div class="nav-group" role="tablist" aria-label="我的工作台">
+              <div class="nav-section-title"><span>我的工作台</span><span>右侧切换</span></div>
+              <button class="nav-button workbench-tab active" type="button" data-view="overview" role="tab" aria-selected="true"><span class="nav-main"><span class="nav-icon">合</span><span class="nav-copy"><strong>我的内容</strong><small>总览和快捷入口</small></span></span><span class="nav-count">6</span></button>
+              <button class="nav-button workbench-tab" type="button" data-view="watch" role="tab" aria-selected="false"><span class="nav-main"><span class="nav-icon">存</span><span class="nav-copy"><strong>稍后看</strong><small>积压和续读</small></span></span><span class="nav-count">43</span></button>
+              <button class="nav-button workbench-tab" type="button" data-view="history" role="tab" aria-selected="false"><span class="nav-main"><span class="nav-icon">历</span><span class="nav-copy"><strong>最近浏览</strong><small>阅读进度</small></span></span><span class="nav-count">86</span></button>
+              <button class="nav-button workbench-tab" type="button" data-view="purchase" role="tab" aria-selected="false"><span class="nav-main"><span class="nav-icon">买</span><span class="nav-copy"><strong>购买记录</strong><small>自动购买状态</small></span></span><span class="nav-count">14</span></button>
+              <button class="nav-button workbench-tab" type="button" data-view="resource" role="tab" aria-selected="false"><span class="nav-main"><span class="nav-icon">源</span><span class="nav-copy"><strong>资源工作台</strong><small>下载队列</small></span></span><span class="nav-count">31</span></button>
+            </div>
+
+          </aside>
+
+          <section class="main-content">
+            <div class="thread-list" aria-label="背景论坛列表">
+              <div class="thread-head"><strong>阅读页背景内容</strong><span class="chip blue">统一中心已打开</span></div>
+              <div class="thread-row">
+                <div><div class="thread-title"><span class="chip amber">资源</span><span>[合集] 本周高分资源整理与更新记录</span></div><div class="meta">楼主 alpha · 24 楼 · 阅读到 64%</div></div>
+                <span class="pill active">稍后看</span>
+              </div>
+              <div class="thread-row">
+                <div><div class="thread-title"><span class="chip green">进度</span><span>已购买主题刷新后露出的网盘和磁力链接</span></div><div class="meta">楼主 beta · 8 楼 · 刚刚浏览</div></div>
+                <span class="pill">最近</span>
+              </div>
+              <div class="thread-row">
+                <div><div class="thread-title"><span class="chip purple">收藏</span><span>值得回看的长帖和图片楼层</span></div><div class="meta">楼主 gamma · 56 楼 · 未读 12 楼</div></div>
+                <span class="pill">未读</span>
+              </div>
+            </div>
+
+            <section class="center-panel" aria-label="我的中心统一工作区">
+          <div class="center-shell">
+            <aside class="center-nav">
+              <div class="center-brand"><strong>我的中心</strong><span>个人数据、资源和记录统一管理</span></div>
+              <div class="section-label">工作区</div>
+              <div class="center-tabs" role="tablist" aria-label="我的中心分区">
+                <button class="center-tab active" type="button" data-view="overview" role="tab" aria-selected="true"><span class="tab-icon">合</span><span class="tab-copy"><strong>我的内容</strong><span>总览与快捷入口</span></span><span class="count">6</span></button>
+                <button class="center-tab" type="button" data-view="watch" role="tab" aria-selected="false"><span class="tab-icon">存</span><span class="tab-copy"><strong>稍后看</strong><span>积压和续读</span></span><span class="count">43</span></button>
+                <button class="center-tab" type="button" data-view="history" role="tab" aria-selected="false"><span class="tab-icon">历</span><span class="tab-copy"><strong>最近浏览</strong><span>阅读进度</span></span><span class="count">86</span></button>
+                <button class="center-tab" type="button" data-view="purchase" role="tab" aria-selected="false"><span class="tab-icon">买</span><span class="tab-copy"><strong>购买记录</strong><span>状态与失败</span></span><span class="count">14</span></button>
+                <button class="center-tab" type="button" data-view="resource" role="tab" aria-selected="false"><span class="tab-icon">源</span><span class="tab-copy"><strong>资源工作台</strong><span>下载队列</span></span><span class="count">31</span></button>
+              </div>
+              <div class="center-foot">
+                <div class="backup-card"><strong>本地数据边界不变</strong>只统一打开方式和视觉容器，稍后看、进度、资源、购买记录仍各自使用原数据。</div>
+              </div>
+            </aside>
+
+            <section class="center-main">
+              <header class="center-header">
+                <div class="center-title">
+                  <h2 id="view-title">我的内容</h2>
+                  <p id="view-desc">先看总览，再进入对应分区处理积压、资源和购买记录。</p>
+                </div>
+                <div class="header-actions">
+                  <button class="ghost-button" type="button">复制日报</button>
+                  <button class="ghost-button" type="button">导出备份</button>
+                  <button class="button" type="button">刷新摘要</button>
+                </div>
+              </header>
+
+              <div class="center-body">
+                <section class="view active" data-view-panel="overview">
+                  <div class="summary-grid">
+                    <article class="summary-card"><span class="chip blue">稍后</span><strong>43</strong><span>9 个未读完，3 个含新资源</span></article>
+                    <article class="summary-card"><span class="chip green">最近</span><strong>86</strong><span>今天浏览 12 个主题</span></article>
+                    <article class="summary-card"><span class="chip amber">资源</span><strong>31</strong><span>17 条待下载，4 条待确认</span></article>
+                    <article class="summary-card"><span class="chip red">购买</span><strong>14</strong><span>1 条失败，2 条跳过</span></article>
+                  </div>
+
+                  <div class="content-grid">
+                    <section class="panel-card">
+                      <div class="panel-card-head"><strong>优先处理</strong><span class="chip amber">按积压排序</span></div>
+                      <div class="list">
+                        <div class="item-row"><div><h3>[合集] 本周高分资源整理与更新记录</h3><div class="item-meta"><span>阅读到 64%</span><span>资源 12</span><span>稍后看</span></div></div><div class="row-actions"><button class="small-button">继续</button><button class="small-button">资源</button></div></div>
+                        <div class="item-row"><div><h3>已购买主题刷新后露出的网盘和磁力链接</h3><div class="item-meta"><span>购买完成</span><span>待下载 5</span><span>今天</span></div></div><div class="row-actions"><button class="small-button">打开</button><button class="small-button">标记</button></div></div>
+                        <div class="item-row"><div><h3>值得回看的长帖和图片楼层</h3><div class="item-meta"><span>未读 12 楼</span><span>收藏</span><span>图片 48</span></div></div><div class="row-actions"><button class="small-button">未读</button><button class="small-button">复制</button></div></div>
+                      </div>
+                    </section>
+
+                    <section class="panel-card">
+                      <div class="panel-card-head"><strong>处理动线</strong><span class="chip green">不跳弹窗</span></div>
+                      <div class="queue">
+                        <div class="queue-step"><span class="step-dot">1</span><span><strong>从总览看积压</strong><span>先知道有哪些主题、资源和购买记录需要处理。</span></span></div>
+                        <div class="queue-step"><span class="step-dot">2</span><span><strong>在左侧切分区</strong><span>不关闭面板，不覆盖当前上下文。</span></span></div>
+                        <div class="queue-step"><span class="step-dot">3</span><span><strong>资源宽版处理</strong><span>多选、筛选、复制队列仍保留完整空间。</span></span></div>
+                      </div>
+                    </section>
+                  </div>
+                </section>
+
+                <section class="view" data-view-panel="watch">
+                  <section class="panel-card">
+                    <div class="panel-card-head"><strong>稍后看</strong><span class="chip blue">43 个主题</span></div>
+                    <div class="filter-row"><input class="search" value="资源" aria-label="稍后看搜索"><select class="select" aria-label="稍后看筛选"><option>未读优先</option></select><button class="ghost-button" type="button">批量移除筛选结果</button></div>
+                    <div class="list">
+                      <div class="item-row"><div><h3>[合集] 本周高分资源整理与更新记录</h3><div class="item-meta"><span>上次第 12 楼</span><span>64%</span><span>标签：资源</span></div></div><div class="row-actions"><button class="small-button">继续</button><button class="small-button">移除</button></div></div>
+                      <div class="item-row"><div><h3>图片楼层整理，晚点补齐下载链接</h3><div class="item-meta"><span>未读</span><span>图片 48</span><span>标签：图集</span></div></div><div class="row-actions"><button class="small-button">打开</button><button class="small-button">标签</button></div></div>
+                      <div class="item-row"><div><h3>待验证的外链和提取码合集</h3><div class="item-meta"><span>资源 7</span><span>昨天保存</span><span>标签：待下</span></div></div><div class="row-actions"><button class="small-button">资源</button><button class="small-button">完成</button></div></div>
+                    </div>
+                  </section>
+                </section>
+
+                <section class="view" data-view-panel="history">
+                  <section class="panel-card">
+                    <div class="panel-card-head"><strong>最近浏览</strong><span class="chip green">按最近阅读</span></div>
+                    <div class="filter-row"><input class="search" value="今天" aria-label="最近浏览搜索"><select class="select" aria-label="最近浏览筛选"><option>今天浏览</option></select><button class="ghost-button" type="button">清理当前筛选</button></div>
+                    <div class="list">
+                      <div class="item-row"><div><h3>已购买主题刷新后露出的网盘和磁力链接</h3><div class="item-meta"><span>刚刚</span><span>第 1 页</span><span>进度 92%</span></div></div><div class="row-actions"><button class="small-button">继续</button><button class="small-button">稍后</button></div></div>
+                      <div class="item-row"><div><h3>AI 相关主题资源索引</h3><div class="item-meta"><span>18 分钟前</span><span>第 2 页</span><span>未读 5 楼</span></div></div><div class="row-actions"><button class="small-button">未读</button><button class="small-button">复制</button></div></div>
+                      <div class="item-row"><div><h3>论坛任务领取记录说明</h3><div class="item-meta"><span>今天 09:22</span><span>已读完</span><span>任务</span></div></div><div class="row-actions"><button class="small-button">打开</button><button class="small-button">移除</button></div></div>
+                    </div>
+                  </section>
+                </section>
+
+                <section class="view" data-view-panel="purchase">
+                  <section class="panel-card">
+                    <div class="panel-card-head"><strong>购买记录</strong><span class="chip red">1 条失败</span></div>
+                    <div class="filter-row"><input class="search" value="低价" aria-label="购买记录搜索"><select class="select" aria-label="购买状态筛选"><option>全部状态</option></select><button class="ghost-button" type="button">删除失败记录</button></div>
+                    <div class="purchase-list">
+                      <div class="purchase-row"><span><b>完成 · 2 SP</b><small>购买成功，已识别 5 条新资源</small></span><span class="chip green">完成</span></div>
+                      <div class="purchase-row"><span><b>失败 · 12 SP</b><small>超过自动购买上限，保留提醒</small></span><span class="chip red">失败</span></div>
+                      <div class="purchase-row"><span><b>跳过 · 余额检查</b><small>网络友好队列延后检查</small></span><span class="chip amber">跳过</span></div>
+                    </div>
+                  </section>
+                </section>
+
+                <section class="view" data-view-panel="resource">
+                  <div class="resource-board">
+                    <section class="panel-card">
+                      <div class="panel-card-head"><strong>资源工作台</strong><span class="chip amber">17 条待下载</span></div>
+                      <div class="filter-row"><input class="search" value="网盘 OR 磁力" aria-label="资源搜索"><select class="select" aria-label="资源类型筛选"><option>全部类型</option></select><select class="select" aria-label="资源状态筛选"><option>待下载</option></select></div>
+                      <div class="list">
+                        <div class="resource-row"><span class="check on">✓</span><div><h3>magnet:?xt=urn:btih:demo-resource-001</h3><div class="item-meta"><span>磁力</span><span>来源：本周高分资源整理</span><span>待下载</span></div></div><span class="chip blue">已选</span></div>
+                        <div class="resource-row"><span class="check on">✓</span><div><h3>百度网盘链接 · 提取码 8x2k</h3><div class="item-meta"><span>网盘</span><span>楼层：12</span><span>备注：需校验</span></div></div><span class="chip amber">待确认</span></div>
+                        <div class="resource-row"><span class="check"></span><div><h3>archive-package-demo.zip</h3><div class="item-meta"><span>压缩包</span><span>解压码已记录</span><span>来源帖</span></div></div><span class="chip green">已处理</span></div>
+                      </div>
+                    </section>
+                    <aside class="panel-card">
+                      <div class="panel-card-head"><strong>批量操作</strong><span class="chip blue">2 已选</span></div>
+                      <div class="status-board">
+                        <div class="status-card"><strong>复制 Markdown 清单</strong><span>按来源帖和楼层生成可粘贴列表。</span></div>
+                        <div class="status-card"><strong>复制待下载队列</strong><span>只复制待下载和待确认资源。</span></div>
+                        <div class="status-card"><strong>批量标记已处理</strong><span>会先进入确认层，展示影响数量。</span></div>
+                      </div>
+                    </aside>
+                  </div>
+                </section>
+
+                <div class="mobile-note">移动端预期：我的工作台跟随左侧导航中心变成横向入口；顶部 / 底部 / 工具 / 命令 / 设置继续保留原工具栏入口。</div>
+              </div>
+            </section>
+          </div>
+        </section>
+          </section>
+        </div>
+
+        <div class="toolbar-note">页面动作、工具箱、命令和设置仍按原工具栏方式进入；只有“我的工作台”迁入左侧导航中心。</div>
+        <div class="floating-toolbar" aria-label="原工具栏保留示意">
+          <button class="toolbar-button" type="button">顶部</button>
+          <button class="toolbar-button" type="button">底部</button>
+          <button class="toolbar-button active" type="button">工具</button>
+          <button class="toolbar-button" type="button">命令</button>
+          <button class="toolbar-button" type="button">设置</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      var titles = {
+        overview: ['我的内容', '先看总览，再进入对应分区处理积压、资源和购买记录。'],
+        watch: ['稍后看', '管理保存的主题、续读入口、标签和批量移除。'],
+        history: ['最近浏览', '按最近阅读时间查看进度，继续阅读或回到未读楼层。'],
+        purchase: ['购买记录', '集中查看自动购买完成、失败、跳过和待检查记录。'],
+        resource: ['资源工作台', '保留宽版筛选、多选、复制队列和批量标记能力。']
+      };
+      var tabs = Array.prototype.slice.call(document.querySelectorAll('.center-tab, .workbench-tab'));
+      var panels = Array.prototype.slice.call(document.querySelectorAll('[data-view-panel]'));
+      var title = document.getElementById('view-title');
+      var desc = document.getElementById('view-desc');
+
+      function activate(view) {
+        tabs.forEach(function (tab) {
+          var active = tab.dataset.view === view;
+          tab.classList.toggle('active', active);
+          tab.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        panels.forEach(function (panel) {
+          panel.classList.toggle('active', panel.dataset.viewPanel === view);
+        });
+        if (titles[view]) {
+          title.textContent = titles[view][0];
+          desc.textContent = titles[view][1];
+        }
+      }
+
+      tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          activate(tab.dataset.view);
+        });
+      });
+    }());
+  </script>
+</body>
+</html>

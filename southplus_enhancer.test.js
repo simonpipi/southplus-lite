@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.5\.3/);
+assert.match(source, /@version\s+0\.5\.4/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.autoTaskClaim, true);
@@ -290,8 +290,13 @@ assert.equal(relativeResourceDashboard.stats.resourceAdded, 1);
 assert.equal(relativeResourceDashboard.resources[0].sourceUrl, '/read.php?tid-2001.html');
 const commandEntries = enhancer.collectCommandPaletteEntries({
   toolboxConfigs: [
-    { show: true, group: '我的中心', text: '源', label: '资源工作台', description: '管理资源', panelId: 'spx-resource-center' },
     { show: true, group: '阅读模式', key: 'nightMode', text: '夜', label: '夜间模式', description: '切换夜间模式' },
+  ],
+  centerConfigs: [
+    { show: true, group: '我的中心', text: '源', label: '资源工作台', description: '管理资源', panelId: 'spx-resource-center' },
+  ],
+  settingsConfigs: [
+    { show: true, group: '设置', text: '设', label: '脚本设置', description: '配置开关', kind: 'settings' },
   ],
   navigationConfigs: [
     { section: '子栏目', label: 'AI交流', href: 'https://south-plus.org/thread.php?fid-208.html' },
@@ -316,6 +321,7 @@ assert.equal(enhancer.normalizeCommandPaletteFilter('bad'), 'all');
 assert.equal(enhancer.getCommandPaletteCategoryLabel('resource'), '资源');
 assert.ok(commandEntries.some((entry) => entry.title === '资源工作台' && entry.category === 'center'));
 assert.ok(commandEntries.some((entry) => entry.title === '夜间模式' && entry.category === 'setting'));
+assert.ok(commandEntries.some((entry) => entry.title === '脚本设置' && entry.action === 'open-settings'));
 assert.deepEqual(
   enhancer.filterCommandPaletteEntries(commandEntries, { query: '百度', filter: 'resource' }).map((entry) => entry.category),
   ['resource']
@@ -390,7 +396,36 @@ assert.match(source, /pendingModuleNavigationConfigs/);
 assert.match(source, /NAVIGATION_KEY/);
 assert.match(source, /NAVIGATION_KEY = APP \+ ':navigation:v1'/);
 assert.match(source, /NAVIGATION_POOL_LIMIT = 160/);
-assert.match(source, /mountModuleNavigation\('导航中心', getAllModuleNavigationConfigs\(\)\)/);
+assert.match(source, /function isPersistentNavigationSection\(section\)/);
+assert.match(source, /mountModuleNavigation\('导航中心', getAllModuleNavigationConfigs\(settings, state\)\)/);
+assert.match(source, /function getWorkbenchNavigationConfigs\(settings, state\)/);
+assert.match(source, /function getWorkbenchCenterConfigs\(\)/);
+assert.match(source, /spx-module-body\.spx-workbench-mode>\*:not\(\.spx-workbench\)/);
+assert.match(source, /spx-workbench-open \.spx-read-resource-rail/);
+assert.match(source, /spx-workbench-open \.spx-preview-panel\.spx-preview-drawer/);
+assert.match(source, /function setWorkbenchBodyMode\(shell, active\)/);
+assert.match(source, /document\.documentElement\.classList\.toggle\('spx-workbench-open', !!active\)/);
+assert.match(source, /function hideWorkbenchPanel\(\)/);
+assert.match(source, /function syncWorkbenchNavigationActive\(panelId\)/);
+assert.match(source, /section: '我的工作台'/);
+assert.match(source, /isWorkbenchInlinePanelId\(config\.panelId\)/);
+assert.match(source, /'spx-resource-center'/);
+assert.match(source, /return getToolbarCenterConfigs\(\)\.map\(function mapWorkbenchNavigation/);
+assert.match(source, /data-spx-workbench-nav-panel/);
+assert.match(source, /item\.dataset\.spxWorkbenchNavPanel = config\.panelId/);
+assert.match(source, /renderWorkbenchTabs\(shell, panelId\);\s*syncWorkbenchNavigationActive\(panelId\);/);
+assert.match(source, /setModuleNavActive\(nav, target\)/);
+assert.match(source, /indexOf\('spx-module-nav-workbench'\) === -1[\s\S]*?hideWorkbenchPanel\(\)/);
+assert.match(source, /if \(!isWorkbenchInlinePanelId\(panelId\)\) \{\s*hideWorkbenchPanel\(\);\s*return openCenterPanelFallback/s);
+assert.match(source, /config\.panelId && openWorkbenchPanel\(config\.panelId, settings, state\)/);
+assert.match(source, /\.concat\(getWorkbenchNavigationConfigs\(settings, state\)\)/);
+assert.doesNotMatch(source, /getResourceWorkbenchNavigationConfigs/);
+assert.doesNotMatch(source, /\.concat\(getToolbarCenterConfigs\(\)\)\s*\.concat\(\[getToolbarSettingsConfig\(\)\]\)/);
+assert.match(source, /function getToolboxActionConfigs\(url, root\) \{\s*return getToolbarNavigationConfigs\(url, root\)\s*\.concat\(getToolbarToggleConfigs\(url, root\)\)/);
+assert.match(source, /var order = \['页面导航', '阅读模式'\];/);
+assert.match(source, /settingsConfigs: \[getToolbarSettingsConfig\(\)\]/);
+assert.match(source, /openWorkbenchPanel\('spx-resource-center', settings, state\)/);
+assert.match(source, /spx-workbench-inline-panel#spx-content-center,\.spx-workbench-inline-panel#spx-resource-center/);
 assert.match(source, /section: '站点导航'/);
 assert.match(source, /section: '子栏目'/);
 assert.match(source, /appendConfig\('当前位置'/);

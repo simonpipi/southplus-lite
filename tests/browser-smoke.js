@@ -274,7 +274,7 @@ function runForumSmoke(tab) {
     if (toolboxButton) toolboxButton.click();
     const toolbox = q('#spx-toolbox');
     pass('工具箱可打开', !!toolbox && visible(toolbox), text(toolbox, 240));
-    pass('工具箱分组完整', ['页面导航','阅读模式','我的中心','设置'].every((label) => text(toolbox).includes(label)), text(toolbox, 240));
+    pass('工具箱仅保留页面导航和阅读模式分组', ['页面导航','阅读模式'].every((label) => text(toolbox).includes(label)) && !['我的中心','设置'].some((label) => text(toolbox).includes(label)), text(toolbox, 240));
 
     const settingsButton = q('[data-spx-settings-button="1"]');
     if (settingsButton) settingsButton.click();
@@ -376,7 +376,7 @@ function runReadSmoke(win, forumTab, createdTabs) {
     const toolboxButton = q('[data-spx-toolbox-button="1"]');
     if (toolboxButton) toolboxButton.click();
     const toolbox = q('#spx-toolbox');
-    pass('阅读页工具箱包含阅读专属功能', !!toolbox && visible(toolbox) && ['只看楼主','资源工作台','最近浏览'].every((label) => text(toolbox).includes(label)), text(toolbox, 360));
+    pass('阅读页工具箱包含阅读专属功能', !!toolbox && visible(toolbox) && ['只看楼主','阅读排版','夜间模式'].every((label) => text(toolbox).includes(label)) && !['资源工作台','最近浏览','我的中心','设置'].some((label) => text(toolbox).includes(label)), text(toolbox, 360));
     if (!q('#spx-preview-panel') && !text(toolbox).includes('预览图集')) warn('预览图集未形成实页断言', '当前测试帖可能没有候选图片');
     if (!q('#spx-read-resource-rail') && !q('#spx-read-resource-launcher')) warn('固定资源栏未形成实页断言', '当前帖子初始化时没有可识别资源，资源面板已用夹具验证');
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.5.3
+// @version      0.5.4
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -1289,6 +1289,14 @@
     var entries = [];
     (source.toolboxConfigs || []).forEach(function appendToolboxCommand(config, index) {
       var entry = createCommandPaletteEntryFromToolboxConfig(config, index);
+      if (entry) entries.push(entry);
+    });
+    (source.centerConfigs || []).forEach(function appendCenterCommand(config, index) {
+      var entry = createCommandPaletteEntryFromToolboxConfig(config, 200 + index);
+      if (entry) entries.push(entry);
+    });
+    (source.settingsConfigs || []).forEach(function appendSettingsCommand(config, index) {
+      var entry = createCommandPaletteEntryFromToolboxConfig(config, 300 + index);
       if (entry) entries.push(entry);
     });
     entries = entries
@@ -3864,6 +3872,10 @@
     return true;
   }
 
+  function isPersistentNavigationSection(section) {
+    return ['子栏目', '版块导航'].indexOf(String(section || '子栏目')) !== -1;
+  }
+
   function normalizePersistentNavigationConfig(config, baseUrl, fallbackOrder) {
     if (!config) return null;
     var label = normalizeNavigationLabel(config.label || config.title);
@@ -3872,8 +3884,10 @@
     var canonicalLabel = getCanonicalForumNavigationLabel(label, href);
     if (canonicalLabel) label = canonicalLabel;
     if (label.length > 32) label = label.slice(0, 31) + '…';
+    var section = config.persistSection || config.section || '子栏目';
+    if (!isPersistentNavigationSection(section)) return null;
     return {
-      section: config.persistSection || config.section || '子栏目',
+      section: section,
       parentLabel: normalizeNavigationLabel(config.parentLabel || ''),
       label: label,
       href: href,
@@ -4592,6 +4606,7 @@
       '.spx-watch-center{position:fixed;right:66px;bottom:18px;width:var(--spx-panel-width);max-height:var(--spx-panel-max-height);overflow:auto;z-index:100000;background:var(--spx-panel);border:1px solid var(--spx-line);box-shadow:var(--spx-shadow-popover);border-radius:var(--spx-radius-lg);padding:14px;color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;scrollbar-width:thin;}',
       '.spx-resource-panel,#spx-resource-center{width:min(720px,calc(100vw - 96px));}',
       '#spx-content-center{width:min(680px,calc(100vw - 96px));}.spx-content-center-header p{margin:3px 0 0;color:var(--spx-sub);font-size:12px;}.spx-content-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:12px 0;}.spx-content-stat{box-sizing:border-box;display:grid;gap:2px;min-width:0;padding:10px;border:1px solid var(--spx-line-soft);border-radius:12px;background:var(--spx-panel-muted);}.spx-content-stat b{color:var(--spx-strong);font-size:19px;line-height:1;font-weight:900;}.spx-content-stat span{color:var(--spx-text);font-size:12px;font-weight:900;}.spx-content-stat em{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--spx-sub);font-size:11px;font-style:normal;}.spx-content-stat.spx-ok{border-color:#bbf7d0;background:#f0fdf4;}.spx-content-stat.spx-warn{border-color:#fde68a;background:#fffbeb;}',
+      '.spx-workbench-open .spx-read-resource-rail,.spx-workbench-open .spx-read-resource-launcher,.spx-workbench-open .spx-preview-panel.spx-preview-drawer,.spx-workbench-open .spx-preview-popover{display:none!important;}.spx-module-body.spx-workbench-mode>*:not(.spx-workbench){display:none!important;}.spx-workbench{box-sizing:border-box;width:100%;max-width:100%;min-width:0;margin:0 0 12px;overflow:hidden;border:1px solid var(--spx-line);border-radius:14px;background:var(--spx-panel);box-shadow:var(--spx-shadow-card);color:var(--spx-text);font:13px/1.45 Arial,Helvetica,sans-serif;}.spx-workbench[hidden]{display:none!important;}.spx-workbench-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0;padding:13px 14px;border-bottom:1px solid var(--spx-line-soft);background:linear-gradient(135deg,#fff 0%,#f8fafc 100%);}.spx-workbench-title{min-width:0;}.spx-workbench-title strong{display:block;color:var(--spx-strong);font-size:16px;font-weight:900;line-height:1.25;}.spx-workbench-title span{display:block;margin-top:3px;color:var(--spx-sub);font-size:12px;font-weight:800;}.spx-workbench-close{flex:none;min-height:30px;padding:0 10px;border:1px solid var(--spx-line);border-radius:9px;background:#fff;color:var(--spx-text);font-size:12px;font-weight:900;cursor:pointer;}.spx-workbench-tabs{display:flex;gap:7px;max-width:100%;overflow:auto;padding:10px 12px;border-bottom:1px solid var(--spx-line-soft);background:var(--spx-panel-muted);scrollbar-width:thin;}.spx-workbench-tab{flex:none;min-height:30px;padding:0 10px;border:1px solid var(--spx-line);border-radius:999px;background:var(--spx-panel);color:var(--spx-sub);font-size:12px;font-weight:900;cursor:pointer;}.spx-workbench-tab.spx-active{border-color:var(--spx-accent);background:var(--spx-accent-wash);color:var(--spx-accent);}.spx-workbench-stage{min-width:0;max-width:100%;overflow:hidden;}.spx-workbench-inline-panel.spx-watch-center{box-sizing:border-box!important;position:static!important;right:auto!important;bottom:auto!important;display:block!important;width:100%!important;max-width:100%!important;min-width:0!important;max-height:none!important;overflow:hidden!important;z-index:auto!important;border:0!important;border-radius:0!important;box-shadow:none!important;background:transparent!important;padding:14px!important;}.spx-workbench-inline-panel.spx-watch-center[hidden]{display:none!important;}.spx-workbench-inline-panel .spx-watch-center-header{box-sizing:border-box!important;position:static!important;top:auto!important;display:flex!important;align-items:flex-start!important;justify-content:space-between!important;flex-wrap:wrap!important;width:auto!important;max-width:100%!important;min-width:0!important;background:rgba(255,255,255,.92);}.spx-workbench-inline-panel .spx-watch-center-header>div:first-child{min-width:0!important;}.spx-workbench-inline-panel .spx-watch-center-header .spx-watch-actions{flex:1 1 260px!important;justify-content:flex-end!important;max-width:100%!important;min-width:0!important;}.spx-workbench-inline-panel#spx-content-center,.spx-workbench-inline-panel#spx-resource-center{width:100%!important;max-width:100%!important;}.spx-workbench-inline-panel .spx-watch-controls{box-sizing:border-box!important;max-width:100%;min-width:0;}.spx-workbench-inline-panel .spx-watch-controls input{flex:1 1 260px!important;min-width:0!important;max-width:100%;}.spx-workbench-inline-panel .spx-watch-controls select{flex:1 1 150px!important;min-width:0!important;max-width:100%;}.spx-workbench-inline-panel .spx-watch-actions button,.spx-workbench-inline-panel .spx-watch-actions a{white-space:nowrap!important;}',
       '.spx-content-shortcuts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}.spx-content-shortcuts button{min-height:32px;padding:0 10px;border:1px solid var(--spx-line);border-radius:9px;background:#fff;color:var(--spx-text);font-weight:900;cursor:pointer;}.spx-content-shortcuts .spx-primary{border-color:var(--spx-accent);background:var(--spx-accent);color:#fff;}.spx-content-recent-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}.spx-content-recent-section{box-sizing:border-box;padding:10px;border:1px solid var(--spx-line-soft);border-radius:12px;background:var(--spx-panel-muted);}.spx-content-recent-section h4{margin:0 0 8px;color:var(--spx-strong);font-size:13px;font-weight:900;}.spx-content-recent-list{display:grid;gap:7px;}.spx-content-recent{display:grid;gap:3px;min-width:0;padding:7px;border-radius:9px;background:#fff;border:1px solid var(--spx-line-soft);}.spx-content-recent strong,.spx-content-recent span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.spx-content-recent strong{color:var(--spx-strong);font-size:12px;}.spx-content-recent span,.spx-content-empty{color:var(--spx-sub);font-size:11px;}',
       '.spx-read-summary-card{box-sizing:border-box;width:100%;max-width:100%;min-width:0;overflow:hidden;margin:10px 0 12px;padding:14px;border:1px solid var(--spx-line);border-radius:16px;background:var(--spx-panel);box-shadow:var(--spx-shadow-card);color:var(--spx-text);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;}.spx-read-summary-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;margin-bottom:11px;}.spx-read-summary-copy{min-width:0;}.spx-read-summary-eyebrow{margin-bottom:3px;color:var(--spx-accent);font-size:11px;font-weight:900;letter-spacing:.04em;}.spx-read-summary-copy h3{margin:0;color:var(--spx-strong);font-size:17px;line-height:1.35;font-weight:900;word-break:break-word;}.spx-read-summary-copy p{margin:4px 0 0;color:var(--spx-sub);font-size:12px;}.spx-read-summary-chips{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;}.spx-chip{display:inline-flex;align-items:center;min-height:24px;padding:0 8px;border:1px solid var(--spx-line);border-radius:999px;background:var(--spx-panel-muted);color:var(--spx-sub);font-size:11px;font-weight:900;}.spx-chip.spx-ok{border-color:#bbf7d0;background:#f0fdf4;color:#15803d;}.spx-chip.spx-warn{border-color:#fde68a;background:#fffbeb;color:#92400e;}.spx-chip.spx-danger{border-color:#fecaca;background:#fef2f2;color:#b91c1c;}',
       '.spx-read-summary-progress{display:grid;grid-template-columns:auto minmax(140px,1fr);gap:10px;align-items:center;margin-bottom:11px;color:var(--spx-sub);font-size:12px;font-weight:900;}.spx-read-summary-track{height:8px;border-radius:999px;background:#e2e8f0;overflow:hidden;}.spx-read-summary-track i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--spx-accent),#22c55e);}.spx-read-summary-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px;margin-bottom:12px;}.spx-read-summary-metric{box-sizing:border-box;display:grid;gap:2px;min-width:0;padding:9px;border:1px solid var(--spx-line-soft);border-radius:12px;background:var(--spx-panel-muted);}.spx-read-summary-metric b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--spx-strong);font-size:16px;font-weight:900;}.spx-read-summary-metric span{color:var(--spx-text);font-size:12px;font-weight:900;}.spx-read-summary-metric em{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--spx-sub);font-size:11px;font-style:normal;}.spx-read-summary-metric.spx-ok{border-color:#bbf7d0;background:#f0fdf4;}.spx-read-summary-metric.spx-warn{border-color:#fde68a;background:#fffbeb;}.spx-read-summary-metric.spx-danger{border-color:#fecaca;background:#fef2f2;}.spx-read-summary-actions{display:flex;flex-wrap:wrap;gap:7px;}.spx-read-summary-actions button{min-height:32px;padding:0 10px;border:1px solid var(--spx-line);border-radius:9px;background:#fff;color:var(--spx-text);font-weight:900;cursor:pointer;}.spx-read-summary-actions button:disabled{cursor:default;opacity:.56;}.spx-read-summary-actions .spx-primary{border-color:var(--spx-accent);background:var(--spx-accent);color:#fff;}.spx-read-summary-actions button:hover:not(:disabled){border-color:var(--spx-accent);color:var(--spx-accent);background:var(--spx-accent-wash);}',
@@ -4844,10 +4859,10 @@
       '.spx-theme-night #wrapA,.spx-theme-night #main,.spx-theme-night #content,.spx-theme-night.spx-reader #wrapA,.spx-theme-night.spx-reader #main,.spx-theme-night.spx-reader #content,.spx-theme-night.spx-immersive-read #wrapA,.spx-theme-night.spx-immersive-read #main,.spx-theme-night.spx-immersive-read #content{background:var(--spx-page-bg)!important;background-image:none!important;color:var(--spx-text)!important;}',
       '.spx-theme-night a{color:var(--spx-link)!important;}',
       '.spx-theme-night input,.spx-theme-night textarea,.spx-theme-night select{background:var(--spx-input-bg)!important;color:var(--spx-text)!important;border-color:var(--spx-line)!important;}',
-      '.spx-theme-night .t,.spx-theme-night .t3,.spx-theme-night .t5,.spx-theme-night .bdbA,.spx-theme-night table.js-post,.spx-theme-night .spx-home-module,.spx-theme-night .spx-watch-center,.spx-theme-night .spx-settings,.spx-theme-night .spx-toolbox,.spx-theme-night .spx-command-palette,.spx-theme-night .spx-command-detail,.spx-theme-night .spx-preview-panel,.spx-theme-night .spx-preview-popover,.spx-theme-night .spx-author-popover,.spx-theme-night .spx-quick-reply,.spx-theme-night .spx-forum-tools,.spx-theme-night .spx-read-resource-rail,.spx-theme-night .spx-read-resource-card,.spx-theme-night .spx-read-resource-filters,.spx-theme-night .spx-read-summary-card,.spx-theme-night .spx-batch-confirm,.spx-theme-night .spx-data-health,.spx-theme-night .spx-storage-usage-row,.spx-theme-night .spx-storage-suggestions{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;}',
+      '.spx-theme-night .t,.spx-theme-night .t3,.spx-theme-night .t5,.spx-theme-night .bdbA,.spx-theme-night table.js-post,.spx-theme-night .spx-home-module,.spx-theme-night .spx-watch-center,.spx-theme-night .spx-workbench,.spx-theme-night .spx-settings,.spx-theme-night .spx-toolbox,.spx-theme-night .spx-command-palette,.spx-theme-night .spx-command-detail,.spx-theme-night .spx-preview-panel,.spx-theme-night .spx-preview-popover,.spx-theme-night .spx-author-popover,.spx-theme-night .spx-quick-reply,.spx-theme-night .spx-forum-tools,.spx-theme-night .spx-read-resource-rail,.spx-theme-night .spx-read-resource-card,.spx-theme-night .spx-read-resource-filters,.spx-theme-night .spx-read-summary-card,.spx-theme-night .spx-batch-confirm,.spx-theme-night .spx-data-health,.spx-theme-night .spx-storage-usage-row,.spx-theme-night .spx-storage-suggestions{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;}',
       '.spx-theme-night .tr1,.spx-theme-night .tr2,.spx-theme-night .tr3,.spx-theme-night td,.spx-theme-night th,.spx-theme-night .spx-home-module tr.tr3,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3{background:var(--spx-row-bg)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night .spx-home-module tr.tr3:hover,.spx-theme-night.spx-forum-dashboard #content .t.spx-thread-list-table tr.tr3:hover{background:var(--spx-row-hover)!important;}',
-      '.spx-theme-night .spx-home-module>h2,.spx-theme-night .spx-home-module .h,.spx-theme-night .spx-settings-header,.spx-theme-night .spx-settings-footer,.spx-theme-night .spx-toolbox-header,.spx-theme-night .spx-watch-center-header,.spx-theme-night .spx-read-resource-rail-head,.spx-theme-night .spx-preview-lightbox-toolbar,.spx-theme-night .spx-preview-lightbox-caption{background:var(--spx-panel-muted)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-strong)!important;}',
+      '.spx-theme-night .spx-home-module>h2,.spx-theme-night .spx-home-module .h,.spx-theme-night .spx-settings-header,.spx-theme-night .spx-settings-footer,.spx-theme-night .spx-toolbox-header,.spx-theme-night .spx-watch-center-header,.spx-theme-night .spx-workbench-head,.spx-theme-night .spx-workbench-tabs,.spx-theme-night .spx-read-resource-rail-head,.spx-theme-night .spx-preview-lightbox-toolbar,.spx-theme-night .spx-preview-lightbox-caption{background:var(--spx-panel-muted)!important;border-color:var(--spx-line-soft)!important;color:var(--spx-strong)!important;}',
       '.spx-theme-night .spx-read-resource-rail button{background:var(--spx-panel)!important;color:var(--spx-text)!important;border-color:var(--spx-line)!important;}',
       '.spx-theme-night .spx-toolbox-action,.spx-theme-night .spx-watch-item,.spx-theme-night .spx-watch-controls,.spx-theme-night .spx-settings-section,.spx-theme-night .spx-preview-item,.spx-theme-night .spx-preview-images a,.spx-theme-night .spx-read-summary-metric,.spx-theme-night .spx-content-stat,.spx-theme-night .spx-content-recent-section,.spx-theme-night .spx-content-recent,.spx-theme-night .spx-batch-list,.spx-theme-night .spx-batch-item,.spx-theme-night .spx-batch-impact,.spx-theme-night .spx-fold-box,.spx-theme-night .spx-auto-resource-actions a,.spx-theme-night .spx-auto-resource-actions button{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night button,.spx-theme-night .spx-toolbar button,.spx-theme-night .spx-toolbar a,.spx-theme-night .spx-thread-tools button,.spx-theme-night .spx-post-tools button,.spx-theme-night .spx-watch-actions button,.spx-theme-night .spx-watch-actions a{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
@@ -6992,6 +7007,10 @@
   function setCenterPanelHidden(panel, hidden, buttonSelector) {
     if (!panel) return;
     panel.hidden = !!hidden;
+    if (panel.hidden && panel.classList && panel.classList.contains('spx-workbench-inline-panel')) {
+      var workbench = panel.closest && panel.closest('#spx-workbench');
+      if (workbench) hideWorkbenchPanel();
+    }
     if (buttonSelector) {
       qsa(buttonSelector).forEach(function toggleCenterButton(button) {
         button.classList.toggle('spx-active', !panel.hidden);
@@ -7090,6 +7109,157 @@
     };
     panel.spxRender();
     return panel;
+  }
+
+  function getWorkbenchState(state) {
+    return {
+      read: state && state.read ? state.read : loadMap(READ_KEY),
+      watch: state && state.watch ? state.watch : loadMap(WATCH_KEY),
+      progress: state && state.progress ? state.progress : loadReadProgress(),
+      resources: state && state.resources ? state.resources : loadResourceLibrary(),
+    };
+  }
+
+  function getWorkbenchHost() {
+    return qs('.spx-module-body') || getModuleNavigationHost() || document.body;
+  }
+
+  function isWorkbenchInlinePanelId(panelId) {
+    return [
+      'spx-content-center',
+      'spx-watch-center',
+      'spx-history-center',
+      'spx-auto-buy-center',
+      'spx-resource-center',
+    ].indexOf(panelId) !== -1;
+  }
+
+  function getWorkbenchCenterConfigs() {
+    return getToolbarCenterConfigs().filter(function keepWorkbenchCenter(config) {
+      return config && isWorkbenchInlinePanelId(config.panelId);
+    });
+  }
+
+  function createWorkbenchTab(config, active) {
+    var tab = createEl('button', 'spx-workbench-tab' + (active ? ' spx-active' : ''), config.label || '我的内容');
+    tab.type = 'button';
+    tab.dataset.spxWorkbenchPanel = config.panelId || '';
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    if (config.title) tab.title = config.title;
+    return tab;
+  }
+
+  function renderWorkbenchTabs(shell, activePanelId) {
+    var tabs = qs('.spx-workbench-tabs', shell);
+    if (!tabs) return;
+    tabs.textContent = '';
+    getWorkbenchCenterConfigs().forEach(function appendWorkbenchTab(config) {
+      tabs.appendChild(createWorkbenchTab(config, config.panelId === activePanelId));
+    });
+  }
+
+  function ensureWorkbenchPanel(settings, state) {
+    var host = getWorkbenchHost();
+    if (!host) return null;
+    var shell = qs('#spx-workbench', host) || qs('#spx-workbench');
+    if (!shell) {
+      shell = createEl('section', 'spx-workbench');
+      shell.id = 'spx-workbench';
+      shell.hidden = true;
+      shell.setAttribute('aria-label', '我的工作台');
+      var head = createEl('div', 'spx-workbench-head');
+      var title = createEl('div', 'spx-workbench-title');
+      title.appendChild(createEl('strong', '', '我的工作台'));
+      title.appendChild(createEl('span', '', '从左侧导航进入，工具栏保持原来的页面动作和设置入口。'));
+      var close = createEl('button', 'spx-workbench-close', '关闭');
+      close.type = 'button';
+      close.dataset.action = 'close-workbench';
+      head.appendChild(title);
+      head.appendChild(close);
+      shell.appendChild(head);
+      shell.appendChild(createEl('div', 'spx-workbench-tabs'));
+      shell.appendChild(createEl('div', 'spx-workbench-stage'));
+      shell.addEventListener('click', function handleWorkbenchClick(event) {
+        var closeTarget = event.target && event.target.closest && event.target.closest('[data-action="close-workbench"]');
+        if (closeTarget) {
+          hideWorkbenchPanel();
+          return;
+        }
+        var tab = event.target && event.target.closest && event.target.closest('[data-spx-workbench-panel]');
+        if (!tab || !tab.dataset.spxWorkbenchPanel) return;
+        if (!isWorkbenchInlinePanelId(tab.dataset.spxWorkbenchPanel)) return;
+        openWorkbenchPanel(tab.dataset.spxWorkbenchPanel, settings, state, { scroll: false });
+      });
+    }
+    if (shell.parentNode !== host) host.insertBefore(shell, host.firstChild);
+    return shell;
+  }
+
+  function clearWorkbenchStage(stage, keepPanelId) {
+    if (!stage) return;
+    Array.prototype.slice.call(stage.children).forEach(function removePreviousWorkbenchPanel(child) {
+      if (child.id === keepPanelId) return;
+      child.classList.remove('spx-workbench-inline-panel');
+      child.remove();
+    });
+  }
+
+  function openCenterPanelFallback(config, settings, state) {
+    if (!config || !config.createPanel) return false;
+    var centerPanel = config.createPanel(settings, state);
+    if (centerPanel.spxRender) centerPanel.spxRender();
+    setCenterPanelHidden(centerPanel, false, config.buttonSelector);
+    return true;
+  }
+
+  function setWorkbenchBodyMode(shell, active) {
+    var body = shell && shell.closest && shell.closest('.spx-module-body');
+    if (body) body.classList.toggle('spx-workbench-mode', !!active);
+    if (document.documentElement) document.documentElement.classList.toggle('spx-workbench-open', !!active);
+  }
+
+  function hideWorkbenchPanel() {
+    var shell = qs('#spx-workbench');
+    if (shell) {
+      shell.hidden = true;
+      setWorkbenchBodyMode(shell, false);
+    }
+  }
+
+  function syncWorkbenchNavigationActive(panelId) {
+    if (!panelId) return;
+    var nav = qs('#spx-module-nav');
+    if (!nav) return;
+    var target = qsa('[data-spx-workbench-nav-panel]', nav).filter(function matchWorkbenchNavigation(item) {
+      return item.dataset && item.dataset.spxWorkbenchNavPanel === panelId;
+    })[0];
+    if (target) setModuleNavActive(nav, target);
+  }
+
+  function openWorkbenchPanel(panelId, settings, state, options) {
+    var config = getCommandCenterPanelConfig(panelId);
+    var workbenchState = getWorkbenchState(state);
+    if (!config || !config.createPanel) return false;
+    if (!isWorkbenchInlinePanelId(panelId)) {
+      hideWorkbenchPanel();
+      return openCenterPanelFallback(config, settings, workbenchState);
+    }
+    var shell = ensureWorkbenchPanel(settings || loadSettings(), workbenchState);
+    var stage = shell && qs('.spx-workbench-stage', shell);
+    if (!shell || !stage) return openCenterPanelFallback(config, settings, workbenchState);
+    clearWorkbenchStage(stage, panelId);
+    var panel = config.createPanel(settings || loadSettings(), workbenchState);
+    if (panel.spxRender) panel.spxRender();
+    panel.hidden = false;
+    panel.classList.add('spx-workbench-inline-panel');
+    stage.appendChild(panel);
+    shell.hidden = false;
+    setWorkbenchBodyMode(shell, true);
+    shell.dataset.spxWorkbenchPanel = panelId;
+    renderWorkbenchTabs(shell, panelId);
+    syncWorkbenchNavigationActive(panelId);
+    if (!options || options.scroll !== false) shell.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return true;
   }
 
   function openProgressEntry(state, id, url, mode) {
@@ -8154,18 +8324,22 @@
           return;
         }
         if (action === 'open-watch-center') {
+          if (openWorkbenchPanel('spx-watch-center', settings, state)) return;
           setCenterPanelHidden(createWatchCenterPanel(settings, state), false, '[data-spx-watch-center-button="1"]');
           return;
         }
         if (action === 'open-history-center') {
+          if (openWorkbenchPanel('spx-history-center', settings, state)) return;
           setCenterPanelHidden(createHistoryCenterPanel(settings, state), false, '[data-spx-history-center-button="1"]');
           return;
         }
         if (action === 'open-resource-center') {
+          if (openWorkbenchPanel('spx-resource-center', settings, state)) return;
           setCenterPanelHidden(createResourceCenterPanel(settings, state), false, '[data-spx-resource-center-button="1"]');
           return;
         }
         if (action === 'open-auto-buy-center') {
+          if (openWorkbenchPanel('spx-auto-buy-center', settings, state)) return;
           setCenterPanelHidden(createAutoBuyCenterPanel(settings, state), false, '[data-spx-auto-buy-center-button="1"]');
           return;
         }
@@ -8899,6 +9073,9 @@
     }
     item.title = config.title || config.label || '';
     item.dataset.spxModuleNavText = getModuleNavigationSearchText(config);
+    if (config.panelId && String(config.className || '').split(/\s+/).indexOf('spx-module-nav-workbench') !== -1) {
+      item.dataset.spxWorkbenchNavPanel = config.panelId;
+    }
     item.appendChild(createEl('span', 'spx-module-nav-label', config.label));
     if (!config.navigationOnly && (config.countText !== undefined || config.count !== undefined)) {
       item.appendChild(createEl('span', 'spx-module-nav-count', String(config.countText !== undefined ? config.countText : config.count)));
@@ -8907,6 +9084,9 @@
     item.classList.toggle('spx-active', !!active);
     item.addEventListener('click', function activateModuleNav(event) {
       var nav = item.closest ? item.closest('.spx-module-nav') : null;
+      if (String(config.className || '').split(/\s+/).indexOf('spx-module-nav-workbench') === -1) {
+        hideWorkbenchPanel();
+      }
       if (typeof config.onClick === 'function') {
         event.preventDefault();
         config.onClick(event);
@@ -9210,7 +9390,7 @@
     source.forEach(function rememberConfig(config, index) {
       var normalized = normalizePersistentNavigationConfig(config, baseUrl, maxOrder + index + 1);
       if (!normalized) return;
-      if (/^(当前位置|主题导航)$/.test(normalized.section)) return;
+      if (!isPersistentNavigationSection(normalized.section)) return;
       normalized.updatedAt = now;
       var key = getNavigationItemKey(normalized.section, normalized.label, normalized.href);
       var existing = pool[key];
@@ -9234,6 +9414,8 @@
     var pool = loadNavigationPool();
     var poolItems = Object.keys(pool).map(function mapPoolItem(key) {
       return pool[key];
+    }).filter(function keepPersistentPoolSection(item) {
+      return item && isPersistentNavigationSection(item.section);
     });
     return getSeedModuleNavigationConfigs(location.origin)
       .concat(poolItems)
@@ -9390,7 +9572,7 @@
   }
 
   function remountGlobalModuleNavigation() {
-    mountModuleNavigation('导航中心', getAllModuleNavigationConfigs());
+    mountModuleNavigation('导航中心', getAllModuleNavigationConfigs(loadSettings(), getWorkbenchState()));
   }
 
   function scheduleNavigationPoolRefresh(settings) {
@@ -9920,10 +10102,11 @@
     }];
   }
 
-  function getAllModuleNavigationConfigs() {
+  function getAllModuleNavigationConfigs(settings, state) {
     return withPinnedModuleNavigationConfigs(mergeModuleNavigationConfigs(
       getGlobalSiteNavigationConfigs(location.href)
         .concat(getPersistentModuleNavigationConfigs())
+        .concat(getWorkbenchNavigationConfigs(settings, state))
         .concat(getSearchPageNavigationConfigs())
         .concat(getProfilePageNavigationConfigs())
         .concat(getTaskPageNavigationConfigs())
@@ -9935,7 +10118,7 @@
 
   function createGlobalModuleNavigation(settings, state) {
     if (!shouldUseModuleNavigation(settings, location.href, document)) return;
-    mountModuleNavigation('导航中心', getAllModuleNavigationConfigs());
+    mountModuleNavigation('导航中心', getAllModuleNavigationConfigs(settings, state));
     scheduleNavigationPoolRefresh(settings);
   }
 
@@ -14893,6 +15076,34 @@
     ];
   }
 
+  function getWorkbenchNavigationCount(panelId, state) {
+    var workbenchState = getWorkbenchState(state);
+    if (panelId === 'spx-content-center') return '总览';
+    if (panelId === 'spx-watch-center') return Object.keys(workbenchState.watch || {}).length;
+    if (panelId === 'spx-history-center') return Object.keys(workbenchState.progress || {}).length;
+    if (panelId === 'spx-auto-buy-center') return getAutoBuyCenterEntries(loadAutoBuyAttempts()).length;
+    if (panelId === 'spx-resource-center') return Object.keys(workbenchState.resources || {}).length;
+    return '';
+  }
+
+  function getWorkbenchNavigationConfigs(settings, state) {
+    return getToolbarCenterConfigs().map(function mapWorkbenchNavigation(config) {
+      return {
+        section: '我的工作台',
+        label: config.label,
+        title: config.title || config.label,
+        className: 'spx-module-nav-workbench',
+        alwaysShow: true,
+        navigationOnly: false,
+        panelId: config.panelId,
+        countText: getWorkbenchNavigationCount(config.panelId, state),
+        onClick: function openWorkbenchNavigationItem() {
+          openWorkbenchPanel(config.panelId, settings || loadSettings(), state);
+        },
+      };
+    });
+  }
+
   function getToolbarSettingsConfig() {
     return {
       show: true,
@@ -14908,8 +15119,6 @@
   function getToolboxActionConfigs(url, root) {
     return getToolbarNavigationConfigs(url, root)
       .concat(getToolbarToggleConfigs(url, root))
-      .concat(getToolbarCenterConfigs())
-      .concat([getToolbarSettingsConfig()])
       .filter(function keepVisibleToolboxAction(config) {
         return config && config.show !== false;
       });
@@ -14940,7 +15149,7 @@
   }
 
   function getToolboxGroups(url, root) {
-    var order = ['页面导航', '阅读模式', '我的中心', '设置'];
+    var order = ['页面导航', '阅读模式'];
     var groups = {};
     getToolboxActionConfigs(url, root).forEach(function collectToolboxConfig(config) {
       var group = config.group || '其他';
@@ -15032,6 +15241,10 @@
         return;
       }
       if (config.createPanel) {
+        if (config.panelId && openWorkbenchPanel(config.panelId, settings, state)) {
+          setToolboxHidden(toolbox, true, TOOLBOX_BUTTON_SELECTOR);
+          return;
+        }
         var centerPanel = config.createPanel(settings, state);
         if (centerPanel.spxRender) centerPanel.spxRender();
         setCenterPanelHidden(centerPanel, !centerPanel.hidden, config.buttonSelector);
@@ -15123,7 +15336,9 @@
   function getCommandPaletteData(settings, state) {
     return {
       toolboxConfigs: getToolboxActionConfigs(location.href, document),
-      navigationConfigs: getAllModuleNavigationConfigs(),
+      centerConfigs: getToolbarCenterConfigs(),
+      settingsConfigs: [getToolbarSettingsConfig()],
+      navigationConfigs: getAllModuleNavigationConfigs(settings, state),
       pageItems: collectCurrentPageCommandItems(document),
       watch: state && state.watch,
       progress: state && state.progress,
@@ -15207,6 +15422,7 @@
   function openCommandCenterPanel(panelId, settings, state) {
     var config = getCommandCenterPanelConfig(panelId);
     if (!config || !config.createPanel) return false;
+    if (openWorkbenchPanel(panelId, settings, state)) return true;
     var centerPanel = config.createPanel(settings, state);
     if (centerPanel.spxRender) centerPanel.spxRender();
     setCenterPanelHidden(centerPanel, false, config.buttonSelector);
