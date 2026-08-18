@@ -3,9 +3,10 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.5\.0/);
+assert.match(source, /@version\s+0\.5\.3/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
+assert.equal(defaultSettings.autoTaskClaim, true);
 assert.equal(defaultSettings.forumDashboard, true);
 assert.equal(defaultSettings.moduleNavDensity, 'comfortable');
 assert.equal(enhancer.getSettingsPresetDefinitions().resource.label, '资源');
@@ -404,6 +405,10 @@ assert.match(source, /thread_new\.php/);
 assert.match(source, /allowForumViewSwitch: true/);
 assert.match(source, /transient: true/);
 assert.match(source, /section: '版块导航'/);
+assert.match(source, /spx-forum-section-actions/);
+assert.match(source, /spx-forum-post-link/);
+assert.match(source, /postConfig\.imageSrc/);
+assert.match(source, /postLink\.appendChild\(postImage\)/);
 assert.match(source, /spx-forum-gallery-link/);
 assert.match(source, /createEl\('a', 'spx-forum-gallery-link'/);
 assert.match(source, /function enhanceForumGallery/);
@@ -416,6 +421,7 @@ assert.match(source, /scheduleForumGalleryToolRepair/);
 assert.match(source, /clearForumGalleryResourceBadges/);
 assert.match(source, /section-text>span\{float:none!important/);
 assert.match(source, /section-title\{[^}]*height:auto!important/);
+assert.match(source, /section-intro \*:not\(a\)\{color:var\(--spx-sub\)!important/);
 assert.match(source, /section-intro\{[^}]*position:static!important/);
 assert.match(source, /列表模式/);
 assert.match(source, /getForumListModeUrl/);
@@ -440,9 +446,35 @@ assert.doesNotMatch(source, /createGlobalNavigationAction/);
 assert.match(source, /茶馆/);
 assert.match(source, /询问&求物/);
 assert.match(source, /免空资源区/);
+assert.match(source, /同人音声/);
 assert.match(source, /GALGAME汉化区/);
 assert.match(source, /AI交流/);
 assert.match(source, /最新帖子/);
+const commonForumNavigationItems = enhancer.getCommonForumNavigationItems('https://south-plus.org');
+assert.equal(commonForumNavigationItems.find((item) => item.label === '同人音声').href, 'https://south-plus.org/thread.php?fid-128.html');
+assert.equal(commonForumNavigationItems.find((item) => item.label === 'GALGAME汉化区').href, 'https://south-plus.org/thread.php?fid-221.html');
+assert.equal(enhancer.getCanonicalForumNavigationLabel('GALGAME汉化区', 'https://south-plus.org/thread.php?fid-128.html'), '同人音声');
+assert.equal(
+  enhancer.isModuleNavigationConfigActive(
+    commonForumNavigationItems.find((item) => item.label === '同人音声'),
+    'https://south-plus.org/thread.php?fid-128.html'
+  ),
+  true
+);
+assert.equal(
+  enhancer.isModuleNavigationConfigActive(
+    commonForumNavigationItems.find((item) => item.label === 'GALGAME汉化区'),
+    'https://south-plus.org/thread.php?fid-128.html'
+  ),
+  false
+);
+assert.equal(
+  enhancer.isModuleNavigationConfigActive(
+    commonForumNavigationItems.find((item) => item.label === 'GALGAME汉化区'),
+    'https://south-plus.org/thread.php?fid-221.html'
+  ),
+  true
+);
 assert.match(source, /spx-nav-brand/);
 assert.match(source, /South Plus \+\+\+/);
 assert.match(source, /spx-favorite-nav/);
@@ -645,6 +677,14 @@ assert.match(source, /function enhanceTaskPageLayout/);
 assert.match(source, /任务时效\|上次领取\|奖励\\s\*\[:：\]/);
 assert.match(source, /spx-task-side-stack/);
 assert.match(source, /spx-task-main-stack/);
+assert.match(source, /TASK_CLAIM_KEY/);
+assert.match(source, /TASK_CLAIM_RECORD_LIMIT = 100/);
+assert.match(source, /spx-task-claim-inline/);
+assert.match(source, /ensureTaskClaimInlineSection\(mainStack\)/);
+assert.match(source, /同步已完成页/);
+assert.match(source, /syncTaskClaimRecordsFromCurrentPage\(\)/);
+assert.doesNotMatch(source, /spx-task-claim-center/);
+assert.doesNotMatch(source, /open-task-claim-center/);
 assert.match(source, /spx-task-side-stack:empty/);
 assert.match(source, /getTaskLayoutCandidateNodes/);
 assert.match(source, /qsa\('\.fl,\.fr,\.t,\.t3,\.t5', host\)/);
@@ -730,6 +770,38 @@ assert.equal(enhancer.buildPageUrl('https://south-plus.org/thread_new.php?fid-9-
 assert.equal(enhancer.buildPageUrl('https://south-plus.org/thread.php?fid-9-page-2.html', 1), 'https://south-plus.org/thread.php?fid-9.html');
 assert.equal(enhancer.getForumListModeUrl('https://south-plus.org/thread_new.php?fid-9-page-2.html'), 'https://south-plus.org/thread.php?fid-9-page-2.html');
 assert.equal(enhancer.getForumGalleryModeUrl('https://south-plus.org/thread.php?fid-9-page-2.html'), 'https://south-plus.org/thread_new.php?fid-9-page-2.html');
+const forumPostLinkRoot = {
+  querySelectorAll: function querySelectorAll(selector) {
+    return selector === 'a[href*="post.php?fid"]' ? [
+      { getAttribute: function getAttribute() { return 'post.php?fid-9-special-1.html'; } },
+      { getAttribute: function getAttribute() { return 'post.php?fid-9.html'; } },
+    ] : [];
+  },
+};
+assert.deepEqual(enhancer.getForumPostLinkConfig(forumPostLinkRoot, '9'), {
+  label: '发布新帖',
+  href: 'https://south-plus.org/post.php?fid-9.html',
+  title: '在当前版块发布新帖',
+});
+const forumPostImageLinkRoot = {
+  querySelectorAll: function querySelectorAll(selector) {
+    return selector === 'a[href*="post.php?fid"]' ? [
+      {
+        getAttribute: function getAttribute() { return 'post.php?fid-9.html'; },
+        querySelector: function querySelector(selector) {
+          return selector === 'img' ? { getAttribute: function getAttribute() { return 'images/colorImagination/post.png'; } } : null;
+        },
+      },
+    ] : [];
+  },
+};
+assert.deepEqual(enhancer.getForumPostLinkConfig(forumPostImageLinkRoot, '9'), {
+  label: '发布新帖',
+  href: 'https://south-plus.org/post.php?fid-9.html',
+  title: '在当前版块发布新帖',
+  imageSrc: 'https://south-plus.org/images/colorImagination/post.png',
+});
+assert.equal(enhancer.getForumPostLinkConfig({ querySelectorAll: function querySelectorAll() { return []; } }, '9'), null);
 assert.equal(
   enhancer.isForumGalleryModeLink({ textContent: '[点击进入图墙模式]', getAttribute: function getAttribute() { return 'thread_new.php?fid-9-page-1.html'; } }, '9'),
   true
@@ -799,6 +871,8 @@ assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').i
 assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('homeDashboard'), false);
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('nightMode'));
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('networkFriendly'));
+assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('autoTaskClaim'));
+assert.match(source, /保守模式：只在打开任务页时检查日常 \/ 周常可领取入口/);
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/thread.php?fid-9.html').includes('autoBuyPost'));
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/read.php?tid=1', emptyRoot).includes('autoBuyPost'));
 assert.match(source, /data-number="autoBuyMaxSp"/);
@@ -856,6 +930,295 @@ assert.equal(enhancer.parseUserSpBalance('当前拥有 30 SP币'), 30);
 assert.equal(enhancer.parseUserSpBalance('SP余额：8.5'), 8.5);
 assert.equal(enhancer.parseUserSpBalance('SP币: 34'), 34);
 assert.equal(enhancer.parseUserSpBalance('本帖售价：5 SP币'), null);
+
+const taskDailyAt = new Date(2026, 7, 17, 8, 50, 19).getTime();
+const taskWeeklyAt = new Date(2026, 7, 17, 8, 48, 58).getTime();
+assert.equal(enhancer.parseTaskClaimCompletedAt('完成时间 2026-08-17 AM:08:50:19'), taskDailyAt);
+assert.equal(enhancer.parseTaskClaimCompletedAt('完成时间 2026-08-17 PM:08:50:19'), new Date(2026, 7, 17, 20, 50, 19).getTime());
+assert.equal(
+  enhancer.extractTaskAutoClaimUrl("location.href='plugin.php?H_name-tasks-actions-newtasks-job-apply-id-1.html'", 'https://south-plus.org/plugin.php?H_name-tasks.html'),
+  'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks-job-apply-id-1.html'
+);
+assert.equal(
+  enhancer.extractTaskAutoClaimUrl("startjob('15');", 'https://south-plus.org/plugin.php?H_name-tasks.html'),
+  'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job&cid=15'
+);
+assert.deepEqual(
+  enhancer.getTaskAutoClaimResponseResult('<?xml version="1.0"?><ajax><![CDATA[success 已经申请[日常]完成,请赶紧去完成任务吧!]]></ajax>'),
+  { status: 'success', message: '已经申请[日常]完成,请赶紧去完成任务吧!' }
+);
+assert.deepEqual(
+  enhancer.getTaskAutoClaimResponseResult('<?xml version="1.0"?><ajax><![CDATA[confirm 拒离上次申请[日常]还没超过 18 小时]]></ajax>'),
+  { status: 'confirm', message: '拒离上次申请[日常]还没超过 18 小时' }
+);
+assert.equal(
+  enhancer.getTaskInProgressPageUrl(),
+  'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks.html.html'
+);
+assert.match(source, /自动任务领取检查/);
+assert.match(source, /自动任务奖励检查/);
+assert.match(source, /当前页没有领取入口，正在检查进行中任务/);
+assert.match(source, /任务申请完成，正在检查进行中任务奖励/);
+assert.match(source, /进行中任务页都没有发现可领取入口/);
+assert.equal(
+  enhancer.getTaskAutoClaimActionType('领取奖励', 'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks-job-done-id-1.html', '日常 奖励 : SP币 2 G'),
+  'finish'
+);
+assert.equal(
+  enhancer.isTaskAutoClaimCandidate('申请任务', 'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks-job-apply-id-1.html', '日常 奖励 : SP币 2 G'),
+  true
+);
+assert.equal(
+  enhancer.isTaskAutoClaimCandidate('新任务选择', 'https://south-plus.org/plugin.php?H_name-tasks.html.html', '操作 新任务选择 进行中任务'),
+  false
+);
+const taskClaimControl = {
+  textContent: '申请任务',
+  value: '',
+  title: '',
+  getAttribute: function getAttribute(name) {
+    if (name === 'href') return 'plugin.php?H_name-tasks-actions-newtasks-job-apply-id-1.html';
+    return '';
+  },
+  closest: function closest(selector) {
+    if (selector.indexOf('spx-task-side') !== -1) return null;
+    return { textContent: '日常 (人气 : 1) 任务时效2011-12-03~2028-12-31 奖励 : SP币 2 G 申请任务' };
+  },
+};
+const taskClaimRoot = {
+  querySelectorAll: function querySelectorAll(selector) {
+    return selector === 'a[href],a[onclick],button,input[type="button"],input[type="submit"],input[type="image"],[role="button"][onclick]' ? [taskClaimControl] : [];
+  },
+};
+assert.deepEqual(
+  enhancer.getTaskAutoClaimTargets(taskClaimRoot, 'https://south-plus.org/plugin.php?H_name-tasks.html').map(function mapTaskAutoTarget(target) {
+    return [target.taskKey, target.taskName, target.actionType, target.url];
+  }),
+  [[
+    'daily',
+    '日常',
+    'start',
+    'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks-job-apply-id-1.html',
+  ]]
+);
+const taskStartJobControl = {
+  textContent: '',
+  value: '',
+  title: '按这申请此任务',
+  getAttribute: function getAttribute(name) {
+    if (name === 'onclick') return "startjob('15');";
+    return '';
+  },
+  closest: function closest(selector) {
+    if (selector.indexOf('spx-task-side') !== -1) return null;
+    return { textContent: '日常 (人气 : 1) 任务时效2011-12-03~2028-12-31 奖励 : SP币 2 G' };
+  },
+};
+assert.deepEqual(
+  enhancer.getTaskAutoClaimTargets({
+    querySelectorAll: function querySelectorAll(selector) {
+      return selector === 'a[href],a[onclick],button,input[type="button"],input[type="submit"],input[type="image"],[role="button"][onclick]' ? [taskStartJobControl] : [];
+    },
+  }, 'https://south-plus.org/plugin.php?H_name-tasks.html').map(function mapTaskStartJobTarget(target) {
+    return [target.taskKey, target.taskName, target.actionType, target.url];
+  }),
+  [[
+    'daily',
+    '日常',
+    'start',
+    'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job&cid=15',
+  ]]
+);
+const originalDOMParser = global.DOMParser;
+global.DOMParser = function DOMParser() {
+  this.parseFromString = function parseFromString() {
+    return taskClaimRoot;
+  };
+};
+try {
+  assert.deepEqual(
+    enhancer.getTaskAutoClaimTargetsFromHtml('<html></html>', 'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks.html.html').map(function mapTaskAutoHtmlTarget(target) {
+      return [target.taskKey, target.taskName, target.actionType, target.url];
+    }),
+    [[
+      'daily',
+      '日常',
+      'start',
+      'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks-job-apply-id-1.html',
+    ]]
+  );
+} finally {
+  if (originalDOMParser) global.DOMParser = originalDOMParser;
+  else delete global.DOMParser;
+}
+const taskClaimRows = [
+  '日常 (人气 : 91496233) 任务时效2011-12-03~2028-12-31 奖励 : SP币 2 G',
+  '每日SP+2的日常。 已完成 100 % 完成时间 2026-08-17 AM:08:50:19',
+  '周常 (人气 : 26107308) 任务时效2011-12-03~2028-12-31 奖励 : SP币 7 G',
+  '无所事事的周常 已完成 100 % 完成时间 2026-08-17 AM:08:48:58',
+];
+const taskClaimEntries = enhancer.parseTaskClaimRecordsFromRows(taskClaimRows, { sourceUrl: 'https://south-plus.org/plugin.php?H_name-tasks-actions-endtasks.html.html' });
+assert.deepEqual(
+  taskClaimEntries.map(function mapTaskClaim(entry) { return [entry.taskKey, entry.taskName, entry.rewardSp, entry.completedAt]; }),
+  [
+    ['daily', '日常', 2, taskDailyAt],
+    ['weekly', '周常', 7, taskWeeklyAt],
+  ]
+);
+assert.equal(
+  enhancer.parseTaskClaimRecordsFromText('您已完成任务 日常 (人气 : 1) 任务时效2011-12-03~2028-12-31 奖励 : SP币 2 G 每日SP+2的日常。 已完成 100 % 完成时间 2026-08-17 AM:08:50:19')[0].taskName,
+  '日常'
+);
+const manyTaskClaims = {};
+for (let index = 0; index < 105; index += 1) {
+  manyTaskClaims['daily|' + index] = { taskName: '日常', rewardSp: 2, completedAt: 1000 + index, recordedAt: 2000 + index };
+}
+assert.equal(Object.keys(enhancer.pruneTaskClaimRecords(manyTaskClaims)).length, 100);
+assert.equal(enhancer.getTaskClaimCenterEntries(enhancer.pruneTaskClaimRecords(manyTaskClaims))[0].completedAt, 1104);
+assert.deepEqual(
+  enhancer.filterTaskClaimCenterEntries(taskClaimEntries, { filter: 'weekly' }).map(function mapTaskFilter(entry) { return entry.taskName; }),
+  ['周常']
+);
+assert.equal(enhancer.shouldSyncTaskClaimRecordsFromUrl('https://south-plus.org/plugin.php?H_name-tasks-actions-endtasks.html.html'), true);
+assert.equal(enhancer.shouldSyncTaskClaimRecordsFromUrl('https://south-plus.org/plugin.php?H_name-tasks.html'), false);
+
+function createTaskAutoClaimControlFixture(title, onclick, contextText) {
+  return {
+    textContent: '',
+    value: '',
+    title: title,
+    getAttribute: function getAttribute(name) {
+      if (name === 'onclick') return onclick;
+      return '';
+    },
+    closest: function closest(selector) {
+      if (selector.indexOf('spx-task-side') !== -1) return null;
+      return { textContent: contextText };
+    },
+  };
+}
+
+function createTaskAutoClaimRootFixture(controls, rows) {
+  return {
+    querySelectorAll: function querySelectorAll(selector) {
+      if (selector === 'a[href],a[onclick],button,input[type="button"],input[type="submit"],input[type="image"],[role="button"][onclick]') return controls || [];
+      if (selector === 'tr,.tr3,.t,.t3,.spx-task-main-block,.spx-task-main-stack') return rows || [];
+      return [];
+    },
+  };
+}
+
+async function testTaskAutoClaimSimulation() {
+  const previousWindow = global.window;
+  const previousDocument = global.document;
+  const previousLocation = global.location;
+  const previousDOMParser = global.DOMParser;
+  const previousDateNow = Date.now;
+  const storageData = {};
+  const requests = [];
+  const taskContext = '日常 (人气 : 1) 任务时效2011-12-03~2028-12-31 奖励 : SP币 2 G';
+  const taskUrl = 'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job&cid=15';
+  const progressUrl = 'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks.html.html';
+  const completedUrl = 'https://south-plus.org/plugin.php?H_name-tasks-actions-endtasks.html.html';
+  const startControl = createTaskAutoClaimControlFixture('按这申请此任务', "startjob('15');", taskContext);
+  const rewardControl = createTaskAutoClaimControlFixture('领取此奖励', "startjob('15');", taskContext);
+  const host = createTaskAutoClaimRootFixture([startControl], []);
+  host.firstChild = null;
+  host.querySelector = function querySelector(selector) {
+    return selector === '#spx-task-auto-claim-status' ? this.statusBox || null : null;
+  };
+  host.insertBefore = function insertBefore(node) {
+    this.statusBox = node;
+  };
+
+  const progressRoot = createTaskAutoClaimRootFixture([rewardControl], []);
+  const completedRoot = createTaskAutoClaimRootFixture([], [
+    { textContent: '日常 (人气 : 1) 任务时效2011-12-03~2028-12-31 奖励 : SP币 2 G' },
+    { textContent: '每日SP+2的日常。 已完成 100 % 完成时间 2026-08-18 AM:08:49:03' },
+  ]);
+  let jobRequestCount = 0;
+  let fakeNow = 1000000;
+
+  try {
+    Date.now = function nowFixture() { return fakeNow; };
+    global.location = { href: 'https://south-plus.org/plugin.php?H_name-tasks.html', origin: 'https://south-plus.org' };
+    global.window = {
+      location: global.location,
+      localStorage: {
+        getItem: function getItem(key) { return Object.prototype.hasOwnProperty.call(storageData, key) ? storageData[key] : null; },
+        setItem: function setItem(key, value) { storageData[key] = String(value); },
+      },
+      setTimeout: function setTimeoutNow(callback, delay) {
+        fakeNow += Number(delay) || 0;
+        return setTimeout(callback, 0);
+      },
+      clearTimeout: function clearTimeoutNow() {},
+      fetch: async function fetchFixture(url) {
+        const href = String(url);
+        requests.push(href);
+        if (href === taskUrl) {
+          jobRequestCount += 1;
+          return {
+            ok: true,
+            status: 200,
+            text: async function text() {
+              return jobRequestCount === 1
+                ? '<?xml version="1.0"?><ajax><![CDATA[success 已经申请[日常]完成,请赶紧去完成任务吧!]]></ajax>'
+                : '<?xml version="1.0"?><ajax><![CDATA[success 已顺利完成[日常]任务,获得 SP币 2 G]]></ajax>';
+            },
+          };
+        }
+        if (href === progressUrl) {
+          return { ok: true, status: 200, text: async function text() { return 'SPX_PROGRESS_REWARD'; } };
+        }
+        if (href === completedUrl) {
+          return { ok: true, status: 200, text: async function text() { return 'SPX_COMPLETED_TASKS'; } };
+        }
+        throw new Error('unexpected task simulation request: ' + href);
+      },
+    };
+    global.document = {
+      documentElement: { dataset: {} },
+      createElement: function createElement() {
+        return {
+          textContent: '',
+          className: '',
+          dataset: {},
+          style: {},
+          classList: { toggle: function toggle() {} },
+        };
+      },
+      querySelector: function querySelector() { return null; },
+      querySelectorAll: function querySelectorAll() { return []; },
+    };
+    global.DOMParser = function DOMParser() {
+      this.parseFromString = function parseFromString(html) {
+        if (String(html) === 'SPX_PROGRESS_REWARD') return progressRoot;
+        if (String(html) === 'SPX_COMPLETED_TASKS') return completedRoot;
+        return createTaskAutoClaimRootFixture([], []);
+      };
+    };
+
+    await enhancer.maybeRunAutoTaskClaim({ autoTaskClaim: true }, host);
+    assert.deepEqual(requests, [taskUrl, progressUrl, taskUrl, completedUrl]);
+    assert.equal(host.statusBox.textContent, '自动领取：已处理 2 个任务，同步 1 条领取记录。');
+    const taskStorageKey = Object.keys(storageData).find(function findTaskStorageKey(key) { return key.indexOf(':taskClaims:') !== -1; });
+    assert.ok(taskStorageKey);
+    const savedClaims = JSON.parse(storageData[taskStorageKey]);
+    assert.equal(Object.keys(savedClaims).length, 1);
+    assert.equal(Object.values(savedClaims)[0].taskName, '日常');
+  } finally {
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+    if (previousDocument === undefined) delete global.document;
+    else global.document = previousDocument;
+    if (previousLocation === undefined) delete global.location;
+    else global.location = previousLocation;
+    if (previousDOMParser === undefined) delete global.DOMParser;
+    else global.DOMParser = previousDOMParser;
+    Date.now = previousDateNow;
+  }
+}
 
 assert.deepEqual(
   enhancer.getResourceBadgeTypes(enhancer.inferResourceBadgesFromText('[合集] 百度 / 夸克双盘 解压码')),
@@ -1366,7 +1729,14 @@ assert.deepEqual(
     { updatedAt: 2000, progress: 0.9, page: 1, scrollY: 4000 },
     { updatedAt: 3000, progress: 0.8, page: 1, scrollY: 2000 }
   ),
-  { updatedAt: 3000, progress: 0.8, page: 1, scrollY: 2000 }
+  { updatedAt: 2000, progress: 0.9, page: 1, scrollY: 4000 }
+);
+assert.deepEqual(
+  enhancer.mergeReadProgressRecord(
+    { updatedAt: 2000, progress: 1, page: 1, scrollY: 5000 },
+    { updatedAt: 3000, progress: 0.1, page: 2, scrollY: 300 }
+  ),
+  { updatedAt: 3000, progress: 0.1, page: 2, scrollY: 300 }
 );
 assert.deepEqual(
   enhancer.mergeReadProgressRecord(
@@ -1485,6 +1855,7 @@ const backup = enhancer.createBackupPayload({
   watch: { 2: { title: '备份帖', tags: ['资源'] } },
   progress: { 3: { title: '进度帖', progress: 0.5, updatedAt: 200 }, bad: { title: '坏进度' } },
   autoBuyAttempts: { '3:tpc': { status: 'done', updatedAt: 300 }, broken: { message: '坏记录' } },
+  taskClaims: { 'daily|500': { taskName: '日常', rewardSp: 2, completedAt: 500, recordedAt: 500 }, broken: { taskName: '坏任务' } },
   resources: {
     'cloud|https://pan.baidu.com/s/backup?pwd=8888': {
       url: 'https://pan.baidu.com/s/backup?pwd=8888',
@@ -1508,6 +1879,7 @@ assert.deepEqual(backup.data.read, { 1: 100 });
 assert.deepEqual(backup.data.watch['2'].tags, ['资源']);
 assert.deepEqual(Object.keys(backup.data.progress), ['3']);
 assert.deepEqual(Object.keys(backup.data.autoBuyAttempts), ['3:tpc']);
+assert.deepEqual(Object.keys(backup.data.taskClaims), ['daily|500']);
 assert.deepEqual(Object.keys(backup.data.resources), ['cloud|https://pan.baidu.com/s/backup?pwd=8888']);
 assert.equal(backup.data.resources['cloud|https://pan.baidu.com/s/backup?pwd=8888'].accessCode, '8888');
 
@@ -1518,11 +1890,13 @@ const normalizedBackup = enhancer.normalizeBackupPayload(JSON.stringify({
   watch: { 5: { title: '旧格式帖' } },
   progress: { 6: { title: '旧格式进度', updatedAt: 600 } },
   autoBuy: { '6:tpc': { status: 'failed', updatedAt: 700 } },
+  taskClaims: { 'weekly|800': { taskName: '周常', rewardSp: 7, completedAt: 800 } },
 }));
 assert.equal(normalizedBackup.data.settings.cleanMode, false);
 assert.deepEqual(normalizedBackup.data.settings.titleKeywords, ['资源', '精品']);
 assert.deepEqual(normalizedBackup.data.settings.quickReplies, ['支持']);
 assert.deepEqual(Object.keys(normalizedBackup.data.autoBuyAttempts), ['6:tpc']);
+assert.deepEqual(Object.keys(normalizedBackup.data.taskClaims), ['weekly|800']);
 assert.equal(enhancer.normalizeBackupPayload('{bad json'), null);
 assert.equal(
   enhancer.formatBackupFileName(new Date(2026, 0, 2, 3, 4).getTime()),
@@ -1551,6 +1925,10 @@ const healthData = {
     good: { status: 'done', updatedAt: 300 },
     bad: { message: '坏记录' },
   },
+  taskClaims: {
+    goodTask: { taskName: '日常', rewardSp: 2, completedAt: 400, recordedAt: 400 },
+    badTask: { taskName: '坏任务' },
+  },
   resources: {
     goodResource: { url: 'pan.baidu.com/s/health?pwd=9999', type: 'cloud', updatedAt: 300 },
     badResource: {},
@@ -1568,8 +1946,10 @@ assert.deepEqual(healthReport.duplicateProgressKeys, ['duplicate']);
 assert.deepEqual(healthReport.staleProgressKeys, ['stale']);
 assert.deepEqual(healthReport.invalidProgressKeys, ['broken']);
 assert.deepEqual(healthReport.invalidAutoBuyKeys, ['bad']);
+assert.deepEqual(healthReport.invalidTaskClaimKeys, ['badTask']);
 assert.deepEqual(healthReport.invalidResourceKeys, ['badResource']);
 assert.match(enhancer.formatDataHealthSummary(healthReport), /稍后看 2/);
+assert.match(enhancer.formatDataHealthSummary(healthReport), /任务领取记录 1/);
 assert.match(enhancer.formatDataHealthSummary(healthReport), /资源 1/);
 assert.match(enhancer.formatDataHealthWarnings(healthReport), /重复稍后看 1/);
 assert.match(enhancer.formatDataHealthWarnings(healthReport), /异常资源 1/);
@@ -1578,15 +1958,19 @@ const cleanedHealth = enhancer.cleanupDataHealthPayload(healthData, healthNow);
 assert.deepEqual(Object.keys(cleanedHealth.payload.data.watch), ['newWatch']);
 assert.deepEqual(Object.keys(cleanedHealth.payload.data.progress), ['fresh']);
 assert.deepEqual(Object.keys(cleanedHealth.payload.data.autoBuyAttempts), ['good']);
+assert.deepEqual(Object.keys(cleanedHealth.payload.data.taskClaims), ['goodTask']);
 assert.deepEqual(Object.keys(cleanedHealth.payload.data.resources), ['cloud|https://pan.baidu.com/s/health?pwd=9999']);
 assert.equal(cleanedHealth.after.cleanupCount, 0);
 assert.match(enhancer.formatBackupImportPreview(cleanedHealth.payload), /即将导入 South Plus \+\+\+ 本地备份/);
 
 assert.equal(enhancer.formatStorageBytes(1536), '1.5 KB');
 const storageReport = enhancer.collectStorageUsageReport(healthData);
-assert.equal(storageReport.entries.length, 8);
+assert.equal(storageReport.entries.length, 9);
 const resourceUsage = storageReport.entries.find(function findResourceUsage(entry) {
   return entry.label === '资源库';
+});
+const taskClaimUsage = storageReport.entries.find(function findTaskClaimUsage(entry) {
+  return entry.label === '任务领取记录';
 });
 const navigationUsage = storageReport.entries.find(function findNavigationUsage(entry) {
   return entry.label === '导航池';
@@ -1595,9 +1979,10 @@ const navigationPinUsage = storageReport.entries.find(function findNavigationPin
   return entry.label === '导航置顶';
 });
 assert.equal(resourceUsage.count, 1);
+assert.equal(taskClaimUsage.count, 1);
 assert.equal(navigationUsage.count, 1);
 assert.equal(navigationPinUsage.count, 0);
-assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 8 项 · 最大：/);
+assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 9 项 · 最大：/);
 assert.match(enhancer.formatStorageUsageEntry(resourceUsage), /^资源库：.* \/ 1 条 \/ 上限 500$/);
 assert.equal(enhancer.formatStorageUsageLimit(resourceUsage), '1 / 500 条（0%）');
 assert.equal(enhancer.getStorageUsageLevel(resourceUsage), 'ok');
@@ -2134,7 +2519,8 @@ async function testQuickReplySubmissionFlow() {
   assert.equal(rateLimitPending, false);
 }
 
-testQuickReplySubmissionFlow()
+testTaskAutoClaimSimulation()
+  .then(testQuickReplySubmissionFlow)
   .then(function reportSuccess() {
     console.log('southplus_enhancer tests passed');
   })
