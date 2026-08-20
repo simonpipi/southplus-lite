@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.5\.4/);
+assert.match(source, /@version\s+0\.5\.6/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.autoTaskClaim, true);
@@ -18,6 +18,14 @@ assert.deepEqual(enhancer.normalizeBatchConfirmItems(['a', { title: 'b', meta: '
 assert.match(source, /spx-quick-reply-launcher/);
 assert.match(source, /spx-quick-reply-attach/);
 assert.match(source, /panel\.classList\.add\('spx-quick-reply-collapsed'\)/);
+assert.doesNotMatch(source, /function insertTextIntoEditor/);
+assert.doesNotMatch(source, /function getQuickReplyMount/);
+assert.doesNotMatch(source, /function toolbarLink/);
+assert.doesNotMatch(source, /function boxRow/);
+assert.doesNotMatch(source, /function shouldUseProfileListNavigation/);
+assert.doesNotMatch(source, /spx-toolbar a/);
+assert.doesNotMatch(source, /buttonDataset:/);
+assert.doesNotMatch(source, /data-spx-(?:content|watch|history|auto-buy|resource)-center-button/);
 assert.match(source, /quickReply\.type = 'button'/);
 assert.match(source, /a\[onclick\*="postreply"\]/);
 assert.match(source, /bottom:78px/);
@@ -363,7 +371,7 @@ assert.match(source, /spx-module-nav-label/);
 assert.match(source, /spx-module-nav-section/);
 assert.match(source, /NAVIGATION_COLLAPSE_KEY = APP \+ ':navigationCollapse:v1'/);
 assert.match(source, /spx-module-nav-section\[aria-expanded="true"\]:before/);
-assert.match(source, /spx-module-nav-group\.spx-module-nav-collapsed>\.spx-module-nav-node\{display:none!important;\}/);
+assert.match(source, /spx-module-nav-group\.spx-module-nav-collapsed>\.spx-module-nav-node\{'\+CSS_HIDE\+'\}/);
 assert.match(source, /appendModuleNavigationSection\(groupNode, group\.label, collapseState\)/);
 assert.match(source, /--spx-module-width:260px/);
 assert.match(source, /--spx-module-item-height:44px/);
@@ -579,7 +587,7 @@ assert.deepEqual(
 assert.doesNotMatch(source, /createEl\('button', '', '本页屏人'\)/);
 assert.match(source, /spx-home-dashboard \.spx-home-module\{[^}]*width:100%!important;max-width:100%!important;min-width:0!important/);
 assert.match(source, /spx-home-dashboard \.spx-home-module tr\.tr2\{grid-template-columns:minmax\(360px,620px\) 96px minmax\(180px,260px\)!important;justify-content:start!important;\}/);
-assert.match(source, /spx-home-dashboard \.spx-home-module tr\.tr2>td:last-child,\.spx-home-dashboard \.spx-home-module tr\.tr3>td:last-child\{display:none!important;\}/);
+assert.match(source, /spx-home-dashboard \.spx-home-module tr\.tr2>td:last-child,\.spx-home-dashboard \.spx-home-module tr\.tr3>td:last-child\{'\+CSS_HIDE\+'\}/);
 assert.match(source, /spx-home-dashboard \.spx-home-module tr\.tr3>td,\.spx-home-dashboard \.spx-home-module tr\.tr3>th/);
 assert.match(source, /spx-module-nav-host \.t\.spx-thread-list-table table[^}]*display:block!important/);
 assert.match(source, /setThreadRowHiddenClass\(row, 'spx-thread-row-hidden', isDecorativeThreadRow\)/);
@@ -603,7 +611,7 @@ assert.match(source, /spx-theme-night\.spx-forum-dashboard #content \.t\.spx-thr
 assert.match(source, /@media\(max-width:900px\).*spx-module-nav\{position:static!important;display:flex!important;flex-direction:row!important/);
 assert.match(source, /spx-thread-list-table/);
 assert.doesNotMatch(source, /\.spx-forum-dashboard #content \.t tr\.tr3\{display:grid/);
-assert.match(source, /\.spx-immersive-read \.tpc_content\{box-sizing:border-box!important;max-width:var\(--spx-reader-line\)!important/);
+assert.match(source, /\.spx-immersive-read \.tpc_content\{'\+CSS_BOX\+'max-width:var\(--spx-reader-line\)!important/);
 assert.match(source, /\.spx-post-body-split \.tpc_content[^}]*max-width:var\(--spx-reader-line\)!important/);
 assert.match(source, /spx-settings-section/);
 assert.match(source, /spx-settings-footer/);
@@ -692,9 +700,9 @@ assert.match(source, /spx-search-page \.spx-module-body input\[type="search"\]/)
 assert.match(source, /input\.spx-module-nav-search\{[^}]*min-width:0!important;max-width:100%!important/);
 assert.match(source, /className: 'spx-module-nav-search-page'/);
 assert.doesNotMatch(source, /className: 'spx-module-nav-search'/);
-assert.match(source, /spx-module-nav-ready\.spx-search-page \.spx-module-body form\{display:block!important;box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important/);
-assert.match(source, /spx-module-nav-ready\.spx-search-page \.spx-module-body form>\.t,[^{}]*form \.t\{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin-left:0!important;margin-right:0!important/);
-assert.match(source, /spx-module-nav-ready\.spx-search-page \.spx-module-body table,[^{}]*\{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed!important/);
+assert.match(source, /spx-module-nav-ready\.spx-search-page \.spx-module-body form\{display:block!important;'\+CSS_BOX\+'width:100%!important;max-width:100%!important;min-width:0!important;\}/);
+assert.match(source, /spx-module-nav-ready\.spx-search-page \.spx-module-body form>\.t,[^{}]*form \.t\{'\+CSS_BOX\+'width:100%!important;max-width:100%!important;min-width:0!important;margin-left:0!important;margin-right:0!important;\}/);
+assert.match(source, /spx-module-nav-ready\.spx-search-page \.spx-module-body table,\.spx-module-nav-ready\.spx-profile-page \.spx-module-body table\{'\+CSS_BOX\+'width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed!important;\}/);
 assert.doesNotMatch(source, /spx-clean #infobox/);
 assert.doesNotMatch(source, /spx-immersive-read #[^{}']*infobox[^{}']*\{display:none!important/);
 assert.match(source, /spx-module-nav-ready\.spx-home-dashboard \.spx-module-body #spx-home-grid/);
@@ -978,6 +986,10 @@ assert.equal(
   enhancer.extractTaskAutoClaimUrl("startjob('15');", 'https://south-plus.org/plugin.php?H_name-tasks.html'),
   'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job&cid=15'
 );
+assert.equal(
+  enhancer.extractTaskAutoClaimUrl("startjob('15');", 'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks.html.html', 'finish'),
+  'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job2&cid=15'
+);
 assert.deepEqual(
   enhancer.getTaskAutoClaimResponseResult('<?xml version="1.0"?><ajax><![CDATA[success 已经申请[日常]完成,请赶紧去完成任务吧!]]></ajax>'),
   { status: 'success', message: '已经申请[日常]完成,请赶紧去完成任务吧!' }
@@ -997,6 +1009,10 @@ assert.match(source, /任务申请完成，正在检查进行中任务奖励/);
 assert.match(source, /进行中任务页都没有发现可领取入口/);
 assert.equal(
   enhancer.getTaskAutoClaimActionType('领取奖励', 'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks-job-done-id-1.html', '日常 奖励 : SP币 2 G'),
+  'finish'
+);
+assert.equal(
+  enhancer.getTaskAutoClaimActionType('领取此奖励', 'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job2&cid=15', '日常 奖励 : SP币 2 G'),
   'finish'
 );
 assert.equal(
@@ -1062,6 +1078,34 @@ assert.deepEqual(
     '日常',
     'start',
     'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job&cid=15',
+  ]]
+);
+const taskRewardJobControl = {
+  textContent: '',
+  value: '',
+  title: '领取此奖励',
+  getAttribute: function getAttribute(name) {
+    if (name === 'onclick') return "startjob('15');";
+    return '';
+  },
+  closest: function closest(selector) {
+    if (selector.indexOf('spx-task-side') !== -1) return null;
+    return { textContent: '日常 (人气 : 1) 任务时效2011-12-03~2028-12-31 奖励 : SP币 2 G 已完成 100 %' };
+  },
+};
+assert.deepEqual(
+  enhancer.getTaskAutoClaimTargets({
+    querySelectorAll: function querySelectorAll(selector) {
+      return selector === 'a[href],a[onclick],button,input[type="button"],input[type="submit"],input[type="image"],[role="button"][onclick]' ? [taskRewardJobControl] : [];
+    },
+  }, 'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks.html.html').map(function mapTaskRewardJobTarget(target) {
+    return [target.taskKey, target.taskName, target.actionType, target.url];
+  }),
+  [[
+    'daily',
+    '日常',
+    'finish',
+    'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job2&cid=15',
   ]]
 );
 const originalDOMParser = global.DOMParser;
@@ -1153,6 +1197,7 @@ async function testTaskAutoClaimSimulation() {
   const requests = [];
   const taskContext = '日常 (人气 : 1) 任务时效2011-12-03~2028-12-31 奖励 : SP币 2 G';
   const taskUrl = 'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job&cid=15';
+  const rewardUrl = 'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job2&cid=15';
   const progressUrl = 'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks.html.html';
   const completedUrl = 'https://south-plus.org/plugin.php?H_name-tasks-actions-endtasks.html.html';
   const startControl = createTaskAutoClaimControlFixture('按这申请此任务', "startjob('15');", taskContext);
@@ -1171,7 +1216,6 @@ async function testTaskAutoClaimSimulation() {
     { textContent: '日常 (人气 : 1) 任务时效2011-12-03~2028-12-31 奖励 : SP币 2 G' },
     { textContent: '每日SP+2的日常。 已完成 100 % 完成时间 2026-08-18 AM:08:49:03' },
   ]);
-  let jobRequestCount = 0;
   let fakeNow = 1000000;
 
   try {
@@ -1192,15 +1236,17 @@ async function testTaskAutoClaimSimulation() {
         const href = String(url);
         requests.push(href);
         if (href === taskUrl) {
-          jobRequestCount += 1;
           return {
             ok: true,
             status: 200,
-            text: async function text() {
-              return jobRequestCount === 1
-                ? '<?xml version="1.0"?><ajax><![CDATA[success 已经申请[日常]完成,请赶紧去完成任务吧!]]></ajax>'
-                : '<?xml version="1.0"?><ajax><![CDATA[success 已顺利完成[日常]任务,获得 SP币 2 G]]></ajax>';
-            },
+            text: async function text() { return '<?xml version="1.0"?><ajax><![CDATA[success 已经申请[日常]完成,请赶紧去完成任务吧!]]></ajax>'; },
+          };
+        }
+        if (href === rewardUrl) {
+          return {
+            ok: true,
+            status: 200,
+            text: async function text() { return '<?xml version="1.0"?><ajax><![CDATA[success 已顺利完成[日常]任务,获得 SP币 2 G]]></ajax>'; },
           };
         }
         if (href === progressUrl) {
@@ -1235,7 +1281,7 @@ async function testTaskAutoClaimSimulation() {
     };
 
     await enhancer.maybeRunAutoTaskClaim({ autoTaskClaim: true }, host);
-    assert.deepEqual(requests, [taskUrl, progressUrl, taskUrl, completedUrl]);
+    assert.deepEqual(requests, [taskUrl, progressUrl, rewardUrl, completedUrl]);
     assert.equal(host.statusBox.textContent, '自动领取：已处理 2 个任务，同步 1 条领取记录。');
     const taskStorageKey = Object.keys(storageData).find(function findTaskStorageKey(key) { return key.indexOf(':taskClaims:') !== -1; });
     assert.ok(taskStorageKey);
