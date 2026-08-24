@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.5.6
+// @version      0.5.10
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -55,6 +55,8 @@
   var RESTORE_PROGRESS_KEY = APP + ':restoreProgressTid:v1';
   var AUTO_BUY_KEY = APP + ':autoBuyAttempts:v1';
   var TASK_CLAIM_KEY = APP + ':taskClaims:v1';
+  var TASK_AUTO_CLAIM_STATE_KEY = APP + ':taskAutoClaim:v1';
+  var PROFILE_INFOBOX_CACHE_KEY = APP + ':profileInfobox:v1';
   var RESOURCE_KEY = APP + ':resources:v1';
   var READ_RESOURCE_RAIL_COLLAPSED_KEY = APP + ':readResourceRailCollapsed:v1';
   var NAVIGATION_KEY = APP + ':navigation:v1';
@@ -67,6 +69,11 @@
   var AUTO_BUY_CHECK_TTL = 10 * 60 * 1000;
   var AUTO_BUY_ATTEMPT_LIMIT = 100;
   var TASK_CLAIM_RECORD_LIMIT = 100;
+  var TASK_AUTO_CLAIM_DAILY_COOLDOWN = 18 * 60 * 60 * 1000;
+  var TASK_AUTO_CLAIM_WEEKLY_COOLDOWN = 7 * 24 * 60 * 60 * 1000;
+  var TASK_AUTO_CLAIM_PROBE_RETRY_TTL = 6 * 60 * 60 * 1000;
+  var TASK_AUTO_CLAIM_ERROR_RETRY_TTL = 60 * 60 * 1000;
+  var PROFILE_INFOBOX_CACHE_TTL = 6 * 60 * 60 * 1000;
   var RESOURCE_LIMIT = 500;
   var NAVIGATION_POOL_LIMIT = 160;
   var NAVIGATION_REFRESH_TTL = 6 * 60 * 60 * 1000;
@@ -622,6 +629,154 @@
       if (filter === 'all') return true;
       return entry.taskKey === filter;
     });
+  }
+
+  function getTaskAutoClaimCooldownMs(taskKey) {
+    var key = getTaskClaimTaskKey(taskKey);
+    if (key === 'daily') return TASK_AUTO_CLAIM_DAILY_COOLDOWN;
+    if (key === 'weekly') return TASK_AUTO_CLAIM_WEEKLY_COOLDOWN;
+    return TASK_AUTO_CLAIM_PROBE_RETRY_TTL;
+  }
+
+  function getLatestTaskClaimCompletedAt(records, taskKey) {
+    var key = getTaskClaimTaskKey(taskKey);
+    return getTaskClaimCenterEntries(records).reduce(function latestTaskClaimCompletedAt(latest, record) {
+      if (!record || record.taskKey !== key) return latest;
+      return Math.max(latest, Number(record.completedAt) || 0);
+    }, 0);
+  }
+
+  function normalizeTaskAutoClaimState(state) {
+    var source = isPlainObject(state) ? state : {};
+    var tasks = isPlainObject(source.tasks) ? source.tasks : {};
+    var normalizedTasks = {};
+    ['daily', 'weekly'].forEach(function normalizeTaskAutoClaimTask(key) {
+      var item = isPlainObject(tasks[key]) ? tasks[key] : {};
+      normalizedTasks[key] = {
+        nextCheckAt: Math.max(0, Number(item.nextCheckAt) || 0),
+        updatedAt: Math.max(0, Number(item.updatedAt) || 0),
+        reason: String(item.reason || ''),
+      };
+    });
+    return {
+      nextCheckAt: Math.max(0, Number(source.nextCheckAt) || 0),
+      checkedAt: Math.max(0, Number(source.checkedAt) || 0),
+      updatedAt: Math.max(0, Number(source.updatedAt) || 0),
+      reason: String(source.reason || ''),
+      tasks: normalizedTasks,
+    };
+  }
+
+  function loadTaskAutoClaimState() {
+    return normalizeTaskAutoClaimState(loadMap(TASK_AUTO_CLAIM_STATE_KEY));
+  }
+
+  function saveTaskAutoClaimState(state) {
+    saveMap(TASK_AUTO_CLAIM_STATE_KEY, normalizeTaskAutoClaimState(state));
+  }
+
+  function getTaskAutoClaimNextCheckAtFromRecords(records, now) {
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    var candidates = [];
+    var hasUnknownTask = false;
+    ['daily', 'weekly'].forEach(function collectTaskAutoClaimNextCheck(taskKey) {
+      var completedAt = getLatestTaskClaimCompletedAt(records, taskKey);
+      if (completedAt) {
+        candidates.push(completedAt + getTaskAutoClaimCooldownMs(taskKey));
+      } else {
+        hasUnknownTask = true;
+      }
+    });
+    if (hasUnknownTask) candidates.push(currentTime + TASK_AUTO_CLAIM_PROBE_RETRY_TTL);
+    if (!candidates.length) return currentTime + TASK_AUTO_CLAIM_PROBE_RETRY_TTL;
+    return Math.max(currentTime, Math.min.apply(Math, candidates));
+  }
+
+  function getTaskAutoClaimGate(records, state, now) {
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    var normalizedState = normalizeTaskAutoClaimState(state);
+    var globalNextCheckAt = Math.max(0, Number(normalizedState.nextCheckAt) || 0);
+    if (globalNextCheckAt > currentTime) {
+      return {
+        canRun: false,
+        nextCheckAt: globalNextCheckAt,
+        dueTaskKeys: [],
+        reason: normalizedState.reason || 'global-cooldown',
+      };
+    }
+
+    var dueTaskKeys = [];
+    var futureChecks = [];
+    ['daily', 'weekly'].forEach(function collectTaskAutoClaimGate(taskKey) {
+      var completedAt = getLatestTaskClaimCompletedAt(records, taskKey);
+      var recordNextCheckAt = completedAt ? completedAt + getTaskAutoClaimCooldownMs(taskKey) : 0;
+      var taskState = normalizedState.tasks[taskKey] || {};
+      var taskNextCheckAt = Math.max(recordNextCheckAt, Number(taskState.nextCheckAt) || 0);
+      if (!taskNextCheckAt || taskNextCheckAt <= currentTime) {
+        dueTaskKeys.push(taskKey);
+      } else {
+        futureChecks.push(taskNextCheckAt);
+      }
+    });
+
+    if (dueTaskKeys.length) {
+      return { canRun: true, nextCheckAt: 0, dueTaskKeys: dueTaskKeys, reason: 'due' };
+    }
+    return {
+      canRun: false,
+      nextCheckAt: futureChecks.length ? Math.min.apply(Math, futureChecks) : currentTime + TASK_AUTO_CLAIM_PROBE_RETRY_TTL,
+      dueTaskKeys: [],
+      reason: 'task-cooldown',
+    };
+  }
+
+  function rememberTaskAutoClaimCheck(reason, nextCheckAt, now) {
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    var state = loadTaskAutoClaimState();
+    state.checkedAt = currentTime;
+    state.updatedAt = currentTime;
+    state.reason = String(reason || 'checked');
+    state.nextCheckAt = Math.max(currentTime, Number(nextCheckAt) || (currentTime + TASK_AUTO_CLAIM_PROBE_RETRY_TTL));
+    saveTaskAutoClaimState(state);
+    return state;
+  }
+
+  function rememberTaskAutoClaimTaskCooldown(taskKey, reason, nextCheckAt, now) {
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    var key = getTaskClaimTaskKey(taskKey);
+    if (key !== 'daily' && key !== 'weekly') return loadTaskAutoClaimState();
+    var state = loadTaskAutoClaimState();
+    state.checkedAt = currentTime;
+    state.updatedAt = currentTime;
+    state.reason = String(reason || 'task-cooldown');
+    state.tasks[key] = {
+      nextCheckAt: Math.max(currentTime, Number(nextCheckAt) || (currentTime + getTaskAutoClaimCooldownMs(key))),
+      updatedAt: currentTime,
+      reason: state.reason,
+    };
+    saveTaskAutoClaimState(state);
+    return state;
+  }
+
+  function getTaskAutoClaimBlockedRetryAt(results, now) {
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    var candidates = [];
+    (results || []).filter(isTaskAutoClaimResultBlocked).forEach(function collectBlockedTaskAutoClaimRetry(result) {
+      var taskKey = result && result.target && result.target.taskKey;
+      if (taskKey === 'daily' || taskKey === 'weekly') {
+        candidates.push(currentTime + getTaskAutoClaimCooldownMs(taskKey));
+      }
+    });
+    return candidates.length ? Math.min.apply(Math, candidates) : currentTime + TASK_AUTO_CLAIM_ERROR_RETRY_TTL;
+  }
+
+  function formatTaskAutoClaimNextCheck(nextCheckAt, now) {
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    var remainingMs = Math.max(0, Number(nextCheckAt) - currentTime);
+    if (!remainingMs) return '现在';
+    var hours = Math.ceil(remainingMs / (60 * 60 * 1000));
+    if (hours >= 24) return Math.ceil(hours / 24) + ' 天后';
+    return hours + ' 小时后';
   }
 
   function isTaskInProgressPageUrl(url) {
@@ -2873,6 +3028,28 @@
     return '自动购买未重复执行：' + label + detail + '。如需重试，请清空自动购买记录后再操作。';
   }
 
+  function getAutoBuyDoneAttemptForThread(attempts, threadId) {
+    var tid = parseThreadId(threadId);
+    if (!tid) return null;
+    return Object.keys(attempts || {}).reduce(function findLatestAutoBuyDoneAttempt(latest, key) {
+      var record = attempts[key] || {};
+      var keyTid = String(key || '').split(':')[0];
+      if (keyTid !== tid || record.status !== 'done') return latest;
+      var current = Object.assign({ key: key }, record);
+      if (!latest || (Number(current.updatedAt) || 0) > (Number(latest.updatedAt) || 0)) return current;
+      return latest;
+    }, null);
+  }
+
+  function formatAutoBuyNavSuccessDetail(record) {
+    var data = record || {};
+    var parts = ['自动购买已完成'];
+    if (data.price !== undefined && isFinite(Number(data.price))) parts.push('价格 ' + Number(data.price) + ' SP');
+    if (data.resourceSummary) parts.push('资源：' + data.resourceSummary);
+    if (data.message) parts.push(data.message);
+    return parts.join(' · ');
+  }
+
   function parseTodayCount(text) {
     var match = String(text || '').match(/\((\d+)\)\s*$/);
     return match ? Number(match[1]) : 0;
@@ -4206,6 +4383,7 @@
     if (extra.url) record.url = String(extra.url);
     if (extra.price !== undefined) record.price = Number(extra.price);
     if (extra.balance !== undefined) record.balance = Number(extra.balance);
+    if (extra.resourceSummary) record.resourceSummary = String(extra.resourceSummary);
 
     var attempts = loadAutoBuyAttempts();
     attempts[key] = record;
@@ -4274,6 +4452,8 @@
       '.spx-favorite-nav-trigger:hover,.spx-favorite-nav-trigger[aria-expanded="true"]{background:#fff7ed!important;color:#7c2d12!important;text-decoration:none!important;box-shadow:inset 0 -2px 0 var(--spx-warn)!important;}',
       '.spx-favorite-nav-star{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:18px!important;height:18px!important;border-radius:6px!important;background:var(--spx-warn)!important;color:#fff!important;font-size:12px!important;line-height:18px!important;}',
       '.spx-favorite-nav-count{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-width:20px!important;height:18px!important;padding:0 6px!important;border-radius:999px!important;background:#fff!important;color:var(--spx-warn)!important;font-size:11px!important;line-height:18px!important;font-variant-numeric:tabular-nums!important;}',
+      '.spx-favorite-nav-note,.spx-task-auto-claim-nav-note{'+CSS_BOX+'display:inline-flex!important;align-items:center!important;justify-content:center!important;height:24px!important;max-width:128px!important;margin-left:8px!important;padding:0 10px!important;border:1px solid #bbf7d0!important;border-radius:999px!important;background:#f0fdf4!important;color:#166534!important;font-size:12px!important;font-weight:900!important;line-height:24px!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;box-shadow:0 4px 10px rgba(22,101,52,.12)!important;}',
+      '.spx-auto-buy-nav-note{border-color:#fed7aa!important;background:#fff7ed!important;color:#9a3412!important;}',
       '.spx-favorite-nav-panel{'+CSS_BOX+'position:absolute!important;top:46px!important;right:0!important;left:auto!important;z-index:10020!important;width:min(720px,calc(100vw - 72px))!important;max-height:min(78vh,720px)!important;overflow:hidden!important;border:1px solid #f3c27a!important;border-radius:12px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;box-shadow:0 22px 52px rgba(15,23,42,.24)!important;font:14px/1.55 '+SPX_FONT+'!important;}',
       '.spx-favorite-nav-panel[hidden]{'+CSS_HIDE+'}',
       '.spx-favorite-head{display:flex!important;align-items:flex-start!important;justify-content:space-between!important;gap:12px!important;padding:14px 14px 10px!important;border-bottom:1px solid #fde4bd!important;background:linear-gradient(180deg,#fff7ed 0%,var(--spx-panel) 100%)!important;}',
@@ -4316,6 +4496,12 @@
       '.spx-profile-page #main,.spx-profile-page #content{'+CSS_BOX+''+CSS_PAGE_W+'margin:16px auto 42px!important;padding:0!important;display:block!important;}',
       '.spx-profile-page #main>*{'+CSS_BOX+'width:100%!important;max-width:none!important;}',
       '.spx-profile-page #main>.bdbA,.spx-profile-page #main>.t{margin-left:0!important;margin-right:0!important;}',
+      '#infobox.spx-profile-infobox-restored{'+CSS_BOX+'display:flex!important;align-items:center!important;justify-content:space-between!important;gap:20px!important;min-height:88px!important;margin:0 auto 14px!important;padding:14px 22px!important;background:var(--spx-panel)!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;box-shadow:var(--spx-shadow-card)!important;color:var(--spx-text)!important;overflow:hidden!important;}',
+      '.spx-profile-infobox-main{display:flex!important;align-items:center!important;gap:14px!important;min-width:0!important;flex:1 1 auto!important;}',
+      '.spx-profile-infobox-avatar{flex:0 0 56px!important;width:56px!important;height:56px!important;overflow:hidden!important;border-radius:6px!important;background:var(--spx-panel-muted)!important;}.spx-profile-infobox-avatar img{display:block!important;width:56px!important;height:56px!important;object-fit:cover!important;}',
+      '.spx-profile-infobox-body{display:grid!important;gap:6px!important;min-width:0!important;flex:1 1 auto!important;}.spx-profile-infobox-meta{color:var(--spx-text)!important;font-size:14px!important;font-weight:800!important;line-height:1.45!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}.spx-profile-infobox-meta a{font-size:14px!important;font-weight:900!important;}.spx-profile-infobox-honor{color:var(--spx-text)!important;font-size:14px!important;line-height:1.45!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
+      '.spx-profile-infobox-hot{display:flex!important;align-items:center!important;justify-content:flex-end!important;gap:8px!important;flex:0 1 44%!important;min-width:300px!important;color:var(--spx-sub)!important;font-size:13px!important;font-weight:800!important;line-height:1.45!important;white-space:normal!important;overflow:visible!important;flex-wrap:wrap!important;}.spx-profile-infobox-hot-label{flex:none!important;color:var(--spx-sub)!important;font-weight:900!important;}.spx-profile-infobox-hot a{flex:none!important;font-size:13px!important;font-weight:900!important;}',
+      '@media(max-width:760px){#infobox.spx-profile-infobox-restored{align-items:flex-start!important;flex-direction:column!important;padding:12px 14px!important}.spx-profile-infobox-hot{justify-content:flex-start!important;min-width:0!important;flex:1 1 auto!important}.spx-profile-infobox-meta,.spx-profile-infobox-honor{white-space:normal!important}}',
       '.spx-account-tabs{'+CSS_BOX+'display:flex!important;flex-wrap:wrap!important;align-items:center!important;justify-content:flex-start!important;gap:8px!important;width:100%!important;margin:0 0 14px!important;padding:12px 14px!important;background:#fff!important;border:1px solid #d7e1eb!important;border-radius:8px!important;box-shadow:0 6px 18px rgba(15,23,42,.06)!important;}',
       '.spx-account-tabs a{display:flex!important;align-items:center!important;justify-content:center!important;min-height:34px!important;padding:0 16px!important;border:1px solid #cbd5e1!important;border-radius:8px!important;background:#f8fafc!important;color:#075985!important;font-size:15px!important;font-weight:800!important;line-height:1.2!important;text-decoration:none!important;}',
       '.spx-account-tabs a.spx-account-tab-active,.spx-account-tabs a:hover{background:#e0f2fe!important;border-color:#7dd3fc!important;color:#0369a1!important;text-decoration:none!important;}',
@@ -4342,7 +4528,7 @@
       '.spx-site-shell:not(.spx-reader) .tr3 td,.spx-site-shell:not(.spx-reader) .tr1 td,.spx-site-shell:not(.spx-reader) th,.spx-site-shell:not(.spx-reader) td{padding:8px 10px!important;}',
       '.spx-task-page #wrapA,.spx-task-page #main{'+CSS_BOX+'max-width:none!important;background:var(--spx-page-bg)!important;}',
       '.spx-task-page #main{display:block!important;width:calc(100vw - 40px)!important;max-width:1480px!important;margin:16px auto 42px!important;padding:0!important;overflow:hidden!important;}',
-      '.spx-task-page #main>.bdbA{'+CSS_BOX+'width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;}',
+      '.spx-task-page #main>.bdbA,.spx-task-page #main>.spx-task-breadcrumb-block{'+CSS_BOX+'width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;}',
       '.spx-task-page #main>.t,.spx-task-page #main>.t3,.spx-task-page #main>.t5{'+CSS_BOX+'width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;}',
       '.spx-task-page #main>.t table,.spx-task-page #main>.t3 table,.spx-task-page #main>.t5 table{max-width:100%!important;}',
       '@media(max-width:900px){.spx-task-page #main{width:calc(100vw - 16px)!important;margin:10px 8px 34px!important}}',
@@ -4898,7 +5084,13 @@
       '.spx-theme-night button,.spx-theme-night .spx-toolbar button,.spx-theme-night .spx-thread-tools button,.spx-theme-night .spx-post-tools button,.spx-theme-night .spx-watch-actions button,.spx-theme-night .spx-watch-actions a{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night .spx-toolbox-action:hover,.spx-theme-night .spx-toolbox-action:focus-visible,.spx-theme-night button:hover,.spx-theme-night .spx-toolbar button:hover{border-color:var(--spx-accent)!important;background:var(--spx-accent-wash)!important;color:var(--spx-accent)!important;}',
       '.spx-theme-night .spx-toolbox-action.spx-active,.spx-theme-night .spx-toolbar .spx-active,.spx-theme-night .spx-settings .spx-primary{border-color:var(--spx-accent)!important;background:var(--spx-accent-soft)!important;color:var(--spx-accent)!important;}',
-      '.spx-theme-night .spx-toolbox-key,.spx-theme-night .spx-status-badge,.spx-theme-night .spx-home-badge{background:var(--spx-accent-soft)!important;border-color:var(--spx-line)!important;color:var(--spx-accent)!important;}',
+      '.spx-theme-night .spx-toolbox-key,.spx-theme-night .spx-status-badge,.spx-theme-night .spx-home-badge,.spx-theme-night .spx-resource-badge,.spx-theme-night .spx-preview-chip,.spx-theme-night .spx-preview-download-badge,.spx-theme-night .spx-command-pill,.spx-theme-night .spx-forum-dashboard-chip,.spx-theme-night .spx-task-claim-reward,.spx-theme-night .spx-forum-tools .spx-resource-filter-active,.spx-theme-night td[id^="td_"] .s8{background:var(--spx-accent-soft)!important;border-color:var(--spx-line)!important;color:var(--spx-accent)!important;}',
+      '.spx-theme-night .spx-status-badge.spx-status-todo,.spx-theme-night .spx-preview-download-badge.spx-zip,.spx-theme-night .spx-command-pill.spx-warn,.spx-theme-night .spx-resource-badge-magnet,.spx-theme-night .spx-resource-badge-external,.spx-theme-night .spx-forum-dashboard-chip.spx-amber{background:rgba(251,191,36,.16)!important;border-color:rgba(251,191,36,.42)!important;color:#facc15!important;}',
+      '.spx-theme-night .spx-status-badge.spx-status-done,.spx-theme-night .spx-preview-chip.spx-ok,.spx-theme-night .spx-command-pill.spx-ok,.spx-theme-night .spx-resource-badge-quark,.spx-theme-night .spx-forum-dashboard-chip.spx-green{background:rgba(74,222,128,.16)!important;border-color:rgba(74,222,128,.42)!important;color:#86efac!important;}',
+      '.spx-theme-night .spx-status-badge.spx-status-failed,.spx-theme-night .spx-status-badge.spx-status-invalid,.spx-theme-night .spx-preview-download-badge.spx-fail,.spx-theme-night .spx-resource-badge-archive{background:var(--spx-danger-soft)!important;border-color:rgba(248,113,113,.42)!important;color:var(--spx-danger)!important;}',
+      '.spx-theme-night .spx-resource-badge-guess,.spx-theme-night .spx-resource-badge-ed2k,.spx-theme-night .spx-resource-badge-cloud{background:var(--spx-panel-muted)!important;border-color:var(--spx-line)!important;color:var(--spx-sub)!important;}',
+      '.spx-theme-night #infobox.spx-profile-infobox-restored,.spx-theme-night .spx-profile-infobox-restored{background:var(--spx-panel)!important;border-color:var(--spx-line)!important;color:var(--spx-text)!important;box-shadow:var(--spx-shadow-card)!important;}',
+      '.spx-theme-night .spx-profile-infobox-meta,.spx-theme-night .spx-profile-infobox-honor{color:var(--spx-text)!important;}.spx-theme-night .spx-profile-infobox-hot,.spx-theme-night .spx-profile-infobox-hot-label{color:var(--spx-sub)!important;}',
       '.spx-theme-night .spx-preview-lightbox{background:rgba(0,0,0,.92)!important;color:var(--spx-text)!important;}',
       '.spx-theme-night .spx-preview-lightbox-shell,.spx-theme-night .spx-preview-lightbox-stage,.spx-theme-night .spx-preview-lightbox-strip{background:#070908!important;border-color:var(--spx-line)!important;}',
       '.spx-theme-night .spx-preview-lightbox-image{background:#0b0f0c!important;}',
@@ -4958,13 +5150,15 @@
       '.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host{display:grid!important;grid-template-columns:minmax(196px,var(--spx-module-width)) minmax(0,1fr)!important;gap:14px!important;align-items:start!important;width:calc(100vw - 40px)!important;max-width:1480px!important;margin:14px auto 56px!important;}',
       '.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-nav,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-nav{grid-column:1!important;width:auto!important;max-width:100%!important;min-width:0!important;}',
       '.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-body,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-body{grid-column:2!important;display:block!important;width:auto!important;max-width:100%!important;min-width:0!important;overflow:hidden!important;}',
-      '.spx-module-nav-ready.spx-task-page .spx-module-body>.bdbA{'+CSS_BOX+'width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-module-body>.bdbA,.spx-module-nav-ready.spx-task-page .spx-module-body>.spx-task-breadcrumb-block{'+CSS_BOX+'width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-task-breadcrumb-block #breadcrumbs,.spx-module-nav-ready.spx-task-page .spx-module-body>#breadcrumbs{'+CSS_BOX+'display:flex!important;flex-wrap:wrap!important;align-items:center!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-task-breadcrumb-block #breadcrumbs .crumbs-item,.spx-module-nav-ready.spx-task-page .spx-module-body>#breadcrumbs .crumbs-item{min-width:0!important;max-width:100%!important;white-space:normal!important;word-break:break-word!important;}',
       '.spx-module-nav-ready.spx-task-page .spx-module-body>.t,.spx-module-nav-ready.spx-task-page .spx-module-body>.t3,.spx-module-nav-ready.spx-task-page .spx-module-body>.t5{'+CSS_BOX+'width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 14px!important;overflow:hidden!important;}',
       '.spx-module-nav-ready.spx-task-page .spx-module-body table{'+CSS_BOX+'width:100%!important;max-width:100%!important;}',
       '.spx-module-nav-ready.spx-task-page .spx-module-body td,.spx-module-nav-ready.spx-task-page .spx-module-body th{max-width:100%!important;word-break:break-word!important;}',
       '.spx-module-nav-ready.spx-task-page .spx-module-body img{max-width:100%!important;height:auto!important;}',
       '.spx-module-nav-ready.spx-task-page #main.spx-module-nav-host>.spx-module-body.spx-task-layout-body,.spx-module-nav-ready.spx-task-page #content.spx-module-nav-host>.spx-module-body.spx-task-layout-body{display:grid!important;grid-template-columns:minmax(240px,320px) minmax(0,1fr)!important;gap:18px!important;align-items:start!important;overflow:visible!important;}',
-      '.spx-module-nav-ready.spx-task-page .spx-task-layout-body>.bdbA{grid-column:1/-1!important;}',
+      '.spx-module-nav-ready.spx-task-page .spx-task-layout-body>.bdbA,.spx-module-nav-ready.spx-task-page .spx-task-layout-body>.spx-task-breadcrumb-block{grid-column:1/-1!important;}',
       '.spx-module-nav-ready.spx-task-page .spx-task-side-stack{grid-column:1!important;display:flex!important;flex-direction:column!important;gap:14px!important;min-width:0!important;}',
       '.spx-module-nav-ready.spx-task-page .spx-task-side-stack:empty{'+CSS_HIDE+'}',
       '.spx-module-nav-ready.spx-task-page .spx-task-main-stack{grid-column:2!important;min-width:0!important;max-width:100%!important;overflow:hidden!important;}',
@@ -5094,6 +5288,15 @@
     var urlMatch = text.match(/[?&]uid[=-](\d+)/) || text.match(/uid-(\d+)/);
     if (urlMatch) return urlMatch[1];
 
+    var globalDocument = typeof document !== 'undefined' ? document : null;
+    if (scope && scope !== globalDocument) {
+      var sourceUidLink = qsa('a[href*="uid"]', scope).map(function mapSourceUidLink(link) {
+        return link.getAttribute('href') || link.href || '';
+      }).filter(Boolean)[0];
+      var sourceUidMatch = String(sourceUidLink || '').match(/uid[=-](\d+)/) || String(sourceUidLink || '').match(/uid-(\d+)/);
+      if (sourceUidMatch) return sourceUidMatch[1];
+    }
+
     var ownProfileLink = qsa('a[href*="u.php?action-show-uid"]', scope).filter(function likelyOwnProfile(link) {
       return /查看个人资料|个人资料|资料/.test((link.textContent || '').trim());
     })[0] || qs('#user-login a[href*="u.php"]', scope);
@@ -5131,6 +5334,191 @@
     if (/action-trade/.test(text)) return 'trade';
     if (/\/u\.php/.test(text)) return 'home';
     return '';
+  }
+
+  function shouldRestoreProfileInfobox(url) {
+    var activeKey = getAccountActiveKey(url || (typeof location !== 'undefined' ? location.href : ''));
+    return ['home', 'profile', 'topic', 'post', 'favor', 'friend', 'trade'].indexOf(activeKey) !== -1;
+  }
+
+  function getProfileInfoboxSourceUrl(origin) {
+    return String(origin || (typeof location !== 'undefined' ? location.origin : 'https://south-plus.org')) + '/thread.php?fid-9.html';
+  }
+
+  function getProfileInfoboxCache(now) {
+    var cache = loadMap(PROFILE_INFOBOX_CACHE_KEY);
+    var updatedAt = Number(cache.updatedAt) || 0;
+    if (!cache.html || !updatedAt) return null;
+    if ((now === undefined ? Date.now() : Number(now)) - updatedAt > PROFILE_INFOBOX_CACHE_TTL) return null;
+    return cache;
+  }
+
+  function saveProfileInfoboxCache(html, sourceUrl, now) {
+    var value = String(html || '').trim();
+    if (!value || value.indexOf('id="infobox"') === -1) return false;
+    saveMap(PROFILE_INFOBOX_CACHE_KEY, {
+      html: value.slice(0, 12000),
+      sourceUrl: String(sourceUrl || ''),
+      updatedAt: now === undefined ? Date.now() : Number(now),
+    });
+    return true;
+  }
+
+  function createProfileInfoboxFromHtml(html) {
+    if (!html || typeof DOMParser === 'undefined') return null;
+    var doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+    var source = qs('#infobox', doc);
+    if (!source) return null;
+    return createProfileInfoboxFallback(source);
+  }
+
+  function createProfileInfoboxLink(label, href) {
+    var link = createEl('a', '', label);
+    link.href = href;
+    return link;
+  }
+
+  function getProfileInfoboxSourceHref(sourceBox, label) {
+    if (!sourceBox) return '';
+    var sourceLink = qsa('a[href]', sourceBox).filter(function matchProfileInfoboxSourceLink(link) {
+      return compactText(link.textContent) === label;
+    })[0];
+    return sourceLink ? sourceLink.getAttribute('href') || sourceLink.href || '' : '';
+  }
+
+  function cloneProfileInfoboxAvatar(sourceBox) {
+    var avatar = (sourceBox && (qs('img[src*="face"]', sourceBox) || qs('img', sourceBox))) || qs('#u-portrait img') || qs('#user_info img');
+    if (!avatar) return null;
+    var clone = avatar.cloneNode(false);
+    clone.removeAttribute('id');
+    clone.removeAttribute('style');
+    Array.prototype.slice.call(clone.attributes || []).forEach(function removeProfileAvatarHandler(attribute) {
+      if (/^on/i.test(attribute.name || '')) clone.removeAttribute(attribute.name);
+    });
+    return clone;
+  }
+
+  function getProfileInfoboxHonor(sourceBox) {
+    var currentHonor = compactText(qs('#honor') && qs('#honor').textContent);
+    if (currentHonor) return currentHonor;
+    var topHonor = compactText(qs('#u-top') && qs('#u-top').textContent).replace(/编辑.*$/, '');
+    if (topHonor) return compactText(topHonor);
+    var sourceText = compactText(sourceBox && sourceBox.textContent);
+    var match = sourceText.match(/我的回复\s*(?:更多)?\s*(.*?)(?:\s*编辑|\s*热门版块[:：]|$)/);
+    return match ? compactText(match[1]) : '';
+  }
+
+  function createProfileInfoboxFallback(sourceBox) {
+    var uid = extractAccountUserId(sourceBox || document, location.href);
+    var origin = location.origin;
+    var box = createEl('div', 'cc spx-profile-infobox-restored spx-profile-infobox-fallback');
+    var main = createEl('div', 'spx-profile-infobox-main');
+    var avatarWrap = createEl('div', 'spx-profile-infobox-avatar');
+    var avatar = cloneProfileInfoboxAvatar(sourceBox);
+    if (avatar) {
+      avatarWrap.appendChild(avatar);
+    }
+
+    var body = createEl('div', 'spx-profile-infobox-body');
+    var meta = createEl('div', 'spx-profile-infobox-meta');
+    var sourceText = compactText(sourceBox && sourceBox.textContent);
+    var sidebarText = compactText(qs('#u-sidebar') && qs('#u-sidebar').textContent);
+    var detailText = sourceText || sidebarText;
+    var levelMatch = detailText.match(/等级[:：]?\s*(Lv\.\d+)/i);
+    var postMatch = detailText.match(/帖子[:：]?\s*(\d+)/);
+    var topicHref = getProfileInfoboxSourceHref(sourceBox, '我的主题') || (uid ? origin + '/u.php?action-topic-uid-' + uid + '.html' : '');
+    var postHref = getProfileInfoboxSourceHref(sourceBox, '我的回复') || (uid ? origin + '/u.php?action-post-uid-' + uid + '.html' : '');
+    meta.appendChild(document.createTextNode('等级:' + (levelMatch ? levelMatch[1] : '未知')));
+    if (postMatch) meta.appendChild(document.createTextNode('，帖子:' + postMatch[1]));
+    if (topicHref || postHref) {
+      meta.appendChild(document.createTextNode('，'));
+      if (topicHref) meta.appendChild(createProfileInfoboxLink('我的主题', topicHref));
+      if (topicHref && postHref) meta.appendChild(document.createTextNode('，'));
+      if (postHref) meta.appendChild(createProfileInfoboxLink('我的回复', postHref));
+    }
+    body.appendChild(meta);
+
+    var honor = getProfileInfoboxHonor(sourceBox);
+    if (honor) body.appendChild(createEl('div', 'spx-profile-infobox-honor', honor));
+
+    main.appendChild(avatarWrap);
+    main.appendChild(body);
+
+    var hot = createEl('div', 'spx-profile-infobox-hot');
+    hot.appendChild(createEl('span', 'spx-profile-infobox-hot-label', '热门版块:'));
+    getCommonForumNavigationItems(origin).slice(1, 7).forEach(function appendHotForum(item) {
+      hot.appendChild(createProfileInfoboxLink(item.label, item.href));
+    });
+
+    box.id = 'infobox';
+    box.appendChild(main);
+    box.appendChild(hot);
+    return box;
+  }
+
+  function mountProfileInfobox(box, replaceNative) {
+    if (!box) return null;
+    var existing = qs('#infobox');
+    if (existing && !existing.classList.contains('spx-profile-infobox-restored') && !replaceNative) return existing;
+    setImportantStyle(box, 'box-sizing', 'border-box');
+    setImportantStyle(box, 'width', 'min(1480px, calc(100vw - 40px))');
+    setImportantStyle(box, 'max-width', 'none');
+    setImportantStyle(box, 'margin-left', 'auto');
+    setImportantStyle(box, 'margin-right', 'auto');
+    var main = qs('#main') || qs('#content');
+    if (existing && existing.parentNode) {
+      existing.parentNode.replaceChild(box, existing);
+    } else if (main && main.parentNode) {
+      main.parentNode.insertBefore(box, main);
+    } else if (document.body) {
+      document.body.insertBefore(box, document.body.firstChild);
+    }
+    return box;
+  }
+
+  function isStandardProfileInfobox(box) {
+    return !!(
+      box &&
+      box.classList &&
+      box.classList.contains('spx-profile-infobox-restored') &&
+      qs('.spx-profile-infobox-main', box) &&
+      qs('.spx-profile-infobox-hot', box)
+    );
+  }
+
+  function standardizeExistingInfobox() {
+    var existing = qs('#infobox');
+    if (!existing) return null;
+    if (isStandardProfileInfobox(existing)) return existing;
+    return mountProfileInfobox(createProfileInfoboxFallback(existing), true);
+  }
+
+  function restoreProfileInfobox(settings) {
+    if (!shouldRestoreProfileInfobox(location.href)) return;
+    if (standardizeExistingInfobox()) return;
+    var cached = getProfileInfoboxCache();
+    var mounted = cached && mountProfileInfobox(createProfileInfoboxFromHtml(cached.html));
+    if (!mounted) mountProfileInfobox(createProfileInfoboxFallback());
+    if (document.documentElement.dataset.spxProfileInfoboxRefreshing === '1') return;
+    if (cached && cached.updatedAt && Date.now() - Number(cached.updatedAt) < PROFILE_INFOBOX_CACHE_TTL / 2) return;
+    if (testMode || typeof window === 'undefined' || typeof DOMParser === 'undefined') return;
+    document.documentElement.dataset.spxProfileInfoboxRefreshing = '1';
+    var sourceUrl = getProfileInfoboxSourceUrl(location.origin);
+    requestWithPolicy(sourceUrl, { credentials: 'include', cache: 'force-cache' }, {
+      mode: 'background',
+      label: '个人页头部信息',
+      networkFriendly: isNetworkFriendlyMode(settings),
+    }).then(function readProfileInfoboxResponse(response) {
+      if (!response || !response.ok) return '';
+      return readScriptResponseText(response, { mode: 'background', label: '个人页头部信息' });
+    }).then(function applyFetchedProfileInfobox(html) {
+      var node = createProfileInfoboxFromHtml(html);
+      if (!node) return;
+      saveProfileInfoboxCache(node.outerHTML, sourceUrl);
+      mountProfileInfobox(node);
+    }).catch(function ignoreProfileInfoboxRefresh() {}).then(function clearProfileInfoboxRefreshFlag() {
+      delete document.documentElement.dataset.spxProfileInfoboxRefreshing;
+    });
   }
 
   function getFavoriteNavUrl(userId, origin) {
@@ -7903,6 +8291,38 @@
     box.classList.toggle('spx-error', !!isError);
   }
 
+  function showFavoriteNavStatusNote(className, text, detail) {
+    if (typeof document === 'undefined') return null;
+    var wrapper = qs('#spx-favorite-nav');
+    if (!wrapper) return null;
+    var noteClass = String(className || 'spx-favorite-nav-note');
+    var note = qs('.' + noteClass, wrapper);
+    if (!note) {
+      note = createEl('span', 'spx-favorite-nav-note ' + noteClass);
+      note.setAttribute('role', 'status');
+      note.setAttribute('aria-live', 'polite');
+      wrapper.appendChild(note);
+    }
+    note.hidden = false;
+    note.textContent = text || '';
+    note.title = detail || note.textContent;
+    return note;
+  }
+
+  function showTaskAutoClaimNavSuccess(text, detail) {
+    return showFavoriteNavStatusNote('spx-task-auto-claim-nav-note', text || '任务执行成功', detail);
+  }
+
+  function showAutoBuyNavSuccess(record) {
+    return showFavoriteNavStatusNote('spx-auto-buy-nav-note', '已购买', formatAutoBuyNavSuccessDetail(record));
+  }
+
+  function syncAutoBuyNavSuccessForThread(threadId) {
+    var record = getAutoBuyDoneAttemptForThread(loadAutoBuyAttempts(), threadId);
+    if (!record) return null;
+    return showAutoBuyNavSuccess(record);
+  }
+
   function fetchAndSyncTaskClaimRecordsAfterAutoClaim(host) {
     var url = getTaskCompletedPageUrl();
     return requestWithPolicy(url, { credentials: 'include', cache: 'no-store' }, { mode: 'action', label: '自动任务领取后同步记录' })
@@ -7956,13 +8376,15 @@
       });
   }
 
-  function resolveTaskAutoClaimTargets(host) {
-    var targets = getTaskAutoClaimTargets(host, location.href);
+  function resolveTaskAutoClaimTargets(host, options) {
+    var opts = options || {};
+    var canUseCurrentPage = opts.allowCurrentPage !== false;
+    var targets = opts.initialTargets || (canUseCurrentPage ? getTaskAutoClaimTargets(host, location.href) : []);
     if (targets.length) return Promise.resolve({ source: 'current', targets: targets });
-    if (/actions[-=]newtasks|newtasks/i.test(String(location.href || ''))) {
+    if (canUseCurrentPage && /actions[-=]newtasks|newtasks/i.test(String(location.href || ''))) {
       return Promise.resolve({ source: 'current', targets: [] });
     }
-    setTaskAutoClaimStatus(host, '自动领取：当前页没有领取入口，正在检查进行中任务...', false);
+    setTaskAutoClaimStatus(host, '自动领取：正在检查任务页可领取入口...', false);
     var url = getTaskInProgressPageUrl();
     return requestWithPolicy(url, { credentials: 'include', cache: 'no-store' }, { mode: 'action', label: '自动任务领取检查' })
       .then(function readTaskAutoClaimInProgressPage(response) {
@@ -7995,27 +8417,36 @@
   }
 
   function maybeRunAutoTaskClaim(settings, host) {
-    if (!settings || !settings.autoTaskClaim || !shouldUseTaskPage(location.href)) return Promise.resolve(null);
-    if (!host || document.documentElement.dataset.spxTaskAutoClaimRan === '1') return Promise.resolve(null);
+    if (!settings || !settings.autoTaskClaim || typeof document === 'undefined' || typeof location === 'undefined') return Promise.resolve(null);
+    if (!document.documentElement || document.documentElement.dataset.spxTaskAutoClaimRan === '1') return Promise.resolve(null);
+    var isTaskPage = shouldUseTaskPage(location.href);
+    var currentHost = host || (isTaskPage ? (qs('.spx-module-body') || qs('#main')) : null);
     document.documentElement.dataset.spxTaskAutoClaimRan = '1';
     if (shouldSyncTaskClaimRecordsFromUrl(location.href)) {
-      setTaskAutoClaimStatus(host, '自动领取：当前是已完成任务页，仅同步领取记录，不执行领取。', false);
+      setTaskAutoClaimStatus(currentHost, '自动领取：当前是已完成任务页，仅同步领取记录，不执行领取。', false);
       return Promise.resolve(null);
     }
-    return resolveTaskAutoClaimTargets(host)
+    var currentTargets = isTaskPage && currentHost ? getTaskAutoClaimTargets(currentHost, location.href) : [];
+    var gate = currentTargets.length ? { canRun: true, nextCheckAt: 0, dueTaskKeys: [], reason: 'visible-target' } : getTaskAutoClaimGate(loadTaskClaimRecords(), loadTaskAutoClaimState(), Date.now());
+    if (!gate.canRun) {
+      setTaskAutoClaimStatus(currentHost, '自动领取：仍在冷却中，下次检查约 ' + formatTaskAutoClaimNextCheck(gate.nextCheckAt) + '。', false);
+      return Promise.resolve(null);
+    }
+    return resolveTaskAutoClaimTargets(currentHost, { allowCurrentPage: isTaskPage, initialTargets: currentTargets })
       .then(function runResolvedTaskAutoClaimTargets(result) {
         var targets = result && result.targets || [];
         if (!targets.length) {
           var message = result && result.source === 'in-progress'
             ? '自动领取：新任务页和进行中任务页都没有发现可领取入口，可能仍在冷却中。'
             : '自动领取：没有发现可领取的日常 / 周常入口，可能仍在冷却中。';
-          setTaskAutoClaimStatus(host, message, false);
+          rememberTaskAutoClaimCheck('no-targets', Date.now() + TASK_AUTO_CLAIM_PROBE_RETRY_TTL);
+          setTaskAutoClaimStatus(currentHost, message, false);
           return null;
         }
-        return runTaskAutoClaimTargets(targets, host, 0, []).then(function runTaskAutoClaimRewards(results) {
-          return fetchTaskAutoClaimRewardTargets(host, results).then(function runTaskAutoClaimRewardTargets(rewardTargets) {
+        return runTaskAutoClaimTargets(targets, currentHost, 0, []).then(function runTaskAutoClaimRewards(results) {
+          return fetchTaskAutoClaimRewardTargets(currentHost, results).then(function runTaskAutoClaimRewardTargets(rewardTargets) {
             if (!rewardTargets.length) return results;
-            return runTaskAutoClaimTargets(rewardTargets, host, 0, results);
+            return runTaskAutoClaimTargets(rewardTargets, currentHost, 0, results);
           });
         });
       })
@@ -8025,22 +8456,32 @@
         var succeeded = results.filter(function keepSucceededTaskAutoClaim(result) {
           return !isTaskAutoClaimResultBlocked(result);
         });
+        blocked.forEach(function rememberBlockedTaskAutoClaim(result) {
+          if (result && result.target) {
+            rememberTaskAutoClaimTaskCooldown(result.target.taskKey, 'blocked', Date.now() + getTaskAutoClaimCooldownMs(result.target.taskKey));
+          }
+        });
         if (!succeeded.length) {
           var blockedMessage = blocked[0] && blocked[0].response && blocked[0].response.message || '当前任务暂不可领取';
-          setTaskAutoClaimStatus(host, '自动领取：暂不可领取，' + blockedMessage, false);
+          rememberTaskAutoClaimCheck('blocked', getTaskAutoClaimBlockedRetryAt(results));
+          setTaskAutoClaimStatus(currentHost, '自动领取：暂不可领取，' + blockedMessage, false);
           return null;
         }
-        return fetchAndSyncTaskClaimRecordsAfterAutoClaim(host).then(function reportTaskAutoClaimSync(count) {
+        return fetchAndSyncTaskClaimRecordsAfterAutoClaim(currentHost).then(function reportTaskAutoClaimSync(count) {
+          rememberTaskAutoClaimCheck('success', getTaskAutoClaimNextCheckAtFromRecords(loadTaskClaimRecords(), Date.now()));
           var blockedText = blocked.length ? ('，另有 ' + blocked.length + ' 个暂不可领取。') : '';
+          var successMessage = '已处理 ' + succeeded.length + ' 个任务' + (count ? ('，同步 ' + count + ' 条领取记录') : '');
+          showTaskAutoClaimNavSuccess('任务执行成功', successMessage + blockedText);
           setTaskAutoClaimStatus(
-            host,
+            currentHost,
             '自动领取：已处理 ' + succeeded.length + ' 个任务' + (count ? ('，同步 ' + count + ' 条领取记录。') : '，可刷新页面查看最新状态。') + blockedText,
             false
           );
         });
       })
       .catch(function handleTaskAutoClaimError(error) {
-        setTaskAutoClaimStatus(host, '自动领取失败：' + String(error && error.message || error || '未知错误'), true);
+        rememberTaskAutoClaimCheck('error', Date.now() + TASK_AUTO_CLAIM_ERROR_RETRY_TTL);
+        setTaskAutoClaimStatus(currentHost, '自动领取失败：' + String(error && error.message || error || '未知错误'), true);
       });
   }
 
@@ -11693,7 +12134,8 @@
   function blockAutoBuyContext(context) {
     if (!context || !isAutoBuyAttemptBlocked(context.previousAttempt)) return false;
     context.pageRoot.dataset.spxAutoBuyStatus = 'blocked';
-    setAutoBuyStatus(context.target, formatAutoBuyAttemptMessage(context.previousAttempt), true);
+    setAutoBuyStatus(context.target, formatAutoBuyAttemptMessage(context.previousAttempt), context.previousAttempt.status !== 'done');
+    if (context.previousAttempt.status === 'done') showAutoBuyNavSuccess(context.previousAttempt);
     return true;
   }
 
@@ -11791,12 +12233,13 @@
     refreshReadResourceRail();
     showAutoBuyResourceJump(resourceLinks, state, savedResources.saved);
     context.pageRoot.dataset.spxAutoBuyStatus = 'done';
-    recordAutoBuyAttempt(
+    var doneRecord = recordAutoBuyAttempt(
       context.attemptKey,
       'done',
       '已支付 ' + context.target.price + ' SP 并加载帖子内容' + (resourceSummary ? '，识别资源：' + resourceSummary : ''),
       { price: context.target.price, url: context.target.url, resourceSummary: resourceSummary }
     );
+    showAutoBuyNavSuccess(doneRecord);
   }
 
   function failAutoBuyContext(context, error) {
@@ -11856,6 +12299,7 @@
     if (tid) {
       state.read[tid] = Date.now();
       saveMap(READ_KEY, state.read);
+      syncAutoBuyNavSuccessForThread(tid);
       restorePendingReadProgress(state, tid);
       bindReadProgressTracking(state, tid);
       bindReadPageJumpButtons(state, tid);
@@ -14582,7 +15026,7 @@
     var taskControls = renderSettingsSection(
       '社区任务',
       ['autoTaskClaim'],
-      '保守模式：只在打开任务页时检查日常 / 周常可领取入口，发现后才自动领取。'
+      '保守模式：任意页面都会在本地冷却到期后检查日常 / 周常任务，未到 18 小时 / 7 天不会访问任务接口。'
     );
     var autoBuyControls = settingKeys.indexOf('autoBuyPost') !== -1 ? [
       '<section class="spx-settings-section">',
@@ -16212,7 +16656,20 @@
 
   function isTaskBreadcrumbBlock(node) {
     if (!node || !node.classList) return false;
-    return node.classList.contains('bdbA') || !!qs('#breadcrumbs', node);
+    return node.classList.contains('bdbA') || node.classList.contains('spx-task-breadcrumb-block') || !!qs('#breadcrumbs', node);
+  }
+
+  function markTaskBreadcrumbBlocks(host) {
+    qsa('.spx-task-breadcrumb-block', host).forEach(function clearTaskBreadcrumbBlock(node) {
+      node.classList.remove('spx-task-breadcrumb-block');
+    });
+    Array.prototype.slice.call(host.children || []).forEach(function markDirectTaskBreadcrumb(child) {
+      if (isTaskBreadcrumbBlock(child)) child.classList.add('spx-task-breadcrumb-block');
+    });
+    qsa('#breadcrumbs', host).forEach(function markNestedTaskBreadcrumb(breadcrumbs) {
+      var block = getTaskLayoutDirectChild(host, breadcrumbs);
+      if (block && block !== host && block.classList) block.classList.add('spx-task-breadcrumb-block');
+    });
   }
 
   function isTaskMainBlock(node) {
@@ -16284,6 +16741,7 @@
     var host = qs('.spx-module-body') || qs('#main');
     if (!host) return;
     unwrapTaskLayoutStacks(host);
+    markTaskBreadcrumbBlocks(host);
 
     qsa('.spx-task-side-block,.spx-task-main-block', host).forEach(function resetTaskBlockClass(node) {
       node.classList.remove('spx-task-side-block', 'spx-task-main-block');
@@ -16396,7 +16854,9 @@
     if (shouldUseSiteShell(location.href)) applySiteShellLayout(document);
     enhanceSiteNavigation(document);
     enhanceFavoriteNavigation(settings, state, document);
+    standardizeExistingInfobox();
     if (pageType === 'profile') enhanceAccountNavigation(document);
+    if (pageType === 'profile') restoreProfileInfobox(settings);
     enhanceAdBlock(settings);
     if (pageType === 'home') enhanceHome(settings, state);
     if (pageType === 'forum') enhanceThreadList(settings, state);
@@ -16404,6 +16864,7 @@
     if (pageType === 'read' || pageType === 'post') enhanceQuickReply(settings, state);
     if (shouldUseModuleNavigation(settings, location.href, document)) createGlobalModuleNavigation(settings, state);
     if (pageType === 'task') enhanceTaskPageLayout(settings);
+    maybeRunAutoTaskClaim(settings, null);
     var panel = qs('#spx-settings');
     if (panel && panel.spxSync) panel.spxSync();
   }
@@ -16545,8 +17006,13 @@
     getAutoBuyAttemptKey: getAutoBuyAttemptKey,
     isAutoBuyAttemptBlocked: isAutoBuyAttemptBlocked,
     formatAutoBuyAttemptMessage: formatAutoBuyAttemptMessage,
+    getAutoBuyDoneAttemptForThread: getAutoBuyDoneAttemptForThread,
+    formatAutoBuyNavSuccessDetail: formatAutoBuyNavSuccessDetail,
     extractTaskAutoClaimUrl: extractTaskAutoClaimUrl,
     getTaskInProgressPageUrl: getTaskInProgressPageUrl,
+    getTaskAutoClaimCooldownMs: getTaskAutoClaimCooldownMs,
+    getLatestTaskClaimCompletedAt: getLatestTaskClaimCompletedAt,
+    getTaskAutoClaimGate: getTaskAutoClaimGate,
     getTaskAutoClaimActionType: getTaskAutoClaimActionType,
     isTaskAutoClaimCandidate: isTaskAutoClaimCandidate,
     getTaskAutoClaimTargets: getTaskAutoClaimTargets,
@@ -16567,6 +17033,8 @@
     shouldUseForumKeyboardPaging: shouldUseForumKeyboardPaging,
     shouldUseSearchPage: shouldUseSearchPage,
     shouldUseProfilePage: shouldUseProfilePage,
+    shouldRestoreProfileInfobox: shouldRestoreProfileInfobox,
+    getProfileInfoboxSourceUrl: getProfileInfoboxSourceUrl,
     shouldUseTaskPage: shouldUseTaskPage,
     shouldUseReaderMode: shouldUseReaderMode,
     shouldUseImmersiveRead: shouldUseImmersiveRead,
