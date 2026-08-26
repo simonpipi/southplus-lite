@@ -3,12 +3,13 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.5\.10/);
+assert.match(source, /@version\s+0\.5\.14/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.autoTaskClaim, true);
 assert.equal(defaultSettings.forumDashboard, true);
 assert.equal(defaultSettings.moduleNavDensity, 'comfortable');
+assert.equal(defaultSettings.smartModuleNavSort, true);
 assert.equal(enhancer.getSettingsPresetDefinitions().resource.label, '资源');
 const lightPreset = enhancer.applySettingsPreset({ forumDashboard: true, unifiedPreviewGallery: true, titleKeywords: ['foo'] }, 'light');
 assert.equal(lightPreset.forumDashboard, false);
@@ -384,10 +385,15 @@ assert.match(source, /spx-module-nav-search/);
 assert.match(source, /filterModuleNavigation/);
 assert.match(source, /spx-module-nav-pin/);
 assert.match(source, /NAVIGATION_PIN_KEY = APP \+ ':navigationPins:v1'/);
+assert.match(source, /NAVIGATION_USAGE_KEY = APP \+ ':navigationUsage:v1'/);
+assert.match(source, /smartModuleNavSort: true/);
+assert.match(source, /导航智能排序/);
 assert.match(source, /NAVIGATION_REFRESH_KEY = APP \+ ':navigationRefresh:v1'/);
 assert.match(source, /网络友好模式/);
 assert.match(source, /requestWithPolicy/);
 assert.match(source, /normalizeNavigationPinMap/);
+assert.match(source, /normalizeNavigationUsageMap/);
+assert.match(source, /sortModuleNavigationTree/);
 assert.match(source, /section: '置顶导航'/);
 assert.match(source, /withPinnedModuleNavigationConfigs/);
 assert.match(source, /minmax\(196px,var\(--spx-module-width\)\)/);
@@ -405,7 +411,7 @@ assert.match(source, /NAVIGATION_KEY/);
 assert.match(source, /NAVIGATION_KEY = APP \+ ':navigation:v1'/);
 assert.match(source, /NAVIGATION_POOL_LIMIT = 160/);
 assert.match(source, /function isPersistentNavigationSection\(section\)/);
-assert.match(source, /mountModuleNavigation\('导航中心', getAllModuleNavigationConfigs\(settings, state\)\)/);
+assert.match(source, /mountModuleNavigation\('导航中心', getAllModuleNavigationConfigs\(settings, state\), settings\)/);
 assert.match(source, /function getWorkbenchNavigationConfigs\(settings, state\)/);
 assert.match(source, /function getWorkbenchCenterConfigs\(\)/);
 assert.match(source, /spx-module-body\.spx-workbench-mode>\*:not\(\.spx-workbench\)/);
@@ -524,6 +530,9 @@ assert.match(source, /spx-favorite-nav/);
 assert.match(source, /spx-favorite-nav-panel/);
 assert.match(source, /我的收藏/);
 assert.match(source, /spx-task-auto-claim-nav-note/);
+assert.match(source, /pendingFavoriteNavStatusNotes/);
+assert.match(source, /flushFavoriteNavStatusNotes\(\)/);
+assert.match(source, /今日任务已完成/);
 assert.match(source, /任务执行成功/);
 assert.match(source, /spx-task-breadcrumb-block/);
 assert.match(source, /spx-task-layout-body>\.bdbA,\.spx-module-nav-ready\.spx-task-page \.spx-task-layout-body>\.spx-task-breadcrumb-block\{grid-column:1\/-1!important;\}/);
@@ -931,6 +940,50 @@ assert.equal(
   ),
   true
 );
+const smartNavNow = 1720000000000;
+const smartNavForumConfig = {
+  section: '版块导航',
+  label: '茶馆',
+  href: 'https://south-plus.org/thread.php?fid-9.html',
+  order: 20,
+};
+const smartNavLowConfig = {
+  section: '版块导航',
+  label: '低频版块',
+  href: 'https://south-plus.org/thread.php?fid-48.html',
+  order: 1,
+};
+const smartNavUsageKey = enhancer.getModuleNavigationUsageKey(smartNavForumConfig);
+assert.equal(smartNavUsageKey, '版块导航|茶馆|https://south-plus.org/thread.php?fid-9.html');
+assert.deepEqual(
+  enhancer.normalizeNavigationUsageMap({
+    '': { usedAt: 999 },
+    [smartNavUsageKey]: { usedAt: 'bad', clickedAt: smartNavNow - 60 * 60 * 1000, hitCount: '4' },
+  }),
+  { [smartNavUsageKey]: { usedAt: 0, clickedAt: smartNavNow - 60 * 60 * 1000, hitCount: 4 } }
+);
+const smartNavGroups = [{
+  label: '版块导航',
+  nodes: [
+    { label: '低频版块', config: smartNavLowConfig, children: [] },
+    { label: '茶馆', config: smartNavForumConfig, children: [] },
+  ],
+}];
+const smartNavUsageMap = {
+  [smartNavUsageKey]: { usedAt: smartNavNow - 2 * 60 * 60 * 1000, clickedAt: smartNavNow - 60 * 60 * 1000, hitCount: 4 },
+};
+assert.equal(
+  enhancer.sortModuleNavigationTree(JSON.parse(JSON.stringify(smartNavGroups)), { smartModuleNavSort: true }, smartNavUsageMap, smartNavNow)[0].nodes[0].label,
+  '茶馆'
+);
+assert.equal(
+  enhancer.sortModuleNavigationTree(JSON.parse(JSON.stringify(smartNavGroups)), { smartModuleNavSort: false }, smartNavUsageMap, smartNavNow)[0].nodes[0].label,
+  '低频版块'
+);
+assert.ok(
+  enhancer.getModuleNavigationSmartScore(Object.assign({}, smartNavForumConfig, { active: true }), {}, smartNavNow) >
+    enhancer.getModuleNavigationSmartScore(smartNavForumConfig, smartNavUsageMap, smartNavNow)
+);
 function makeClassList(names) {
   return {
     contains: function contains(name) {
@@ -947,8 +1000,8 @@ assert.equal(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').i
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('nightMode'));
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('networkFriendly'));
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/index.php').includes('autoTaskClaim'));
-assert.match(source, /保守模式：任意页面都会在本地冷却到期后检查日常 \/ 周常任务/);
-assert.match(source, /未到 18 小时 \/ 7 天不会访问任务接口/);
+assert.match(source, /任意页面都会检查日常是否今日已完成/);
+assert.match(source, /未完成会自动申请并领取奖励，周常仍按 7 天冷却/);
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/thread.php?fid-9.html').includes('autoBuyPost'));
 assert.ok(enhancer.getSettingsPanelKeys('https://south-plus.org/read.php?tid=1', emptyRoot).includes('autoBuyPost'));
 assert.match(source, /data-number="autoBuyMaxSp"/);
@@ -1035,11 +1088,16 @@ assert.equal(
   enhancer.getTaskInProgressPageUrl(),
   'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks.html.html'
 );
+assert.equal(
+  enhancer.getTaskHomePageUrl(),
+  'https://south-plus.org/plugin.php?H_name-tasks.html'
+);
 assert.equal(enhancer.getTaskAutoClaimCooldownMs('daily'), 18 * 60 * 60 * 1000);
 assert.equal(enhancer.getTaskAutoClaimCooldownMs('weekly'), 7 * 24 * 60 * 60 * 1000);
 assert.match(source, /自动任务领取检查/);
 assert.match(source, /自动任务奖励检查/);
-assert.match(source, /正在检查任务页可领取入口/);
+assert.match(source, /正在检查新任务页可领取入口/);
+assert.match(source, /新任务页暂无入口，正在检查进行中任务奖励/);
 assert.match(source, /任务申请完成，正在检查进行中任务奖励/);
 assert.match(source, /进行中任务页都没有发现可领取入口/);
 assert.equal(
@@ -1199,6 +1257,12 @@ assert.equal(enhancer.getLatestTaskClaimCompletedAt({
   'daily|1': { taskName: '日常', completedAt: taskDailyAt - 1000 },
   'daily|2': { taskName: '日常', completedAt: taskDailyAt },
 }, 'daily'), taskDailyAt);
+assert.equal(enhancer.isTaskClaimCompletedToday({
+  'daily|today': { taskName: '日常', completedAt: taskDailyAt },
+}, 'daily', taskDailyAt + 60 * 60 * 1000), true);
+assert.equal(enhancer.isTaskClaimCompletedToday({
+  'daily|yesterday': { taskName: '日常', completedAt: taskDailyAt - 24 * 60 * 60 * 1000 },
+}, 'daily', taskDailyAt), false);
 assert.deepEqual(
   enhancer.getTaskAutoClaimGate({
     'daily|recent': { taskName: '日常', completedAt: taskDailyAt },
@@ -1206,7 +1270,7 @@ assert.deepEqual(
   }, {}, taskDailyAt + 60 * 60 * 1000),
   {
     canRun: false,
-    nextCheckAt: taskDailyAt + 18 * 60 * 60 * 1000,
+    nextCheckAt: new Date(2026, 7, 18).getTime(),
     dueTaskKeys: [],
     reason: 'task-cooldown',
   }
@@ -1226,6 +1290,13 @@ assert.deepEqual(
 assert.equal(
   enhancer.getTaskAutoClaimGate({}, { nextCheckAt: taskDailyAt + 2 * 60 * 60 * 1000 }, taskDailyAt).canRun,
   false
+);
+assert.equal(
+  enhancer.getTaskAutoClaimGate({
+    'daily|yesterday': { taskName: '日常', completedAt: taskDailyAt - 24 * 60 * 60 * 1000 },
+    'weekly|recent': { taskName: '周常', completedAt: taskWeeklyAt },
+  }, { nextCheckAt: taskDailyAt + 2 * 60 * 60 * 1000, reason: 'success' }, taskDailyAt).canRun,
+  true
 );
 
 function createTaskAutoClaimControlFixture(title, onclick, contextText) {
@@ -1379,6 +1450,7 @@ async function testTaskAutoClaimGlobalSimulation() {
   const taskContext = '日常 (人气 : 1) 任务时效2011-12-03~2028-12-31 奖励 : SP币 2 G';
   const taskUrl = 'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job&cid=15';
   const rewardUrl = 'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job2&cid=15';
+  const taskHomeUrl = 'https://south-plus.org/plugin.php?H_name-tasks.html';
   const progressUrl = 'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks.html.html';
   const completedUrl = 'https://south-plus.org/plugin.php?H_name-tasks-actions-endtasks.html.html';
   const startControl = createTaskAutoClaimControlFixture('按这申请此任务', "startjob('15');", taskContext);
@@ -1399,7 +1471,6 @@ async function testTaskAutoClaimGlobalSimulation() {
     },
   };
   let fakeNow = new Date(2026, 7, 18, 8, 49, 3).getTime();
-  let progressFetchCount = 0;
 
   try {
     Date.now = function nowFixture() { return fakeNow; };
@@ -1418,9 +1489,11 @@ async function testTaskAutoClaimGlobalSimulation() {
       fetch: async function fetchFixture(url) {
         const href = String(url);
         requests.push(href);
+        if (href === taskHomeUrl) {
+          return { ok: true, status: 200, text: async function text() { return 'SPX_TASK_HOME_START'; } };
+        }
         if (href === progressUrl) {
-          progressFetchCount += 1;
-          return { ok: true, status: 200, text: async function text() { return progressFetchCount === 1 ? 'SPX_PROGRESS_START' : 'SPX_PROGRESS_REWARD'; } };
+          return { ok: true, status: 200, text: async function text() { return 'SPX_PROGRESS_REWARD'; } };
         }
         if (href === taskUrl) {
           return { ok: true, status: 200, text: async function text() { return '<?xml version="1.0"?><ajax><![CDATA[success 已经申请[日常]完成,请赶紧去完成任务吧!]]></ajax>'; } };
@@ -1456,7 +1529,7 @@ async function testTaskAutoClaimGlobalSimulation() {
     };
     global.DOMParser = function DOMParser() {
       this.parseFromString = function parseFromString(html) {
-        if (String(html) === 'SPX_PROGRESS_START') return startRoot;
+        if (String(html) === 'SPX_TASK_HOME_START') return startRoot;
         if (String(html) === 'SPX_PROGRESS_REWARD') return rewardRoot;
         if (String(html) === 'SPX_COMPLETED_TASKS') return completedRoot;
         return createTaskAutoClaimRootFixture([], []);
@@ -1464,7 +1537,7 @@ async function testTaskAutoClaimGlobalSimulation() {
     };
 
     await enhancer.maybeRunAutoTaskClaim({ autoTaskClaim: true }, null);
-    assert.deepEqual(requests, [progressUrl, taskUrl, progressUrl, rewardUrl, completedUrl]);
+    assert.deepEqual(requests, [taskHomeUrl, taskUrl, progressUrl, rewardUrl, completedUrl]);
     const taskStorageKey = Object.keys(storageData).find(function findTaskStorageKey(key) { return key.indexOf(':taskClaims:') !== -1; });
     const stateStorageKey = Object.keys(storageData).find(function findTaskStateStorageKey(key) { return key.indexOf(':taskAutoClaim:') !== -1; });
     assert.ok(taskStorageKey);
@@ -1473,7 +1546,7 @@ async function testTaskAutoClaimGlobalSimulation() {
     assert.equal(JSON.parse(storageData[stateStorageKey]).reason, 'success');
     assert.equal(JSON.parse(storageData[stateStorageKey]).nextCheckAt > fakeNow, true);
     assert.ok(favoriteWrapper.note);
-    assert.equal(favoriteWrapper.note.textContent, '任务执行成功');
+    assert.equal(favoriteWrapper.note.textContent, '今日任务已完成');
     assert.match(favoriteWrapper.note.title, /已处理 2 个任务/);
   } finally {
     if (previousWindow === undefined) delete global.window;
@@ -1499,6 +1572,15 @@ async function testTaskAutoClaimCooldownSkip() {
     'daily|recent': { taskName: '日常', rewardSp: 2, completedAt: fakeNow - 60 * 60 * 1000, recordedAt: fakeNow - 60 * 60 * 1000 },
     'weekly|recent': { taskName: '周常', rewardSp: 7, completedAt: fakeNow - 24 * 60 * 60 * 1000, recordedAt: fakeNow - 24 * 60 * 60 * 1000 },
   });
+  const favoriteWrapper = {
+    note: null,
+    querySelector: function querySelector(selector) {
+      return selector === '.spx-task-auto-claim-nav-note' ? this.note : null;
+    },
+    appendChild: function appendChild(node) {
+      this.note = node;
+    },
+  };
 
   try {
     Date.now = function nowFixture() { return fakeNow; };
@@ -1515,12 +1597,29 @@ async function testTaskAutoClaimCooldownSkip() {
     };
     global.document = {
       documentElement: { dataset: {} },
-      querySelector: function querySelector() { return null; },
+      querySelector: function querySelector(selector) {
+        return selector === '#spx-favorite-nav' ? favoriteWrapper : null;
+      },
       querySelectorAll: function querySelectorAll() { return []; },
+      createElement: function createElement() {
+        return {
+          textContent: '',
+          className: '',
+          dataset: {},
+          style: {},
+          hidden: false,
+          title: '',
+          attrs: {},
+          setAttribute: function setAttribute(name, value) { this.attrs[name] = String(value); },
+          classList: { toggle: function toggle() {} },
+        };
+      },
     };
 
     await enhancer.maybeRunAutoTaskClaim({ autoTaskClaim: true }, null);
     assert.equal(Object.keys(storageData).some(function hasTaskStateKey(key) { return key.indexOf(':taskAutoClaim:') !== -1; }), false);
+    assert.ok(favoriteWrapper.note);
+    assert.equal(favoriteWrapper.note.textContent, '今日任务已完成');
   } finally {
     if (previousWindow === undefined) delete global.window;
     else global.window = previousWindow;
@@ -1828,6 +1927,34 @@ assert.deepEqual(enhancer.formatResourceRailSummary(readResourceRailEntries), {
   todo: 1,
   saved: 3,
 });
+const pikpakRailLinks = enhancer.getResourceRailEntries(
+  enhancer.extractResourceLinksFromText(
+    'PikPak 分流 https://mypikpak.com/s/VP-dt9i5Hz_lYq',
+    'https://south-plus.org/read.php?tid=2942598',
+    { floorLabel: '楼主', author: '9b57d782', postIndex: 0 }
+  ),
+  {}
+);
+assert.equal(pikpakRailLinks[0].type, 'pikpak');
+assert.equal(pikpakRailLinks[0].statusLabel, '待保存');
+assert.deepEqual(
+  enhancer.getJumpResourceLinks(pikpakRailLinks).map(function mapPikpakJump(item) {
+    return [item.type, item.label, item.url];
+  }),
+  [['cloud', 'PikPak', 'https://mypikpak.com/s/VP-dt9i5Hz_lYq']]
+);
+const savedPikpakFromRail = enhancer.saveResourceLinksToLibrary(
+  pikpakRailLinks,
+  {},
+  { sourceTitle: 'PikPak 资源帖', sourceUrl: 'https://south-plus.org/read.php?tid=2942598' },
+  6000
+);
+assert.equal(savedPikpakFromRail.saved, 1);
+assert.deepEqual(Object.keys(savedPikpakFromRail.resources), ['cloud|https://mypikpak.com/s/vp-dt9i5hz_lyq']);
+assert.equal(savedPikpakFromRail.resources['cloud|https://mypikpak.com/s/vp-dt9i5hz_lyq'].type, 'cloud');
+const savedPikpakRailLinks = enhancer.getResourceRailEntries(pikpakRailLinks, savedPikpakFromRail.resources);
+assert.equal(savedPikpakRailLinks[0].saved, true);
+assert.equal(savedPikpakRailLinks[0].statusLabel, '待下载');
 assert.equal(enhancer.formatResourceRailSummaryText(readResourceRailEntries), '3 条 · 1 个楼层 · 1 个口令 · 待处理 1');
 assert.equal(
   enhancer.formatResourceRailCodes(readResourceRailEntries),
@@ -2267,6 +2394,9 @@ const healthData = {
   navigation: {
     comic: { section: '子栏目', label: '漫区特设', href: 'https://south-plus.org/index.php#spx-module-target-home-1', updatedAt: 300 },
   },
+  navigationUsage: {
+    nav1: { usedAt: 500, clickedAt: 400, hitCount: 3 },
+  },
 };
 const healthReport = enhancer.collectDataHealthReport(healthData, healthNow);
 assert.equal(healthReport.counts.titleKeywords, 1);
@@ -2296,7 +2426,7 @@ assert.match(enhancer.formatBackupImportPreview(cleanedHealth.payload), /即将�
 
 assert.equal(enhancer.formatStorageBytes(1536), '1.5 KB');
 const storageReport = enhancer.collectStorageUsageReport(healthData);
-assert.equal(storageReport.entries.length, 9);
+assert.equal(storageReport.entries.length, 10);
 const resourceUsage = storageReport.entries.find(function findResourceUsage(entry) {
   return entry.label === '资源库';
 });
@@ -2309,11 +2439,15 @@ const navigationUsage = storageReport.entries.find(function findNavigationUsage(
 const navigationPinUsage = storageReport.entries.find(function findNavigationPinUsage(entry) {
   return entry.label === '导航置顶';
 });
+const navigationSortUsage = storageReport.entries.find(function findNavigationSortUsage(entry) {
+  return entry.label === '导航排序';
+});
 assert.equal(resourceUsage.count, 1);
 assert.equal(taskClaimUsage.count, 1);
 assert.equal(navigationUsage.count, 1);
 assert.equal(navigationPinUsage.count, 0);
-assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 9 项 · 最大：/);
+assert.equal(navigationSortUsage.count, 1);
+assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 10 项 · 最大：/);
 assert.match(enhancer.formatStorageUsageEntry(resourceUsage), /^资源库：.* \/ 1 条 \/ 上限 500$/);
 assert.equal(enhancer.formatStorageUsageLimit(resourceUsage), '1 / 500 条（0%）');
 assert.equal(enhancer.getStorageUsageLevel(resourceUsage), 'ok');

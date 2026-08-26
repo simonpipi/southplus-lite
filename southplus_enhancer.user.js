@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.5.10
+// @version      0.5.14
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -63,6 +63,7 @@
   var NAVIGATION_COLLAPSE_KEY = APP + ':navigationCollapse:v1';
   var NAVIGATION_COLLAPSE_DEFAULT_KEY = APP + ':navigationCollapseDefault:v1';
   var NAVIGATION_PIN_KEY = APP + ':navigationPins:v1';
+  var NAVIGATION_USAGE_KEY = APP + ':navigationUsage:v1';
   var NAVIGATION_REFRESH_KEY = APP + ':navigationRefresh:v1';
   var FAVORITE_NAV_COUNT_CACHE_KEY = APP + ':favoriteNavCountCache:v1';
   var FAVORITE_NAV_SEEN_KEY = APP + ':favoriteNavSeen:v1';
@@ -76,6 +77,7 @@
   var PROFILE_INFOBOX_CACHE_TTL = 6 * 60 * 60 * 1000;
   var RESOURCE_LIMIT = 500;
   var NAVIGATION_POOL_LIMIT = 160;
+  var NAVIGATION_USAGE_LIMIT = 160;
   var NAVIGATION_REFRESH_TTL = 6 * 60 * 60 * 1000;
   var FAVORITE_NAV_COUNT_CACHE_TTL = 2 * 60 * 1000;
   var FAVORITE_NAV_COUNT_RETRY_TTL = 60 * 1000;
@@ -114,6 +116,7 @@
   var spBalanceCache = { value: null, expiresAt: 0 };
   var readResourceRailContext = { posts: null, state: null, filter: 'all' };
   var readSummaryContext = { settings: null, state: null, posts: null, tid: '', originalAuthor: '' };
+  var pendingFavoriteNavStatusNotes = [];
   var enhanceCycle = 0;
   var RESOURCE_STATUSES = {
     saved: '已保存',
@@ -190,6 +193,7 @@
     autoTaskClaim: true,
     autoBuyPost: false,
     autoBuyMaxSp: 5,
+    smartModuleNavSort: true,
     titleKeywords: [],
     authorKeywords: [],
     quickReplies: [
@@ -646,6 +650,10 @@
     }, 0);
   }
 
+  function isTaskClaimCompletedToday(records, taskKey, now) {
+    return isTimestampToday(getLatestTaskClaimCompletedAt(records, taskKey), now);
+  }
+
   function normalizeTaskAutoClaimState(state) {
     var source = isPlainObject(state) ? state : {};
     var tasks = isPlainObject(source.tasks) ? source.tasks : {};
@@ -681,7 +689,9 @@
     var hasUnknownTask = false;
     ['daily', 'weekly'].forEach(function collectTaskAutoClaimNextCheck(taskKey) {
       var completedAt = getLatestTaskClaimCompletedAt(records, taskKey);
-      if (completedAt) {
+      if (taskKey === 'daily' && isTaskClaimCompletedToday(records, 'daily', currentTime)) {
+        candidates.push(getNextDayStart(currentTime));
+      } else if (completedAt) {
         candidates.push(completedAt + getTaskAutoClaimCooldownMs(taskKey));
       } else {
         hasUnknownTask = true;
@@ -696,7 +706,8 @@
     var currentTime = now === undefined ? Date.now() : Number(now);
     var normalizedState = normalizeTaskAutoClaimState(state);
     var globalNextCheckAt = Math.max(0, Number(normalizedState.nextCheckAt) || 0);
-    if (globalNextCheckAt > currentTime) {
+    var dailyCompletedToday = isTaskClaimCompletedToday(records, 'daily', currentTime);
+    if (globalNextCheckAt > currentTime && (normalizedState.reason !== 'success' || dailyCompletedToday)) {
       return {
         canRun: false,
         nextCheckAt: globalNextCheckAt,
@@ -709,9 +720,20 @@
     var futureChecks = [];
     ['daily', 'weekly'].forEach(function collectTaskAutoClaimGate(taskKey) {
       var completedAt = getLatestTaskClaimCompletedAt(records, taskKey);
-      var recordNextCheckAt = completedAt ? completedAt + getTaskAutoClaimCooldownMs(taskKey) : 0;
       var taskState = normalizedState.tasks[taskKey] || {};
-      var taskNextCheckAt = Math.max(recordNextCheckAt, Number(taskState.nextCheckAt) || 0);
+      var stateNextCheckAt = Number(taskState.nextCheckAt) || 0;
+      if (taskKey === 'daily') {
+        if (dailyCompletedToday) {
+          futureChecks.push(getNextDayStart(currentTime));
+        } else if (stateNextCheckAt > currentTime) {
+          futureChecks.push(stateNextCheckAt);
+        } else {
+          dueTaskKeys.push(taskKey);
+        }
+        return;
+      }
+      var recordNextCheckAt = completedAt ? completedAt + getTaskAutoClaimCooldownMs(taskKey) : 0;
+      var taskNextCheckAt = Math.max(recordNextCheckAt, stateNextCheckAt);
       if (!taskNextCheckAt || taskNextCheckAt <= currentTime) {
         dueTaskKeys.push(taskKey);
       } else {
@@ -921,9 +943,14 @@
     return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   }
 
+  function getNextDayStart(timestamp) {
+    return getDayStart(timestamp) + 24 * 60 * 60 * 1000;
+  }
+
   function isTimestampToday(timestamp, now) {
     var value = Number(timestamp) || 0;
-    return value >= getDayStart(now || Date.now());
+    var currentTime = now || Date.now();
+    return value >= getDayStart(currentTime) && value < getNextDayStart(currentTime);
   }
 
   function getForumDashboardTopicKey(item) {
@@ -2180,6 +2207,13 @@
     return '';
   }
 
+  function normalizeResourceStorageType(type, url) {
+    var value = String(type || '').toLowerCase();
+    if (RESOURCE_CATEGORIES[value]) return value;
+    if (/^(?:baidu|quark|pikpak)$/.test(value)) return 'cloud';
+    return classifyResourceLink(url);
+  }
+
   function getCloudProviderLabel(url) {
     var host = '';
     try {
@@ -2372,7 +2406,15 @@
   }
 
   function getJumpResourceLinks(links) {
-    return dedupeResourceLinks(links).filter(function keepJumpResource(item) {
+    var normalizedLinks = dedupeResourceLinks(links).map(function normalizeJumpResource(item) {
+      var type = normalizeResourceStorageType(item && item.type, item && item.url);
+      if (!type || type === item.type) return item;
+      return Object.assign({}, item, {
+        type: type,
+        label: getResourceDisplayLabel({ url: item.url, type: type }),
+      });
+    });
+    return dedupeResourceLinks(normalizedLinks).filter(function keepJumpResource(item) {
       return item && /^(?:magnet|ed2k|torrent|archive|cloud|external)$/.test(item.type || '');
     });
   }
@@ -2447,7 +2489,7 @@
   function getResourceLibraryKey(item) {
     var data = item || {};
     var url = normalizeResourceUrl(data.url, data.pageUrl || data.sourceUrl);
-    var type = data.type || classifyResourceLink(url);
+    var type = normalizeResourceStorageType(data.type, url);
     if (!url || !type) return '';
     return type + '|' + url.toLowerCase();
   }
@@ -2455,7 +2497,7 @@
   function normalizeResourceRecord(record, key) {
     var source = record || {};
     var url = normalizeResourceUrl(source.url, source.pageUrl || source.sourceUrl);
-    var type = source.type || classifyResourceLink(url);
+    var type = normalizeResourceStorageType(source.type, url);
     if (!url || !type) return null;
     var label = source.label || getResourceDisplayLabel({ url: url, type: type });
     var provider = type === 'cloud' ? getCloudProviderLabel(url) : label;
@@ -3605,6 +3647,7 @@
         resources: pruneResourceLibrary(copyStorageMap(source.resources)),
         navigation: normalizeNavigationPool(source.navigation),
         navigationPins: normalizeNavigationPinMap(source.navigationPins),
+        navigationUsage: normalizeNavigationUsageMap(source.navigationUsage),
       },
     };
   }
@@ -3623,6 +3666,7 @@
       resources: source.resources,
       navigation: source.navigation,
       navigationPins: source.navigationPins,
+      navigationUsage: source.navigationUsage,
     }, payload.exportedAt);
   }
 
@@ -3637,6 +3681,7 @@
       resources: state && state.resources,
       navigation: loadNavigationPool(),
       navigationPins: loadNavigationPins(),
+      navigationUsage: loadNavigationUsage(),
     });
   }
 
@@ -3708,6 +3753,7 @@
       createStorageUsageEntry(RESOURCE_KEY, '资源库', source.resources, countMapItems(source.resources), RESOURCE_LIMIT),
       createStorageUsageEntry(NAVIGATION_KEY, '导航池', source.navigation, countMapItems(source.navigation), NAVIGATION_POOL_LIMIT),
       createStorageUsageEntry(NAVIGATION_PIN_KEY, '导航置顶', source.navigationPins, countMapItems(source.navigationPins), 0),
+      createStorageUsageEntry(NAVIGATION_USAGE_KEY, '导航排序', source.navigationUsage, countMapItems(source.navigationUsage), NAVIGATION_USAGE_LIMIT),
     ];
     var totalBytes = entries.reduce(function sumBytes(total, entry) {
       return total + entry.bytes;
@@ -3963,6 +4009,7 @@
       resources: resources,
       navigation: source.navigation,
       navigationPins: source.navigationPins,
+      navigationUsage: source.navigationUsage,
     }, now);
 
     return {
@@ -4144,12 +4191,48 @@
     return result;
   }
 
+  function normalizeNavigationUsageMap(value) {
+    var source = isPlainObject(value) ? value : {};
+    var result = {};
+    Object.keys(source).forEach(function normalizeUsageEntry(key) {
+      var text = String(key || '').trim();
+      var item = isPlainObject(source[key]) ? source[key] : {};
+      if (!text) return;
+      result[text] = {
+        usedAt: Math.max(0, Number(item.usedAt) || 0),
+        clickedAt: Math.max(0, Number(item.clickedAt) || 0),
+        hitCount: Math.max(0, Math.floor(Number(item.hitCount) || 0)),
+      };
+    });
+    Object.keys(result)
+      .sort(function sortNavigationUsage(left, right) {
+        var leftItem = result[left] || {};
+        var rightItem = result[right] || {};
+        var leftTime = Math.max(Number(leftItem.clickedAt) || 0, Number(leftItem.usedAt) || 0);
+        var rightTime = Math.max(Number(rightItem.clickedAt) || 0, Number(rightItem.usedAt) || 0);
+        return rightTime - leftTime;
+      })
+      .slice(NAVIGATION_USAGE_LIMIT)
+      .forEach(function removeExtraNavigationUsage(key) {
+        delete result[key];
+      });
+    return result;
+  }
+
   function loadNavigationPins() {
     return normalizeNavigationPinMap(loadMap(NAVIGATION_PIN_KEY));
   }
 
   function saveNavigationPins(pins) {
     saveMap(NAVIGATION_PIN_KEY, normalizeNavigationPinMap(pins));
+  }
+
+  function loadNavigationUsage() {
+    return normalizeNavigationUsageMap(loadMap(NAVIGATION_USAGE_KEY));
+  }
+
+  function saveNavigationUsage(usage) {
+    saveMap(NAVIGATION_USAGE_KEY, normalizeNavigationUsageMap(usage));
   }
 
   function getModuleNavigationGroupKey(label) {
@@ -4288,6 +4371,7 @@
     state.resources = pruneResourceLibrary(copyStorageMap(data.resources));
     var navigation = normalizeNavigationPool(data.navigation);
     var navigationPins = normalizeNavigationPinMap(data.navigationPins);
+    var navigationUsage = normalizeNavigationUsageMap(data.navigationUsage);
     saveSettings(settings);
     saveMap(READ_KEY, state.read);
     saveMap(WATCH_KEY, state.watch);
@@ -4297,6 +4381,7 @@
     saveResourceLibrary(state.resources);
     saveNavigationPool(navigation);
     saveNavigationPins(navigationPins);
+    saveNavigationUsage(navigationUsage);
     clearReadProgressRestoreRequest(parseThreadId(location.href));
     refreshWatchCenter();
     refreshHistoryCenter();
@@ -6789,6 +6874,7 @@
       panelState.cachedSiteCountFresh = countCache.fresh;
     }
     updateFavoriteNavTrigger(wrapper, panel.spxFavoriteNavState, state);
+    flushFavoriteNavStatusNotes();
     if (shouldRefreshFavoriteNavCountCache(countCacheSource)) {
       loadFavoriteNavSiteEntries(panel, settings, state, wrapper);
     }
@@ -8166,6 +8252,7 @@
     if (!records.length) records = parseTaskClaimRecordsFromText(scope.textContent || '', options);
     if (!records.length) return 0;
     saveTaskClaimRecords(mergeTaskClaimRecords(loadTaskClaimRecords(), records));
+    showDailyTaskDoneNavStatus(loadTaskClaimRecords(), Date.now());
     refreshTaskClaimInlineSection();
     return records.length;
   }
@@ -8173,6 +8260,11 @@
   function getTaskCompletedPageUrl() {
     var origin = (typeof location !== 'undefined' && location.origin) ? location.origin : 'https://south-plus.org';
     return origin + '/plugin.php?H_name-tasks-actions-endtasks.html.html';
+  }
+
+  function getTaskHomePageUrl() {
+    var origin = (typeof location !== 'undefined' && location.origin) ? location.origin : 'https://south-plus.org';
+    return origin + '/plugin.php?H_name-tasks.html';
   }
 
   function getTaskInProgressPageUrl() {
@@ -8294,7 +8386,13 @@
   function showFavoriteNavStatusNote(className, text, detail) {
     if (typeof document === 'undefined') return null;
     var wrapper = qs('#spx-favorite-nav');
-    if (!wrapper) return null;
+    if (!wrapper) {
+      pendingFavoriteNavStatusNotes = pendingFavoriteNavStatusNotes.filter(function keepOtherPendingNote(note) {
+        return note && note.className !== className;
+      });
+      pendingFavoriteNavStatusNotes.push({ className: className, text: text, detail: detail });
+      return null;
+    }
     var noteClass = String(className || 'spx-favorite-nav-note');
     var note = qs('.' + noteClass, wrapper);
     if (!note) {
@@ -8309,8 +8407,33 @@
     return note;
   }
 
+  function flushFavoriteNavStatusNotes() {
+    if (!pendingFavoriteNavStatusNotes.length || typeof document === 'undefined') return;
+    var wrapper = qs('#spx-favorite-nav');
+    if (!wrapper) return;
+    var notes = pendingFavoriteNavStatusNotes.slice();
+    pendingFavoriteNavStatusNotes = [];
+    notes.forEach(function showPendingFavoriteNavStatus(note) {
+      showFavoriteNavStatusNote(note.className, note.text, note.detail);
+    });
+  }
+
   function showTaskAutoClaimNavSuccess(text, detail) {
     return showFavoriteNavStatusNote('spx-task-auto-claim-nav-note', text || '任务执行成功', detail);
+  }
+
+  function showDailyTaskDoneNavStatus(records, now) {
+    if (!isTaskClaimCompletedToday(records, 'daily', now)) return null;
+    var completedAt = getLatestTaskClaimCompletedAt(records, 'daily');
+    var detail = completedAt ? ('日常任务已完成：' + formatShortTime(completedAt)) : '日常任务已完成';
+    return showTaskAutoClaimNavSuccess('今日任务已完成', detail);
+  }
+
+  function hasSuccessfulTaskAutoClaimTask(results, taskKey) {
+    var key = getTaskClaimTaskKey(taskKey);
+    return (results || []).some(function hasSuccessfulTaskResult(result) {
+      return result && result.target && result.target.taskKey === key && !isTaskAutoClaimResultBlocked(result);
+    });
   }
 
   function showAutoBuyNavSuccess(record) {
@@ -8384,15 +8507,27 @@
     if (canUseCurrentPage && /actions[-=]newtasks|newtasks/i.test(String(location.href || ''))) {
       return Promise.resolve({ source: 'current', targets: [] });
     }
-    setTaskAutoClaimStatus(host, '自动领取：正在检查任务页可领取入口...', false);
-    var url = getTaskInProgressPageUrl();
-    return requestWithPolicy(url, { credentials: 'include', cache: 'no-store' }, { mode: 'action', label: '自动任务领取检查' })
-      .then(function readTaskAutoClaimInProgressPage(response) {
-        if (!response.ok) throw new Error('进行中任务页检查失败');
-        return readScriptResponseText(response, { mode: 'action', label: '自动任务领取检查' });
+    setTaskAutoClaimStatus(host, '自动领取：正在检查新任务页可领取入口...', false);
+    var taskHomeUrl = getTaskHomePageUrl();
+    var inProgressUrl = getTaskInProgressPageUrl();
+    var requestPolicy = { mode: 'action', label: '自动任务领取检查' };
+    return requestWithPolicy(taskHomeUrl, { credentials: 'include', cache: 'no-store' }, requestPolicy)
+      .then(function readTaskAutoClaimHomePage(response) {
+        if (!response.ok) throw new Error('新任务页检查失败');
+        return readScriptResponseText(response, requestPolicy);
       })
-      .then(function collectTaskAutoClaimInProgressTargets(html) {
-        return { source: 'in-progress', targets: getTaskAutoClaimTargetsFromHtml(html, url) };
+      .then(function collectTaskAutoClaimHomeTargets(html) {
+        var homeTargets = getTaskAutoClaimTargetsFromHtml(html, taskHomeUrl);
+        if (homeTargets.length) return { source: 'task-home', targets: homeTargets };
+        setTaskAutoClaimStatus(host, '自动领取：新任务页暂无入口，正在检查进行中任务奖励...', false);
+        return requestWithPolicy(inProgressUrl, { credentials: 'include', cache: 'no-store' }, requestPolicy)
+          .then(function readTaskAutoClaimInProgressPage(response) {
+            if (!response.ok) throw new Error('进行中任务页检查失败');
+            return readScriptResponseText(response, requestPolicy);
+          })
+          .then(function collectTaskAutoClaimInProgressTargets(html) {
+            return { source: 'in-progress', targets: getTaskAutoClaimTargetsFromHtml(html, inProgressUrl) };
+          });
       });
   }
 
@@ -8421,13 +8556,15 @@
     if (!document.documentElement || document.documentElement.dataset.spxTaskAutoClaimRan === '1') return Promise.resolve(null);
     var isTaskPage = shouldUseTaskPage(location.href);
     var currentHost = host || (isTaskPage ? (qs('.spx-module-body') || qs('#main')) : null);
+    var taskClaimRecords = loadTaskClaimRecords();
+    showDailyTaskDoneNavStatus(taskClaimRecords, Date.now());
     document.documentElement.dataset.spxTaskAutoClaimRan = '1';
     if (shouldSyncTaskClaimRecordsFromUrl(location.href)) {
       setTaskAutoClaimStatus(currentHost, '自动领取：当前是已完成任务页，仅同步领取记录，不执行领取。', false);
       return Promise.resolve(null);
     }
     var currentTargets = isTaskPage && currentHost ? getTaskAutoClaimTargets(currentHost, location.href) : [];
-    var gate = currentTargets.length ? { canRun: true, nextCheckAt: 0, dueTaskKeys: [], reason: 'visible-target' } : getTaskAutoClaimGate(loadTaskClaimRecords(), loadTaskAutoClaimState(), Date.now());
+    var gate = currentTargets.length ? { canRun: true, nextCheckAt: 0, dueTaskKeys: [], reason: 'visible-target' } : getTaskAutoClaimGate(taskClaimRecords, loadTaskAutoClaimState(), Date.now());
     if (!gate.canRun) {
       setTaskAutoClaimStatus(currentHost, '自动领取：仍在冷却中，下次检查约 ' + formatTaskAutoClaimNextCheck(gate.nextCheckAt) + '。', false);
       return Promise.resolve(null);
@@ -8468,10 +8605,15 @@
           return null;
         }
         return fetchAndSyncTaskClaimRecordsAfterAutoClaim(currentHost).then(function reportTaskAutoClaimSync(count) {
-          rememberTaskAutoClaimCheck('success', getTaskAutoClaimNextCheckAtFromRecords(loadTaskClaimRecords(), Date.now()));
+          var latestRecords = loadTaskClaimRecords();
+          rememberTaskAutoClaimCheck('success', getTaskAutoClaimNextCheckAtFromRecords(latestRecords, Date.now()));
           var blockedText = blocked.length ? ('，另有 ' + blocked.length + ' 个暂不可领取。') : '';
           var successMessage = '已处理 ' + succeeded.length + ' 个任务' + (count ? ('，同步 ' + count + ' 条领取记录') : '');
-          showTaskAutoClaimNavSuccess('任务执行成功', successMessage + blockedText);
+          if (isTaskClaimCompletedToday(latestRecords, 'daily', Date.now()) || hasSuccessfulTaskAutoClaimTask(succeeded, 'daily')) {
+            showTaskAutoClaimNavSuccess('今日任务已完成', successMessage + blockedText);
+          } else {
+            showTaskAutoClaimNavSuccess('任务执行成功', successMessage + blockedText);
+          }
           setTaskAutoClaimStatus(
             currentHost,
             '自动领取：已处理 ' + succeeded.length + ' 个任务' + (count ? ('，同步 ' + count + ' 条领取记录。') : '，可刷新页面查看最新状态。') + blockedText,
@@ -9506,6 +9648,120 @@
     return pin;
   }
 
+  function getModuleNavigationUsageKey(config) {
+    if (!config) return '';
+    var label = normalizeNavigationLabel(config.label || config.title);
+    var section = normalizeNavigationLabel(config.section || '导航');
+    var parentLabel = normalizeNavigationLabel(config.parentLabel || '');
+    var baseUrl = typeof location !== 'undefined' ? location.href : 'https://south-plus.org/';
+    var href = normalizeNavigationHref(config.href || '', baseUrl);
+    if (!label || !section) return '';
+    if (href) return getNavigationItemKey(section, label, href);
+    if (config.panelId) return getNavigationItemKey(section, label, 'panel:' + config.panelId);
+    if (config.target && config.target.id) return getNavigationItemKey(section, label, 'target:' + config.target.id);
+    return getNavigationItemKey(section, label, parentLabel || label);
+  }
+
+  function rememberModuleNavigationUsage(config, options) {
+    var key = getModuleNavigationUsageKey(config);
+    if (!key) return null;
+    var now = Date.now();
+    var usage = loadNavigationUsage();
+    var record = usage[key] || {};
+    var clicked = !!(options && options.clicked);
+    var minimumInterval = clicked ? 0 : 5 * 60 * 1000;
+    if (!clicked && record.usedAt && (now - Number(record.usedAt)) < minimumInterval) return record;
+    usage[key] = {
+      usedAt: now,
+      clickedAt: clicked ? now : Math.max(0, Number(record.clickedAt) || 0),
+      hitCount: Math.min(999, Math.max(0, Math.floor(Number(record.hitCount) || 0)) + 1),
+    };
+    saveNavigationUsage(usage);
+    return usage[key];
+  }
+
+  function rememberActiveModuleNavigationUsage(configs) {
+    (configs || []).some(function rememberActiveConfig(config) {
+      if (!config || !config.active) return false;
+      rememberModuleNavigationUsage(config, { clicked: false });
+      return true;
+    });
+  }
+
+  function getModuleNavigationNumericCount(config) {
+    if (!config) return 0;
+    var direct = Number(config.count);
+    if (isFinite(direct) && direct > 0) return direct;
+    var match = String(config.countText === undefined ? '' : config.countText).match(/\d+/);
+    return match ? Number(match[0]) : 0;
+  }
+
+  function getNavigationRecencyScore(timestamp, now) {
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    var time = Number(timestamp) || 0;
+    if (!time || time > currentTime) return 0;
+    var ageHours = (currentTime - time) / (60 * 60 * 1000);
+    if (ageHours <= 1) return 90;
+    if (ageHours <= 24) return 72;
+    if (ageHours <= 7 * 24) return 54;
+    if (ageHours <= 30 * 24) return 28;
+    return 8;
+  }
+
+  function getModuleNavigationSmartScore(config, usageMap, now) {
+    var data = config || {};
+    var usage = usageMap || {};
+    var usageKey = getModuleNavigationUsageKey(data);
+    var record = usageKey ? usage[usageKey] : null;
+    var score = 0;
+    if (data.active) score += 100000;
+    if (data.pinned || data.section === '置顶导航') score += 50000;
+    if (String(data.className || '').split(/\s+/).indexOf('spx-module-nav-workbench') !== -1) score += 90;
+    if (record) {
+      score += getNavigationRecencyScore(Math.max(Number(record.clickedAt) || 0, Number(record.usedAt) || 0), now);
+      score += Math.min(80, Math.max(0, Number(record.hitCount) || 0) * 8);
+    }
+    score += Math.min(60, getModuleNavigationNumericCount(data));
+    return score;
+  }
+
+  function getModuleNavigationNodeSmartScore(node, usageMap, now) {
+    var ownScore = node && node.config ? getModuleNavigationSmartScore(node.config, usageMap, now) : 0;
+    var childScore = (node && node.children || []).reduce(function getBestChildScore(best, child) {
+      return Math.max(best, getModuleNavigationNodeSmartScore(child, usageMap, now));
+    }, 0);
+    return Math.max(ownScore, childScore);
+  }
+
+  function sortModuleNavigationNodeList(nodes, usageMap, now) {
+    return (nodes || []).map(function mapNavigationNode(node, index) {
+      if (node && node.children && node.children.length) {
+        node.children = sortModuleNavigationNodeList(node.children, usageMap, now);
+      }
+      return {
+        index: index,
+        order: Number(node && node.config && node.config.order) || 0,
+        score: getModuleNavigationNodeSmartScore(node, usageMap, now),
+        node: node,
+      };
+    }).sort(function sortNavigationNodes(left, right) {
+      if (right.score !== left.score) return right.score - left.score;
+      if (left.order !== right.order) return left.order - right.order;
+      return left.index - right.index;
+    }).map(function unwrapNavigationNode(item) {
+      return item.node;
+    });
+  }
+
+  function sortModuleNavigationTree(groups, settings, usageMap, now) {
+    if (settings && settings.smartModuleNavSort === false) return groups || [];
+    var usage = usageMap || loadNavigationUsage();
+    return (groups || []).map(function sortNavigationGroup(group) {
+      group.nodes = sortModuleNavigationNodeList(group.nodes || [], usage, now);
+      return group;
+    });
+  }
+
   function getModuleNavigationSearchText(config) {
     return compactText([
       config && config.section,
@@ -9542,6 +9798,7 @@
     item.classList.toggle('spx-active', !!active);
     item.addEventListener('click', function activateModuleNav(event) {
       var nav = item.closest ? item.closest('.spx-module-nav') : null;
+      rememberModuleNavigationUsage(config, { clicked: true });
       if (String(config.className || '').split(/\s+/).indexOf('spx-module-nav-workbench') === -1) {
         hideWorkbenchPanel();
       }
@@ -9600,10 +9857,10 @@
     return controls;
   }
 
-  function createModuleNavigationTitle(title, count) {
+  function createModuleNavigationTitle(title, count, smartSort) {
     var node = createEl('div', 'spx-module-nav-title');
     node.appendChild(createEl('strong', '', title || '导航中心'));
-    node.appendChild(createEl('span', '', (Number(count) || 0) + ' 项'));
+    node.appendChild(createEl('span', '', (Number(count) || 0) + ' 项' + (smartSort ? ' · 智能' : '')));
     return node;
   }
 
@@ -9759,9 +10016,10 @@
     groupNode.appendChild(button);
   }
 
-  function mountModuleNavigation(title, configs) {
+  function mountModuleNavigation(title, configs, settings) {
     restoreModuleNavigation();
     var content = getModuleNavigationHost();
+    var navSettings = normalizeSettings(settings);
     var visibleConfigs = (configs || []).filter(function keepModuleConfig(config) {
       return config && config.label && (
         config.count ||
@@ -9777,14 +10035,16 @@
 
     var nav = createEl('nav', 'spx-module-nav');
     nav.id = 'spx-module-nav';
+    nav.dataset.spxModuleNavSort = navSettings.smartModuleNavSort === false ? 'default' : 'smart';
     nav.setAttribute('aria-label', title || '导航中心');
-    nav.appendChild(createModuleNavigationTitle(title || '导航中心', visibleConfigs.length));
+    nav.appendChild(createModuleNavigationTitle(title || '导航中心', visibleConfigs.length, navSettings.smartModuleNavSort !== false));
     nav.appendChild(createModuleNavigationSearch(nav));
     var hasActive = visibleConfigs.some(function hasActiveConfig(config) {
       return !!config.active;
     });
     var state = { index: 0 };
-    var groups = buildModuleNavigationTree(visibleConfigs);
+    rememberActiveModuleNavigationUsage(visibleConfigs);
+    var groups = sortModuleNavigationTree(buildModuleNavigationTree(visibleConfigs), navSettings);
     var collapseState = applyInitialModuleNavigationCollapseState(groups, loadNavigationCollapseState());
     groups.forEach(function appendGroup(group) {
       var groupNode = createEl('div', 'spx-module-nav-group');
@@ -10030,7 +10290,8 @@
   }
 
   function remountGlobalModuleNavigation() {
-    mountModuleNavigation('导航中心', getAllModuleNavigationConfigs(loadSettings(), getWorkbenchState()));
+    var settings = loadSettings();
+    mountModuleNavigation('导航中心', getAllModuleNavigationConfigs(settings, getWorkbenchState()), settings);
   }
 
   function scheduleNavigationPoolRefresh(settings) {
@@ -10576,7 +10837,7 @@
 
   function createGlobalModuleNavigation(settings, state) {
     if (!shouldUseModuleNavigation(settings, location.href, document)) return;
-    mountModuleNavigation('导航中心', getAllModuleNavigationConfigs(settings, state));
+    mountModuleNavigation('导航中心', getAllModuleNavigationConfigs(settings, state), settings);
     scheduleNavigationPoolRefresh(settings);
   }
 
@@ -14986,6 +15247,7 @@
       networkFriendly: '网络友好模式',
       autoTaskClaim: '自动领取任务',
       autoBuyPost: '自动购买低价帖子',
+      smartModuleNavSort: '导航智能排序',
       unreadOnly: '列表只看未读',
       onlyOriginalAuthor: '阅读页只看楼主',
     };
@@ -15026,7 +15288,7 @@
     var taskControls = renderSettingsSection(
       '社区任务',
       ['autoTaskClaim'],
-      '保守模式：任意页面都会在本地冷却到期后检查日常 / 周常任务，未到 18 小时 / 7 天不会访问任务接口。'
+      '保守模式：任意页面都会检查日常是否今日已完成；未完成会自动申请并领取奖励，周常仍按 7 天冷却。'
     );
     var autoBuyControls = settingKeys.indexOf('autoBuyPost') !== -1 ? [
       '<section class="spx-settings-section">',
@@ -15039,7 +15301,8 @@
     var navigationControls = [
       '<section class="spx-settings-section">',
       '<h4>导航中心</h4>',
-      '<div class="spx-help">控制左侧导航中心的块区域密度，搜索和置顶入口会即时保留在导航栏内。</div>',
+      '<div class="spx-help">控制左侧导航中心的块区域密度和排序；智能排序会结合当前页、置顶、最近使用和入口数量前置常用入口。</div>',
+      renderSettingControl('smartModuleNavSort'),
       '<label class="spx-choice-setting"><span>导航密度</span><select data-choice="moduleNavDensity">',
       '<option value="compact">紧凑</option>',
       '<option value="standard">标准</option>',
@@ -15174,6 +15437,7 @@
         resources: state && state.resources,
         navigation: loadNavigationPool(),
         navigationPins: loadNavigationPins(),
+        navigationUsage: loadNavigationUsage(),
       };
     }
 
@@ -16989,6 +17253,10 @@
     getSelectedResourceKeys: getSelectedResourceKeys,
     setResourceSelection: setResourceSelection,
     getResourceEntriesByKeys: getResourceEntriesByKeys,
+    normalizeNavigationUsageMap: normalizeNavigationUsageMap,
+    getModuleNavigationUsageKey: getModuleNavigationUsageKey,
+    getModuleNavigationSmartScore: getModuleNavigationSmartScore,
+    sortModuleNavigationTree: sortModuleNavigationTree,
     markThreadsRead: markThreadsRead,
     findThreadIdsByAuthor: findThreadIdsByAuthor,
     hasThreadRowHiddenClass: hasThreadRowHiddenClass,
@@ -17009,9 +17277,11 @@
     getAutoBuyDoneAttemptForThread: getAutoBuyDoneAttemptForThread,
     formatAutoBuyNavSuccessDetail: formatAutoBuyNavSuccessDetail,
     extractTaskAutoClaimUrl: extractTaskAutoClaimUrl,
+    getTaskHomePageUrl: getTaskHomePageUrl,
     getTaskInProgressPageUrl: getTaskInProgressPageUrl,
     getTaskAutoClaimCooldownMs: getTaskAutoClaimCooldownMs,
     getLatestTaskClaimCompletedAt: getLatestTaskClaimCompletedAt,
+    isTaskClaimCompletedToday: isTaskClaimCompletedToday,
     getTaskAutoClaimGate: getTaskAutoClaimGate,
     getTaskAutoClaimActionType: getTaskAutoClaimActionType,
     isTaskAutoClaimCandidate: isTaskAutoClaimCandidate,

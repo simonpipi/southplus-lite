@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>导航中心智能排序预览</title>
+  <style>
+    :root {
+      --bg: #eef2f6;
+      --panel: #ffffff;
+      --panel-muted: #f6f8fb;
+      --text: #1f2937;
+      --sub: #667085;
+      --muted: #98a2b3;
+      --line: #d9e0ea;
+      --line-soft: #e8edf4;
+      --accent: #2563eb;
+      --accent-wash: #eaf1ff;
+      --warn: #c77700;
+      --good: #12805c;
+      --shadow: 0 12px 32px rgba(31, 41, 55, .08);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .site-shell {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 14px 20px 44px;
+    }
+
+    .topbar {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 14px;
+      border-radius: 10px;
+      background: #1f2937;
+      color: #f8fafc;
+      box-shadow: var(--shadow);
+    }
+
+    .brand { font-size: 13px; font-weight: 900; white-space: nowrap; }
+    .toplinks { display: flex; gap: 8px; min-width: 0; overflow: hidden; }
+    .toplinks span {
+      flex: none;
+      padding: 4px 9px;
+      border-radius: 999px;
+      color: #dbe4ef;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .toplinks .active { background: #334155; color: #ffffff; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      gap: 14px;
+      margin-top: 14px;
+      align-items: start;
+    }
+
+    .module-nav,
+    .content-panel,
+    .side-panel {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .module-nav {
+      position: sticky;
+      top: 14px;
+      max-height: calc(100vh - 28px);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px;
+      overflow: auto;
+    }
+
+    .nav-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 0 2px 8px;
+      border-bottom: 1px solid var(--line-soft);
+      color: var(--sub);
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .nav-title strong { color: var(--text); }
+    .nav-title span:last-child { color: var(--muted); font-size: 11px; }
+
+    .nav-search {
+      width: 100%;
+      height: 30px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel-muted);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 800;
+      outline: none;
+    }
+
+    .nav-group { display: flex; flex-direction: column; gap: 5px; }
+    .nav-section {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 34px;
+      margin: 5px 0 1px;
+      padding: 0 12px;
+      border-radius: 10px;
+      background: var(--accent-wash);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .nav-section:before { content: "▾"; font-size: 10px; }
+    .nav-section:after { content: ""; height: 1px; flex: 1; background: rgba(37, 99, 235, .18); }
+
+    .nav-node { display: flex; flex-direction: column; gap: 4px; }
+    .nav-item {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 0 12px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: var(--panel-muted);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .nav-item.active { border-color: var(--accent); background: var(--accent); color: #ffffff; }
+    .nav-item.pinned { border-color: rgba(37, 99, 235, .22); }
+    .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .nav-meta { flex: none; display: flex; align-items: center; gap: 6px; }
+    .nav-count,
+    .nav-pin,
+    .nav-rank {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 20px;
+      min-width: 20px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--sub);
+      font-size: 11px;
+      font-weight: 900;
+    }
+    .nav-item.active .nav-count,
+    .nav-item.active .nav-pin,
+    .nav-item.active .nav-rank { background: rgba(255, 255, 255, .22); color: #fff; }
+    .nav-rank { color: var(--accent); }
+
+    .main-stack { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; }
+    .content-panel { min-width: 0; padding: 16px; }
+    .content-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    h1 { margin: 0; font-size: 20px; line-height: 1.25; }
+    .content-head p { margin: 5px 0 0; color: var(--sub); font-size: 13px; }
+    .pill-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      height: 26px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: var(--accent-wash);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .pill.good { background: #e8f7ef; color: var(--good); }
+    .pill.warn { background: #fff4df; color: var(--warn); }
+
+    .compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .compare-box {
+      min-width: 0;
+      padding: 13px;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      background: var(--panel-muted);
+    }
+    .compare-box h2 { margin: 0 0 10px; font-size: 14px; }
+    .rank-list { display: flex; flex-direction: column; gap: 8px; }
+    .rank-row {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 34px;
+      padding: 0 10px;
+      border-radius: 8px;
+      background: #fff;
+      border: 1px solid var(--line-soft);
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .rank-row span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .reason { color: var(--sub); font-size: 11px; font-weight: 800; white-space: nowrap; }
+
+    .side-panel { padding: 14px; }
+    .side-panel h2 { margin: 0 0 10px; font-size: 14px; }
+    .setting-line,
+    .score-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 34px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line-soft);
+      color: var(--sub);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .setting-line strong,
+    .score-line strong { color: var(--text); }
+    .switch {
+      width: 42px;
+      height: 22px;
+      border-radius: 999px;
+      background: var(--accent);
+      position: relative;
+      flex: none;
+    }
+    .switch:after {
+      content: "";
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      top: 2px;
+      right: 2px;
+      border-radius: 999px;
+      background: #fff;
+    }
+    .score-value { color: var(--accent); font-weight: 900; }
+
+    @media (max-width: 980px) {
+      .site-shell { padding: 10px 8px 34px; }
+      .layout { grid-template-columns: minmax(0, 1fr); }
+      .module-nav { position: static; flex-direction: row; max-height: none; overflow-x: auto; overflow-y: hidden; }
+      .nav-title, .nav-search, .nav-group, .nav-node { flex: none; }
+      .nav-group { flex-direction: row; align-items: center; }
+      .nav-section, .nav-item { flex: none; min-height: 30px; border-radius: 999px; }
+      .main-stack, .compare { grid-template-columns: minmax(0, 1fr); }
+      .content-head { flex-direction: column; }
+      .pill-row { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="site-shell">
+    <header class="topbar">
+      <div class="brand">South Plus +++</div>
+      <nav class="toplinks" aria-label="站点导航">
+        <span class="active">讨论区</span>
+        <span>搜索</span>
+        <span>社区服务</span>
+        <span>我的收藏</span>
+      </nav>
+    </header>
+
+    <div class="layout">
+      <aside class="module-nav" aria-label="导航中心智能排序预览" data-spx-module-nav-sort="smart">
+        <div class="nav-title"><strong>导航中心</strong><span>18 项 · 智能</span></div>
+        <input class="nav-search" value="" placeholder="搜索导航" aria-label="搜索导航" readonly>
+
+        <section class="nav-group">
+          <div class="nav-section">置顶导航</div>
+          <div class="nav-node"><a class="nav-item pinned active" href="#"><span class="nav-label">资源工作台</span><span class="nav-meta"><span class="nav-rank">1</span><span class="nav-pin">★</span></span></a></div>
+          <div class="nav-node"><a class="nav-item pinned" href="#"><span class="nav-label">茶馆</span><span class="nav-meta"><span class="nav-rank">2</span><span class="nav-pin">★</span></span></a></div>
+        </section>
+
+        <section class="nav-group">
+          <div class="nav-section">我的工作台</div>
+          <div class="nav-node"><a class="nav-item active" href="#"><span class="nav-label">资源工作台</span><span class="nav-meta"><span class="nav-count">31</span><span class="nav-pin">★</span></span></a></div>
+          <div class="nav-node"><a class="nav-item" href="#"><span class="nav-label">稍后看</span><span class="nav-meta"><span class="nav-count">43</span><span class="nav-pin">☆</span></span></a></div>
+          <div class="nav-node"><a class="nav-item" href="#"><span class="nav-label">最近浏览</span><span class="nav-meta"><span class="nav-count">86</span><span class="nav-pin">☆</span></span></a></div>
+          <div class="nav-node"><a class="nav-item" href="#"><span class="nav-label">购买记录</span><span class="nav-meta"><span class="nav-count">14</span><span class="nav-pin">☆</span></span></a></div>
+        </section>
+
+        <section class="nav-group">
+          <div class="nav-section">版块导航</div>
+          <div class="nav-node"><a class="nav-item" href="#"><span class="nav-label">茶馆</span><span class="nav-meta"><span class="nav-count">近期</span><span class="nav-pin">★</span></span></a></div>
+          <div class="nav-node"><a class="nav-item" href="#"><span class="nav-label">AI交流 beta</span><span class="nav-meta"><span class="nav-count">8</span><span class="nav-pin">☆</span></span></a></div>
+          <div class="nav-node"><a class="nav-item" href="#"><span class="nav-label">免空资源区</span><span class="nav-meta"><span class="nav-count">22</span><span class="nav-pin">☆</span></span></a></div>
+          <div class="nav-node"><a class="nav-item" href="#"><span class="nav-label">询问&求物</span><span class="nav-meta"><span class="nav-count">6</span><span class="nav-pin">☆</span></span></a></div>
+        </section>
+      </aside>
+
+      <main class="main-stack">
+        <section class="content-panel">
+          <div class="content-head">
+            <div>
+              <h1>导航中心智能排序</h1>
+              <p>不改变原有分组，只在组内把当前页、置顶、最近点击和高价值入口提前。</p>
+            </div>
+            <div class="pill-row">
+              <span class="pill good">默认开启</span>
+              <span class="pill">保留搜索</span>
+              <span class="pill warn">可在设置关闭</span>
+            </div>
+          </div>
+
+          <div class="compare">
+            <div class="compare-box">
+              <h2>智能排序后</h2>
+              <div class="rank-list">
+                <div class="rank-row"><span>1</span><span>资源工作台</span><span class="reason">当前页 + 置顶</span></div>
+                <div class="rank-row"><span>2</span><span>茶馆</span><span class="reason">最近点击</span></div>
+                <div class="rank-row"><span>3</span><span>最近浏览</span><span class="reason">数量高</span></div>
+                <div class="rank-row"><span>4</span><span>稍后看</span><span class="reason">积压高</span></div>
+              </div>
+            </div>
+            <div class="compare-box">
+              <h2>原始顺序保留</h2>
+              <div class="rank-list">
+                <div class="rank-row"><span>1</span><span>漫区特设</span><span class="reason">固定顺序</span></div>
+                <div class="rank-row"><span>2</span><span>蜜柑计划</span><span class="reason">固定顺序</span></div>
+                <div class="rank-row"><span>3</span><span>综合交流</span><span class="reason">固定顺序</span></div>
+                <div class="rank-row"><span>4</span><span>人民囧府</span><span class="reason">固定顺序</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="side-panel">
+          <h2>设置与权重</h2>
+          <div class="setting-line"><strong>导航智能排序</strong><span class="switch" aria-hidden="true"></span></div>
+          <div class="score-line"><span>当前页面</span><strong class="score-value">最高</strong></div>
+          <div class="score-line"><span>置顶导航</span><strong class="score-value">优先</strong></div>
+          <div class="score-line"><span>最近点击</span><strong class="score-value">7 天内更高</strong></div>
+          <div class="score-line"><span>入口数量</span><strong class="score-value">轻微加权</strong></div>
+          <div class="score-line"><span>本地记录</span><strong class="score-value">可备份</strong></div>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
