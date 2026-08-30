@@ -1,0 +1,1149 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>South Plus +++ 收藏新回复预览</title>
+  <style>
+    :root {
+      --page: #eef2f6;
+      --panel: #ffffff;
+      --panel-muted: #f7f9fc;
+      --line: #d8e1ec;
+      --line-soft: #e8edf4;
+      --text: #172033;
+      --sub: #647184;
+      --soft: #8b97a8;
+      --nav: #1f2937;
+      --accent: #2563eb;
+      --accent-soft: #eaf1ff;
+      --warn: #d97706;
+      --warn-soft: #ffedd5;
+      --danger: #dc2626;
+      --danger-soft: #fee2e2;
+      --good: #12805c;
+      --good-soft: #dcfce7;
+      --violet: #7c3aed;
+      --violet-soft: #ede9fe;
+      --shadow: 0 18px 46px rgba(15, 23, 42, .13);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--page);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    button,
+    input,
+    select { font: inherit; }
+
+    button { cursor: pointer; }
+
+    a { color: inherit; text-decoration: none; }
+
+    .page {
+      width: min(1440px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 24px 0 52px;
+    }
+
+    .browser-shell {
+      overflow: hidden;
+      border: 1px solid #c8d3e1;
+      border-radius: 18px;
+      background: #f3f6fa;
+      box-shadow: var(--shadow);
+    }
+
+    .browser-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, .82);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ef4444;
+    }
+
+    .dot:nth-child(2) { background: #f59e0b; }
+    .dot:nth-child(3) { background: #22c55e; }
+
+    .address {
+      flex: 1;
+      min-width: 0;
+      margin-left: 8px;
+      padding: 4px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--soft);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mock-page {
+      position: relative;
+      min-height: 820px;
+      padding: 22px;
+      background: linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%);
+    }
+
+    .site-header {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 9px;
+      background: var(--nav);
+      color: #fff;
+      font-size: 13px;
+    }
+
+    .top-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      min-width: 0;
+      align-items: center;
+    }
+
+    .top-tab {
+      min-height: 30px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      color: #465468;
+      font-size: 13px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .top-tab.active {
+      background: #edf3fb;
+      color: #0f172a;
+    }
+
+    .favorite-zone {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      justify-content: flex-end;
+      min-width: 0;
+    }
+
+    .favorite-trigger {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 30px;
+      padding: 0 10px;
+      border: 1px solid rgba(217, 119, 6, .28);
+      border-radius: 8px;
+      background: var(--warn-soft);
+      color: #7c2d12;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .favorite-trigger .star {
+      display: inline-grid;
+      width: 18px;
+      height: 18px;
+      place-items: center;
+      border-radius: 6px;
+      background: var(--warn);
+      color: #fff;
+      line-height: 1;
+    }
+
+    .count,
+    .new-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 20px;
+      height: 18px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: #fff;
+      color: var(--warn);
+      font-size: 11px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .new-count {
+      background: var(--danger);
+      color: #fff;
+    }
+
+    .nav-note {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 24px;
+      max-width: 142px;
+      padding: 0 10px;
+      border: 1px solid #fecaca;
+      border-radius: 999px;
+      background: var(--danger-soft);
+      color: #991b1b;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .content-grid {
+      display: grid;
+      grid-template-columns: 238px minmax(0, 1fr);
+      gap: 16px;
+      margin-top: 16px;
+      align-items: start;
+    }
+
+    .left-nav,
+    .forum-main,
+    .side-panel,
+    .favorite-panel {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: 0 12px 32px rgba(15, 23, 42, .07);
+    }
+
+    .left-nav {
+      position: sticky;
+      top: 16px;
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .left-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line-soft);
+      color: #334155;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .search {
+      height: 32px;
+      padding: 0 10px;
+      border: 1px solid var(--line-soft);
+      border-radius: 9px;
+      background: var(--panel-muted);
+      color: var(--soft);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .nav-section {
+      margin-top: 4px;
+      color: var(--soft);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .nav-link {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 36px;
+      padding: 7px 9px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      color: #435064;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .nav-link.active {
+      border-color: rgba(37, 99, 235, .2);
+      background: var(--accent-soft);
+      color: #1d4ed8;
+    }
+
+    .nav-badge {
+      min-width: 24px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #f1f5f9;
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .nav-badge.hot {
+      background: var(--danger-soft);
+      color: #b91c1c;
+    }
+
+    .main-columns {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 310px;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .forum-main { overflow: hidden; }
+
+    .forum-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 15px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-muted);
+    }
+
+    h1,
+    h2,
+    h3,
+    p { margin: 0; }
+
+    h1 {
+      font-size: 18px;
+      line-height: 1.28;
+    }
+
+    .forum-head p {
+      margin-top: 4px;
+      color: var(--sub);
+      font-size: 12px;
+    }
+
+    .head-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      justify-content: flex-end;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #354156;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .pill.hot {
+      border-color: #fecaca;
+      background: var(--danger-soft);
+      color: #b91c1c;
+    }
+
+    .thread-list { display: grid; }
+
+    .thread-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid #edf1f6;
+      background: #fff;
+    }
+
+    .thread-row:last-child { border-bottom: 0; }
+
+    .thread-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      font-weight: 900;
+    }
+
+    .thread-title span:last-child {
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .thread-meta {
+      margin-top: 4px;
+      color: var(--sub);
+      font-size: 12px;
+    }
+
+    .thread-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .mini-button {
+      height: 28px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .mini-button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      height: 21px;
+      padding: 0 7px;
+      border-radius: 999px;
+      background: #e0f2fe;
+      color: #075985;
+      font-size: 11px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .status-badge.hot {
+      background: var(--danger-soft);
+      color: #b91c1c;
+    }
+
+    .status-badge.good {
+      background: var(--good-soft);
+      color: #15803d;
+    }
+
+    .status-badge.warn {
+      background: var(--warn-soft);
+      color: #92400e;
+    }
+
+    .side-panel {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+    }
+
+    .side-panel h2 {
+      font-size: 15px;
+      line-height: 1.3;
+    }
+
+    .stat-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .stat-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 9px 10px;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      background: var(--panel-muted);
+    }
+
+    .stat-row strong {
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .stat-row span {
+      color: var(--sub);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .favorite-panel {
+      position: absolute;
+      top: 70px;
+      right: 22px;
+      z-index: 20;
+      width: min(720px, calc(100vw - 72px));
+      max-height: 690px;
+      overflow: hidden;
+      border-color: #f3c27a;
+      box-shadow: 0 22px 52px rgba(15, 23, 42, .24);
+    }
+
+    .favorite-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid #fde4bd;
+      background: linear-gradient(180deg, #fff7ed 0%, #fff 100%);
+    }
+
+    .favorite-title h2 {
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.3;
+      font-weight: 900;
+    }
+
+    .favorite-title p {
+      margin-top: 4px;
+      color: #7c2d12;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .favorite-head-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .favorite-open {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--warn);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .favorite-open.secondary {
+      border: 1px solid #f3c27a;
+      background: #fffaf3;
+      color: #7c2d12;
+    }
+
+    .favorite-stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      padding: 12px 14px 0;
+    }
+
+    .favorite-stat {
+      min-width: 0;
+      padding: 9px 10px;
+      border: 1px solid #fde4bd;
+      border-radius: 10px;
+      background: #fffaf3;
+    }
+
+    .favorite-stat strong {
+      display: block;
+      color: #7c2d12;
+      font-size: 16px;
+      line-height: 1.2;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .favorite-stat span {
+      display: block;
+      margin-top: 3px;
+      color: var(--sub);
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .favorite-search {
+      width: calc(100% - 28px);
+      min-height: 34px;
+      margin: 12px 14px 8px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel-muted);
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+    }
+
+    .favorite-tabs,
+    .favorite-tools {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 14px 10px;
+    }
+
+    .favorite-tools { justify-content: space-between; }
+
+    .favorite-chips {
+      display: flex;
+      gap: 6px;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+
+    .favorite-tab,
+    .favorite-chip {
+      flex: none;
+      min-height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--sub);
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .favorite-tab.active,
+    .favorite-chip.active {
+      border-color: var(--warn);
+      background: var(--warn-soft);
+      color: #7c2d12;
+    }
+
+    .favorite-chip.hot {
+      border-color: #fecaca;
+      background: var(--danger-soft);
+      color: #b91c1c;
+    }
+
+    .favorite-sort {
+      width: 132px;
+      height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .favorite-list {
+      display: grid;
+      gap: 8px;
+      max-height: 360px;
+      overflow: auto;
+      padding: 0 14px 14px;
+    }
+
+    .favorite-group {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 30px;
+      padding: 4px 2px;
+      background: var(--panel);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .favorite-group-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .favorite-group-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .favorite-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      min-height: 68px;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .favorite-item.hot {
+      border-color: #fecaca;
+      background: #fffafa;
+    }
+
+    .favorite-body-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .favorite-title-link {
+      display: -webkit-box;
+      min-width: 0;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 900;
+      line-height: 1.38;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    .favorite-meta {
+      margin-top: 5px;
+      color: #1f2937;
+      font-size: 13px;
+      line-height: 1.42;
+    }
+
+    .favorite-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .favorite-action {
+      min-width: 52px;
+      height: 28px;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .favorite-action.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .favorite-action.hot {
+      border-color: #fecaca;
+      background: var(--danger-soft);
+      color: #b91c1c;
+    }
+
+    .read-preview {
+      margin-top: 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .read-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line-soft);
+      background: var(--panel-muted);
+    }
+
+    .read-head strong { font-size: 14px; }
+
+    .floor-list { display: grid; }
+
+    .floor {
+      display: grid;
+      grid-template-columns: 72px minmax(0, 1fr);
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid #edf1f6;
+    }
+
+    .floor:last-child { border-bottom: 0; }
+
+    .floor.hot {
+      background: #fff7f7;
+      box-shadow: inset 3px 0 0 var(--danger);
+    }
+
+    .floor-label {
+      color: var(--sub);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .floor-copy strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .floor-copy span {
+      display: block;
+      margin-top: 3px;
+      color: var(--sub);
+      font-size: 12px;
+    }
+
+    .floating-toolbar {
+      position: absolute;
+      right: 22px;
+      bottom: 22px;
+      z-index: 12;
+      display: flex;
+      gap: 7px;
+      padding: 6px;
+      border: 1px solid rgba(203, 213, 225, .86);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .94);
+      box-shadow: 0 18px 46px rgba(15, 23, 42, .18);
+      backdrop-filter: blur(10px);
+    }
+
+    .toolbar-button {
+      display: inline-flex;
+      width: 52px;
+      height: 36px;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      background: #fff;
+      color: #334155;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, .08);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .toolbar-button.active {
+      border-color: rgba(37, 99, 235, .38);
+      background: var(--accent-soft);
+      color: #1d4ed8;
+    }
+
+    @media (max-width: 980px) {
+      .page { width: min(760px, calc(100vw - 28px)); padding-top: 10px; }
+      .mock-page { padding: 10px; overflow: hidden; }
+      .site-header,
+      .content-grid,
+      .main-columns { grid-template-columns: 1fr; }
+      .favorite-zone { justify-content: flex-start; flex-wrap: wrap; }
+      .left-nav,
+      .forum-main,
+      .side-panel,
+      .favorite-panel { width: 100%; max-width: 100%; }
+      .nav-link { min-width: 0; overflow: hidden; }
+      .nav-badge { flex: none; }
+      .forum-head { display: grid; grid-template-columns: 1fr; }
+      .head-actions { justify-content: flex-start; }
+      .thread-row { grid-template-columns: minmax(0, 1fr); }
+      .thread-actions { justify-content: flex-start; flex-wrap: wrap; }
+      .favorite-panel {
+        position: static;
+        width: 100%;
+        margin-top: 12px;
+      }
+      .favorite-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .favorite-tools { align-items: flex-start; flex-direction: column; }
+      .favorite-sort { width: 100%; }
+      .favorite-item { grid-template-columns: minmax(0, 1fr); }
+      .favorite-actions { justify-content: flex-start; flex-wrap: wrap; }
+      .floating-toolbar { left: 12px; right: 12px; justify-content: space-between; }
+      .toolbar-button { flex: 1; width: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="browser-shell" aria-label="收藏新回复预览">
+      <div class="browser-bar">
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <div class="address">https://south-plus.org/thread.php?fid-13.html</div>
+      </div>
+
+      <div class="mock-page">
+        <header class="site-header">
+          <div class="brand">
+            <span class="brand-mark">SP</span>
+            <span>South Plus +++</span>
+          </div>
+          <nav class="top-tabs" aria-label="站点主导航">
+            <a class="top-tab active" href="#">论坛</a>
+            <a class="top-tab" href="#">最新帖子</a>
+            <a class="top-tab" href="#">社区任务</a>
+            <a class="top-tab" href="#">搜索</a>
+          </nav>
+          <div class="favorite-zone">
+            <button class="favorite-trigger" type="button" aria-expanded="true">
+              <span class="star">★</span>
+              <span>我的收藏</span>
+              <span class="count">110</span>
+              <span class="new-count">新 3</span>
+            </button>
+            <span class="nav-note">收藏有新回复</span>
+          </div>
+        </header>
+
+        <section class="content-grid">
+          <aside class="left-nav" aria-label="导航中心">
+            <div class="left-head">
+              <span>导航中心</span>
+              <span class="nav-badge">12</span>
+            </div>
+            <div class="search">搜索导航</div>
+            <div class="nav-section">我的工作台</div>
+            <a class="nav-link active" href="#">我的内容 <span class="nav-badge hot">新 3</span></a>
+            <a class="nav-link" href="#">稍后看 <span class="nav-badge">24</span></a>
+            <a class="nav-link" href="#">最近浏览 <span class="nav-badge">36</span></a>
+            <a class="nav-link" href="#">资源工作台 <span class="nav-badge">58</span></a>
+            <div class="nav-section">站点导航</div>
+            <a class="nav-link" href="#">免空资源区 <span class="nav-badge">13</span></a>
+            <a class="nav-link" href="#">AI 交流 <span class="nav-badge">208</span></a>
+            <a class="nav-link" href="#">茶馆 <span class="nav-badge">9</span></a>
+          </aside>
+
+          <div class="main-columns">
+            <section class="forum-main">
+              <div class="forum-head">
+                <div>
+                  <h1>免空资源区</h1>
+                  <p>列表页顺手记录当前可见主题回复数，不额外请求帖子详情。</p>
+                </div>
+                <div class="head-actions">
+                  <span class="pill hot">有新回复 3</span>
+                  <span class="pill">网络友好</span>
+                  <span class="pill">缓存 8 分钟</span>
+                </div>
+              </div>
+              <div class="thread-list">
+                <article class="thread-row">
+                  <div>
+                    <div class="thread-title"><span class="status-badge hot">新 +5</span><span>资源合集补档与镜像整理楼</span></div>
+                    <div class="thread-meta">alice · 回复 128 -> 133 · 上次读到 B48F</div>
+                  </div>
+                  <div class="thread-actions">
+                    <button class="mini-button primary" type="button">读新回复</button>
+                    <button class="mini-button" type="button">稍后</button>
+                  </div>
+                </article>
+                <article class="thread-row">
+                  <div>
+                    <div class="thread-title"><span class="status-badge warn">稍后</span><span>AI 图片资源索引周更</span></div>
+                    <div class="thread-meta">bob · 回复 42 · 列表页刚同步</div>
+                  </div>
+                  <div class="thread-actions">
+                    <button class="mini-button" type="button">打开</button>
+                    <button class="mini-button" type="button">收藏</button>
+                  </div>
+                </article>
+                <article class="thread-row">
+                  <div>
+                    <div class="thread-title"><span class="status-badge good">已读</span><span>旧资源整理帖归档</span></div>
+                    <div class="thread-meta">carol · 回复 76 · 已读完，冷数据不主动扫</div>
+                  </div>
+                  <div class="thread-actions">
+                    <button class="mini-button" type="button">打开</button>
+                  </div>
+                </article>
+              </div>
+
+              <section class="read-preview">
+                <div class="read-head">
+                  <strong>点击“读新回复”后的落点</strong>
+                  <span class="status-badge hot">跳到 B49F</span>
+                </div>
+                <div class="floor-list">
+                  <div class="floor">
+                    <div class="floor-label">B48F</div>
+                    <div class="floor-copy"><strong>上次阅读位置</strong><span>本地阅读进度保存的最后楼层。</span></div>
+                  </div>
+                  <div class="floor hot">
+                    <div class="floor-label">B49F</div>
+                    <div class="floor-copy"><strong>第一条未读回复</strong><span>有楼层记录时优先跳这里；没有精确楼层时跳最后页。</span></div>
+                  </div>
+                </div>
+              </section>
+            </section>
+
+            <aside class="side-panel" aria-label="请求策略状态">
+              <h2>检查节奏</h2>
+              <div class="stat-grid">
+                <div class="stat-row"><strong>自动检查</strong><span>10 条/轮</span></div>
+                <div class="stat-row"><strong>热收藏</strong><span>15 分钟</span></div>
+                <div class="stat-row"><strong>温收藏</strong><span>6 小时</span></div>
+                <div class="stat-row"><strong>冷收藏</strong><span>手动</span></div>
+                <div class="stat-row"><strong>限流失败</strong><span>冷却 60 分钟</span></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="favorite-panel" aria-label="我的收藏新回复面板">
+          <div class="favorite-head">
+            <div class="favorite-title">
+              <h2>我的收藏</h2>
+              <p>站内收藏和稍后看分开管理，新回复状态按缓存与手动检查合并。</p>
+            </div>
+            <div class="favorite-head-actions">
+              <button class="favorite-open secondary" type="button">检查更新</button>
+              <button class="favorite-open" type="button">打开收藏页</button>
+            </div>
+          </div>
+
+          <div class="favorite-stats">
+            <div class="favorite-stat"><strong>86</strong><span>站内收藏</span></div>
+            <div class="favorite-stat"><strong>24</strong><span>稍后看</span></div>
+            <div class="favorite-stat"><strong>3</strong><span>有新回复</span></div>
+            <div class="favorite-stat"><strong>8m</strong><span>缓存剩余</span></div>
+          </div>
+
+          <input class="favorite-search" type="search" value="" placeholder="筛选收藏标题、作者或标签">
+
+          <div class="favorite-tabs">
+            <button class="favorite-tab active" type="button">站内收藏 86</button>
+            <button class="favorite-tab" type="button">稍后看 24</button>
+          </div>
+
+          <div class="favorite-tools">
+            <div class="favorite-chips">
+              <button class="favorite-chip" type="button">全部</button>
+              <button class="favorite-chip hot active" type="button">有新回复 3</button>
+              <button class="favorite-chip" type="button">最近</button>
+              <button class="favorite-chip" type="button">资源</button>
+              <button class="favorite-chip" type="button">图片</button>
+              <button class="favorite-chip" type="button">AI</button>
+            </div>
+            <select class="favorite-sort" aria-label="排序方式">
+              <option>新回复优先</option>
+              <option>最近收藏</option>
+              <option>最近阅读</option>
+            </select>
+          </div>
+
+          <div class="favorite-list">
+            <div class="favorite-group">
+              <div class="favorite-group-main"><span>站内收藏</span><span>3 条新回复</span></div>
+              <div class="favorite-group-actions"><span class="status-badge warn">本轮已查 8 / 10</span></div>
+            </div>
+
+            <article class="favorite-item hot">
+              <div>
+                <div class="favorite-body-head">
+                  <span class="status-badge hot">新 +5</span>
+                  <a class="favorite-title-link" href="#">资源合集补档与镜像整理楼</a>
+                </div>
+                <div class="favorite-meta">alice · 收藏 今天 09:12 · 回复 128 -> 133 · 续读 B49F · 标签 资源 / 网盘</div>
+              </div>
+              <div class="favorite-actions">
+                <button class="favorite-action primary" type="button">读新回复</button>
+                <button class="favorite-action" type="button">复制</button>
+                <button class="favorite-action" type="button">删除</button>
+              </div>
+            </article>
+
+            <article class="favorite-item hot">
+              <div>
+                <div class="favorite-body-head">
+                  <span class="status-badge hot">新 +2</span>
+                  <a class="favorite-title-link" href="#">AI 图片资源索引周更</a>
+                </div>
+                <div class="favorite-meta">bob · 稍后看 · 回复 42 -> 44 · 无精确楼层，打开最后页 · 标签 AI / 图片</div>
+              </div>
+              <div class="favorite-actions">
+                <button class="favorite-action primary" type="button">读新回复</button>
+                <button class="favorite-action" type="button">复制</button>
+                <button class="favorite-action hot" type="button">移除</button>
+              </div>
+            </article>
+
+            <article class="favorite-item hot">
+              <div>
+                <div class="favorite-body-head">
+                  <span class="status-badge hot">新 +1</span>
+                  <a class="favorite-title-link" href="#">长帖答疑楼：压缩包密码与补链</a>
+                </div>
+                <div class="favorite-meta">dave · 收藏 昨天 22:18 · 回复 87 -> 88 · 续读 B32F · 标签 阅读</div>
+              </div>
+              <div class="favorite-actions">
+                <button class="favorite-action primary" type="button">读新回复</button>
+                <button class="favorite-action" type="button">复制</button>
+                <button class="favorite-action" type="button">删除</button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <div class="floating-toolbar" aria-label="悬浮工具栏">
+          <button class="toolbar-button" type="button">顶部</button>
+          <button class="toolbar-button" type="button">底部</button>
+          <button class="toolbar-button active" type="button">工具</button>
+          <button class="toolbar-button" type="button">命令</button>
+          <button class="toolbar-button" type="button">设置</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

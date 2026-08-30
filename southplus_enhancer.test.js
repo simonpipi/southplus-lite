@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.5\.14/);
+assert.match(source, /@version\s+0\.6\.0/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.autoTaskClaim, true);
@@ -219,6 +219,48 @@ assert.deepEqual(enhancer.filterFavoriteNavEntries(favoriteEntries, { filter: 'r
 assert.deepEqual(enhancer.filterFavoriteNavEntries(favoriteEntries, { query: 'carol' }).map((entry) => entry.title), ['图片预览']);
 assert.deepEqual(enhancer.sortFavoriteNavEntries(favoriteEntries, 'reply').map((entry) => entry.title), ['网盘资源', '图片预览', 'AI 交流']);
 assert.equal(enhancer.parseFavoriteReplyCount('作者 bob 回复 128 最后发表'), 128);
+assert.equal(enhancer.parseThreadReplyCount('回帖: 42'), 42);
+const firstThreadUpdate = enhancer.updateThreadReplyState(
+  {},
+  { id: '3373', title: '收藏帖', url: 'https://south-plus.org/read.php?tid-3373.html', replies: 128 },
+  { source: 'favorite-page' },
+  1000
+);
+assert.equal(firstThreadUpdate.record.hasNewReplies, false);
+assert.equal(firstThreadUpdate.record.readReplies, 128);
+const nextThreadUpdate = enhancer.updateThreadReplyState(
+  firstThreadUpdate.map,
+  { id: '3373', title: '收藏帖', url: 'https://south-plus.org/read.php?tid-3373.html', replies: 133 },
+  { source: 'forum-list' },
+  2000
+);
+assert.equal(nextThreadUpdate.record.hasNewReplies, true);
+assert.equal(nextThreadUpdate.record.unreadReplies, 5);
+const decoratedFavorite = enhancer.decorateFavoriteNavEntryWithUpdate(
+  { id: '3373', title: '收藏帖', url: 'https://south-plus.org/read.php?tid-3373.html', savedAt: 10 },
+  nextThreadUpdate.map
+);
+assert.equal(decoratedFavorite.updateText, '新 +5');
+assert.equal(decoratedFavorite.latestUrl, 'https://south-plus.org/read.php?tid=3373&page=e#a');
+assert.equal(enhancer.getFavoriteNavUpdateSummary([decoratedFavorite], nextThreadUpdate.map).count, 1);
+assert.equal(enhancer.filterFavoriteNavEntries([decoratedFavorite], { filter: 'updated' }).length, 1);
+assert.equal(enhancer.sortFavoriteNavEntries([{ title: '低', unreadReplies: 2 }, decoratedFavorite], 'updated')[0].title, '收藏帖');
+const readThreadUpdate = enhancer.updateThreadReplyState(nextThreadUpdate.map, { id: '3373', replies: 133 }, { markRead: true, source: 'read-page' }, 3000);
+assert.equal(readThreadUpdate.record.hasNewReplies, false);
+assert.equal(enhancer.shouldCheckThreadUpdate({ id: '3373', read: false }, { id: '3373', knownReplies: 133, readReplies: 133, lastCheckedAt: 1000 }, 1000 + 5 * 60 * 1000, false), false);
+assert.equal(enhancer.shouldCheckThreadUpdate({ id: '3373', read: false }, { id: '3373', knownReplies: 133, readReplies: 133, lastCheckedAt: 1000 }, 1000 + 20 * 60 * 1000, false), true);
+const readPageFixture = {
+  querySelectorAll(selector) {
+    if (selector === 'table.js-post') return [{}, {}];
+    if (selector.indexOf('.pages') !== -1) return [
+      { getAttribute: () => 'https://south-plus.org/read.php?tid-3373-page-3.html', textContent: '3' },
+      { getAttribute: () => '', textContent: '3' },
+    ];
+    return [];
+  },
+};
+assert.equal(enhancer.parseThreadReadReplyCountFromDocument(readPageFixture, 'https://south-plus.org/read.php?tid=3373&page=e#a'), 62);
+assert.equal(enhancer.getFavoriteNavUnreadUrl(decoratedFavorite), 'https://south-plus.org/read.php?tid-3373-page-5.html');
 const dashboardNow = new Date(2026, 7, 9, 12, 0).getTime();
 const dashboardReport = enhancer.collectForumDashboardReport({
   read: {
@@ -2426,7 +2468,7 @@ assert.match(enhancer.formatBackupImportPreview(cleanedHealth.payload), /即将�
 
 assert.equal(enhancer.formatStorageBytes(1536), '1.5 KB');
 const storageReport = enhancer.collectStorageUsageReport(healthData);
-assert.equal(storageReport.entries.length, 10);
+assert.equal(storageReport.entries.length, 11);
 const resourceUsage = storageReport.entries.find(function findResourceUsage(entry) {
   return entry.label === '资源库';
 });
@@ -2447,7 +2489,7 @@ assert.equal(taskClaimUsage.count, 1);
 assert.equal(navigationUsage.count, 1);
 assert.equal(navigationPinUsage.count, 0);
 assert.equal(navigationSortUsage.count, 1);
-assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 10 项 · 最大：/);
+assert.match(enhancer.formatStorageUsageSummary(storageReport), /本地存储约 .* · 11 项 · 最大：/);
 assert.match(enhancer.formatStorageUsageEntry(resourceUsage), /^资源库：.* \/ 1 条 \/ 上限 500$/);
 assert.equal(enhancer.formatStorageUsageLimit(resourceUsage), '1 / 500 条（0%）');
 assert.equal(enhancer.getStorageUsageLevel(resourceUsage), 'ok');

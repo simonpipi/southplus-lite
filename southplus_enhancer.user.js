@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.5.14
+// @version      0.6.0
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -67,6 +67,7 @@
   var NAVIGATION_REFRESH_KEY = APP + ':navigationRefresh:v1';
   var FAVORITE_NAV_COUNT_CACHE_KEY = APP + ':favoriteNavCountCache:v1';
   var FAVORITE_NAV_SEEN_KEY = APP + ':favoriteNavSeen:v1';
+  var THREAD_UPDATE_KEY = APP + ':threadUpdates:v1';
   var AUTO_BUY_CHECK_TTL = 10 * 60 * 1000;
   var AUTO_BUY_ATTEMPT_LIMIT = 100;
   var TASK_CLAIM_RECORD_LIMIT = 100;
@@ -89,6 +90,13 @@
   var PREVIEW_DOWNLOAD_CONCURRENCY = 3;
   var FAVORITE_NAV_BATCH_SIZE = 50;
   var FAVORITE_NAV_MAX_FETCHED_ITEMS = 120;
+  var READ_REPLIES_PER_PAGE = 30;
+  var THREAD_UPDATE_LIMIT = 260;
+  var THREAD_UPDATE_CHECK_BATCH_SIZE = 10;
+  var THREAD_UPDATE_HOT_TTL = 15 * 60 * 1000;
+  var THREAD_UPDATE_WARM_TTL = 6 * 60 * 60 * 1000;
+  var THREAD_UPDATE_COLD_TTL = 24 * 60 * 60 * 1000;
+  var THREAD_UPDATE_RATE_LIMIT_COOLDOWN = 60 * 60 * 1000;
   var THREAD_PREVIEW_CACHE_TTL = 20 * 60 * 1000;
   var THREAD_PREVIEW_FAILURE_TTL = 3 * 60 * 1000;
   var THREAD_PREVIEW_CACHE_LIMIT = 50;
@@ -409,6 +417,301 @@
       top: nextTop,
       label: String((record && (record.nextFloorLabel || record.floorLabel)) || ''),
     };
+  }
+
+  function normalizeThreadUpdateReplyCount(value) {
+    if (value === null || value === undefined || value === '') return null;
+    var count = Number(value);
+    if (!isFinite(count) || count < 0) return null;
+    return Math.floor(count);
+  }
+
+  function parseThreadReplyCount(text) {
+    var value = compactText(text);
+    if (!value) return null;
+    var labeled = value.match(/(?:^|[\s·|/：:])(?:回复|回帖|Replies?)\s*[:：]?\s*(\d+)/i);
+    return labeled ? normalizeThreadUpdateReplyCount(labeled[1]) : null;
+  }
+
+  function normalizeThreadUpdateRecord(record, key) {
+    if (!record || typeof record !== 'object') return null;
+    var source = record;
+    var id = parseThreadId(key || source.id || source.url || source.progressUrl || '');
+    if (!id) return null;
+    var knownReplies = normalizeThreadUpdateReplyCount(source.knownReplies);
+    if (knownReplies === null) knownReplies = normalizeThreadUpdateReplyCount(source.replies);
+    if (knownReplies === null) knownReplies = 0;
+    var readReplies = normalizeThreadUpdateReplyCount(source.readReplies);
+    if (readReplies === null) readReplies = knownReplies;
+    readReplies = Math.min(readReplies, knownReplies);
+    var unreadReplies = Math.max(0, knownReplies - readReplies);
+    return {
+      id: id,
+      title: compactText(source.title),
+      url: String(source.url || source.progressUrl || ''),
+      knownReplies: knownReplies,
+      readReplies: readReplies,
+      unreadReplies: unreadReplies,
+      hasNewReplies: unreadReplies > 0,
+      lastCheckedAt: Math.max(0, Number(source.lastCheckedAt) || 0),
+      lastReadAt: Math.max(0, Number(source.lastReadAt) || 0),
+      updatedAt: Math.max(0, Number(source.updatedAt || source.lastCheckedAt || source.lastReadAt) || 0),
+      source: String(source.source || ''),
+    };
+  }
+
+  function pruneThreadUpdates(updates, limit) {
+    var source = updates || {};
+    var normalized = {};
+    Object.keys(source).forEach(function normalizeUpdateRecord(key) {
+      var record = normalizeThreadUpdateRecord(source[key], key);
+      if (record) normalized[record.id] = record;
+    });
+    var keys = Object.keys(normalized)
+      .sort(function sortThreadUpdates(left, right) {
+        var leftAt = Math.max(normalized[left].updatedAt, normalized[left].lastCheckedAt, normalized[left].lastReadAt);
+        var rightAt = Math.max(normalized[right].updatedAt, normalized[right].lastCheckedAt, normalized[right].lastReadAt);
+        return rightAt - leftAt || Number(right) - Number(left);
+      })
+      .slice(0, Math.max(1, Number(limit) || THREAD_UPDATE_LIMIT));
+    var result = {};
+    keys.forEach(function keepThreadUpdate(key) {
+      result[key] = normalized[key];
+    });
+    return result;
+  }
+
+  function getThreadUpdateActivityAt(entry, record) {
+    return Math.max(
+      Number(entry && entry.progressAt) || 0,
+      Number(entry && entry.savedAt) || 0,
+      Number(record && record.lastReadAt) || 0,
+      Number(record && record.updatedAt) || 0
+    );
+  }
+
+  function getThreadUpdateCheckInterval(entry, record, now) {
+    var currentTime = Number(now) || Date.now();
+    var activityAt = getThreadUpdateActivityAt(entry, record);
+    if (record && record.hasNewReplies) return THREAD_UPDATE_HOT_TTL;
+    if (!entry || !entry.read || activityAt >= currentTime - 7 * 24 * 60 * 60 * 1000) return THREAD_UPDATE_HOT_TTL;
+    if (activityAt >= currentTime - 30 * 24 * 60 * 60 * 1000) return THREAD_UPDATE_WARM_TTL;
+    return THREAD_UPDATE_COLD_TTL;
+  }
+
+  function shouldCheckThreadUpdate(entry, record, now, manual) {
+    if (!entry || !entry.id) return false;
+    if (manual) return true;
+    var normalizedRecord = normalizeThreadUpdateRecord(record, entry.id);
+    if (!normalizedRecord || !normalizedRecord.lastCheckedAt) return true;
+    return normalizedRecord.lastCheckedAt + getThreadUpdateCheckInterval(entry, normalizedRecord, now) <= (Number(now) || Date.now());
+  }
+
+  function updateThreadReplyState(updateMap, entry, options, now) {
+    var map = updateMap || {};
+    var source = entry || {};
+    var id = parseThreadId(source.id || source.url || source.progressUrl || '');
+    if (!id) return { map: map, record: null, changed: false };
+    var opts = options || {};
+    var currentTime = now === undefined ? Date.now() : Number(now);
+    if (!isFinite(currentTime) || currentTime <= 0) currentTime = Date.now();
+    var previous = normalizeThreadUpdateRecord(map[id], id);
+    var replyCount = normalizeThreadUpdateReplyCount(source.replies);
+    if (replyCount === null) replyCount = parseThreadReplyCount(source.meta || source.rowText || '');
+    if (replyCount === null && !opts.markRead && !previous) return { map: map, record: null, changed: false };
+
+    var knownReplies = replyCount === null ? (previous ? previous.knownReplies : 0) : replyCount;
+    if (previous && replyCount !== null) knownReplies = Math.max(previous.knownReplies, replyCount);
+    var readReplies;
+    if (opts.markRead) {
+      readReplies = knownReplies;
+    } else if (previous) {
+      readReplies = Math.min(previous.readReplies, knownReplies);
+    } else {
+      readReplies = knownReplies;
+    }
+
+    var record = Object.assign({}, previous || {}, {
+      id: id,
+      title: compactText(source.title) || (previous && previous.title) || '',
+      url: String(source.url || source.progressUrl || (previous && previous.url) || ''),
+      knownReplies: knownReplies,
+      readReplies: readReplies,
+      unreadReplies: Math.max(0, knownReplies - readReplies),
+      lastCheckedAt: opts.checked === false ? (previous && previous.lastCheckedAt || 0) : currentTime,
+      updatedAt: currentTime,
+      source: String(opts.source || source.source || (previous && previous.source) || ''),
+    });
+    record.hasNewReplies = record.unreadReplies > 0;
+    if (opts.markRead) record.lastReadAt = currentTime;
+
+    var before = previous ? JSON.stringify(previous) : '';
+    var after = JSON.stringify(normalizeThreadUpdateRecord(record, id));
+    map[id] = record;
+    return { map: map, record: record, changed: before !== after };
+  }
+
+  function applyThreadUpdateEntries(updateMap, entries, options, now) {
+    var map = updateMap || {};
+    var changed = false;
+    (entries || []).forEach(function applyThreadUpdateEntry(entry) {
+      var result = updateThreadReplyState(map, entry, options, now);
+      map = result.map;
+      if (result.changed) changed = true;
+    });
+    var pruned = pruneThreadUpdates(map);
+    if (Object.keys(pruned).length !== Object.keys(map).length) changed = true;
+    return { map: pruned, changed: changed };
+  }
+
+  function getThreadUpdateStatusForEntry(entry, updates) {
+    var id = parseThreadId(entry && (entry.id || entry.url || entry.progressUrl || ''));
+    if (!id) return null;
+    var record = normalizeThreadUpdateRecord(updates && updates[id], id);
+    if (!record) return null;
+    return record;
+  }
+
+  function buildThreadLatestReadUrl(threadId, url) {
+    var id = parseThreadId(threadId || url || '');
+    if (!id) return String(url || '');
+    var baseUrl = String(url || (typeof location !== 'undefined' ? location.href : 'https://south-plus.org/'));
+    try {
+      var parsed = new URL(baseUrl, typeof location !== 'undefined' ? location.href : 'https://south-plus.org/');
+      return parsed.origin + '/read.php?tid=' + encodeURIComponent(id) + '&page=e#a';
+    } catch (error) {
+      return '/read.php?tid=' + encodeURIComponent(id) + '&page=e#a';
+    }
+  }
+
+  function getReadReplyPage(replyNumber) {
+    var targetReply = normalizeThreadUpdateReplyCount(replyNumber);
+    if (targetReply === null || targetReply <= 0) return 1;
+    return Math.floor((targetReply - 1) / READ_REPLIES_PER_PAGE) + 1;
+  }
+
+  function buildThreadReplyPageUrl(threadId, url, replyNumber) {
+    var id = parseThreadId(threadId || url || '');
+    if (!id) return String(url || '');
+    var targetPage = getReadReplyPage(replyNumber);
+    var baseUrl = String(url || (typeof location !== 'undefined' ? location.href : 'https://south-plus.org/'));
+    try {
+      var parsed = new URL(baseUrl, typeof location !== 'undefined' ? location.href : 'https://south-plus.org/');
+      return parsed.origin + '/read.php?tid-' + encodeURIComponent(id) + '-page-' + targetPage + '.html';
+    } catch (error) {
+      return '/read.php?tid-' + encodeURIComponent(id) + '-page-' + targetPage + '.html';
+    }
+  }
+
+  function getFavoriteNavFirstUnreadReply(entry) {
+    var readReplies = normalizeThreadUpdateReplyCount(entry && entry.readReplies);
+    var knownReplies = normalizeThreadUpdateReplyCount(entry && entry.knownReplies);
+    if (readReplies !== null && knownReplies !== null && knownReplies > readReplies) return readReplies + 1;
+    return null;
+  }
+
+  function decorateFavoriteNavEntryWithUpdate(entry, updates) {
+    var source = Object.assign({}, entry || {});
+    var record = getThreadUpdateStatusForEntry(source, updates);
+    if (!record) return source;
+    source.knownReplies = record.knownReplies;
+    source.readReplies = record.readReplies;
+    source.unreadReplies = record.unreadReplies;
+    source.hasNewReplies = record.hasNewReplies;
+    source.updateCheckedAt = record.lastCheckedAt;
+    source.updateText = record.hasNewReplies ? ('新 +' + record.unreadReplies) : '';
+    source.latestUrl = buildThreadLatestReadUrl(source.id, source.url || record.url);
+    return source;
+  }
+
+  function decorateFavoriteNavEntriesWithUpdates(entries, updates) {
+    return (entries || []).map(function decorateFavoriteEntry(entry) {
+      return decorateFavoriteNavEntryWithUpdate(entry, updates);
+    });
+  }
+
+  function decorateFavoriteNavEntryWithProgress(entry, progressMap) {
+    var source = Object.assign({}, entry || {});
+    var id = parseThreadId(source.id || source.url || '');
+    var record = id && progressMap ? progressMap[id] : null;
+    if (!record || !record.updatedAt) return source;
+    var floorLabels = getReadProgressFloorLabels(record);
+    source.progressAt = Number(record.updatedAt) || source.progressAt || 0;
+    source.progressUrl = String(record.url || source.url || '');
+    source.progressText = formatReadProgress(record);
+    source.floorLabel = floorLabels.last;
+    source.nextFloorLabel = floorLabels.next;
+    source.read = source.read || isCompletedReadProgress(record);
+    source.tags = mergeTagLists(source.tags, record.tags);
+    source.tagText = formatTags(source.tags);
+    return source;
+  }
+
+  function decorateFavoriteNavEntriesWithProgress(entries, progressMap) {
+    return (entries || []).map(function decorateFavoriteProgress(entry) {
+      return decorateFavoriteNavEntryWithProgress(entry, progressMap);
+    });
+  }
+
+  function getFavoriteNavUpdateSummary(entries, updates) {
+    var seen = {};
+    var count = 0;
+    var unreadReplies = 0;
+    var latestAt = 0;
+    (entries || []).forEach(function countUpdatedFavoriteEntry(entry) {
+      var record = getThreadUpdateStatusForEntry(entry, updates);
+      if (!record || !record.hasNewReplies || seen[record.id]) return;
+      seen[record.id] = true;
+      count += 1;
+      unreadReplies += Number(record.unreadReplies) || 0;
+      latestAt = Math.max(latestAt, record.lastCheckedAt, record.updatedAt);
+    });
+    return { count: count, unreadReplies: unreadReplies, latestAt: latestAt };
+  }
+
+  function getFavoriteNavUnreadUrl(entry) {
+    if (!entry) return '';
+    var firstUnreadReply = getFavoriteNavFirstUnreadReply(entry);
+    if (firstUnreadReply) return buildThreadReplyPageUrl(entry.id, entry.url || entry.progressUrl || entry.latestUrl || '', firstUnreadReply);
+    if (entry.latestUrl) return entry.latestUrl;
+    return buildThreadLatestReadUrl(entry.id, entry.url || entry.progressUrl || '');
+  }
+
+  function parseReadPageNumberFromNode(node) {
+    if (!node) return 0;
+    var href = node.getAttribute ? (node.getAttribute('href') || '') : '';
+    var hrefMatch = href.match(/-page-(\d+)/) || href.match(/[?&]page=(\d+)/);
+    if (hrefMatch) return Number(hrefMatch[1]) || 0;
+    var text = compactText(node.textContent || '');
+    return /^\d+$/.test(text) ? Number(text) || 0 : 0;
+  }
+
+  function getReadPageNumbers(root) {
+    var scope = root || document;
+    var numbers = [];
+    qsa('.pages a,.pages b,.pages strong,.pages span', scope).forEach(function collectPageNumber(node) {
+      var page = parseReadPageNumberFromNode(node);
+      if (page) numbers.push(page);
+    });
+    return numbers;
+  }
+
+  function parseThreadReadReplyCountFromDocument(root, pageUrl) {
+    var scope = root || document;
+    var posts = qsa('table.js-post', scope).length;
+    if (!posts) return null;
+    var numbers = getReadPageNumbers(scope);
+    var currentPage = currentPageNumber(pageUrl || (typeof location !== 'undefined' ? location.href : '')) || 1;
+    qsa('.pages b,.pages strong,.pages .current', scope).forEach(function collectCurrentPage(node) {
+      currentPage = Math.max(currentPage, parseReadPageNumberFromNode(node));
+    });
+    var maxPage = numbers.reduce(function maxPageNumber(max, page) { return Math.max(max, page); }, currentPage);
+    var url = String(pageUrl || (typeof location !== 'undefined' ? location.href : ''));
+    var lastPageUrl = /[?&]page=e(?:[&#]|$)/i.test(url);
+    if (maxPage > 1 && currentPage < maxPage && !lastPageUrl) return null;
+    var effectivePage = lastPageUrl ? maxPage : currentPage;
+    var firstPageTopicPost = effectivePage <= 1 ? 1 : 0;
+    return Math.max(0, (Math.max(1, effectivePage) - 1) * READ_REPLIES_PER_PAGE + posts - firstPageTopicPost);
   }
 
   function pruneReadProgress(progress, limit) {
@@ -3642,6 +3945,7 @@
         read: copyStorageMap(source.read),
         watch: copyStorageMap(source.watch),
         progress: pruneReadProgress(copyStorageMap(source.progress)),
+        threadUpdates: pruneThreadUpdates(copyStorageMap(source.threadUpdates)),
         autoBuyAttempts: pruneAutoBuyAttempts(copyStorageMap(source.autoBuyAttempts)),
         taskClaims: pruneTaskClaimRecords(copyStorageMap(source.taskClaims)),
         resources: pruneResourceLibrary(copyStorageMap(source.resources)),
@@ -3661,6 +3965,7 @@
       read: source.read,
       watch: source.watch,
       progress: source.progress,
+      threadUpdates: source.threadUpdates,
       autoBuyAttempts: source.autoBuyAttempts || source.autoBuy,
       taskClaims: source.taskClaims,
       resources: source.resources,
@@ -3676,6 +3981,7 @@
       read: state && state.read,
       watch: state && state.watch,
       progress: state && state.progress,
+      threadUpdates: state && state.threadUpdates ? state.threadUpdates : loadThreadUpdates(),
       autoBuyAttempts: loadAutoBuyAttempts(),
       taskClaims: loadTaskClaimRecords(),
       resources: state && state.resources,
@@ -3748,6 +4054,7 @@
       createStorageUsageEntry(READ_KEY, '已读记录', source.read, countMapItems(source.read), 0),
       createStorageUsageEntry(WATCH_KEY, '稍后看', source.watch, countMapItems(source.watch), 0),
       createStorageUsageEntry(PROGRESS_KEY, '阅读进度', source.progress, countMapItems(source.progress), READ_PROGRESS_LIMIT),
+      createStorageUsageEntry(THREAD_UPDATE_KEY, '新回复追踪', source.threadUpdates, countMapItems(source.threadUpdates), THREAD_UPDATE_LIMIT),
       createStorageUsageEntry(AUTO_BUY_KEY, '自动购买记录', source.autoBuyAttempts, countMapItems(source.autoBuyAttempts), AUTO_BUY_ATTEMPT_LIMIT),
       createStorageUsageEntry(TASK_CLAIM_KEY, '任务领取记录', source.taskClaims, countMapItems(source.taskClaims), TASK_CLAIM_RECORD_LIMIT),
       createStorageUsageEntry(RESOURCE_KEY, '资源库', source.resources, countMapItems(source.resources), RESOURCE_LIMIT),
@@ -3889,6 +4196,13 @@
     });
   }
 
+  function getInvalidThreadUpdateKeys(updates) {
+    var source = updates || {};
+    return Object.keys(source).filter(function isInvalidThreadUpdate(key) {
+      return !normalizeThreadUpdateRecord(source[key], key);
+    });
+  }
+
   function getStaleProgressKeys(progress, now, maxAge) {
     var source = progress || {};
     var currentTime = Number(now) || Date.now();
@@ -3913,6 +4227,7 @@
     var read = copyStorageMap(source.read);
     var watch = copyStorageMap(source.watch);
     var progress = copyStorageMap(source.progress);
+    var threadUpdates = copyStorageMap(source.threadUpdates);
     var autoBuyAttempts = copyStorageMap(source.autoBuyAttempts || source.autoBuy);
     var taskClaims = copyStorageMap(source.taskClaims);
     var resources = copyStorageMap(source.resources);
@@ -3928,6 +4243,7 @@
     var duplicateProgressKeys = getDuplicateRecordKeys(progress);
     var staleProgressKeys = getStaleProgressKeys(progress, now);
     var invalidProgressKeys = getInvalidProgressKeys(progress);
+    var invalidThreadUpdateKeys = getInvalidThreadUpdateKeys(threadUpdates);
     var invalidAutoBuyKeys = getInvalidAutoBuyKeys(autoBuyAttempts);
     var invalidTaskClaimKeys = getInvalidTaskClaimKeys(taskClaims);
     var invalidResourceKeys = getInvalidResourceKeys(resources);
@@ -3940,6 +4256,7 @@
         read: countMapItems(read),
         watch: countMapItems(watch),
         progress: countMapItems(progress),
+        threadUpdates: countMapItems(pruneThreadUpdates(threadUpdates)),
         autoBuyAttempts: countMapItems(autoBuyAttempts),
         taskClaims: countMapItems(pruneTaskClaimRecords(taskClaims)),
         resources: countMapItems(pruneResourceLibrary(resources)),
@@ -3950,6 +4267,7 @@
       staleProgressKeys: staleProgressKeys,
       orphanProgressKeys: getOrphanProgressKeys(progress, read, watch),
       invalidProgressKeys: invalidProgressKeys,
+      invalidThreadUpdateKeys: invalidThreadUpdateKeys,
       invalidAutoBuyKeys: invalidAutoBuyKeys,
       invalidTaskClaimKeys: invalidTaskClaimKeys,
       invalidResourceKeys: invalidResourceKeys,
@@ -3958,6 +4276,7 @@
         duplicateProgressKeys.length +
         staleProgressKeys.length +
         invalidProgressKeys.length +
+        invalidThreadUpdateKeys.length +
         invalidAutoBuyKeys.length +
         invalidTaskClaimKeys.length +
         invalidResourceKeys.length,
@@ -3970,6 +4289,7 @@
     var read = copyStorageMap(source.read);
     var watch = copyStorageMap(source.watch);
     var progress = copyStorageMap(source.progress);
+    var threadUpdates = copyStorageMap(source.threadUpdates);
     var autoBuyAttempts = copyStorageMap(source.autoBuyAttempts || source.autoBuy);
     var taskClaims = copyStorageMap(source.taskClaims);
     var resources = copyStorageMap(source.resources);
@@ -3978,6 +4298,7 @@
       read: read,
       watch: watch,
       progress: progress,
+      threadUpdates: threadUpdates,
       autoBuyAttempts: autoBuyAttempts,
       taskClaims: taskClaims,
       resources: resources,
@@ -3988,6 +4309,9 @@
     });
     before.duplicateProgressKeys.concat(before.staleProgressKeys, before.invalidProgressKeys).forEach(function removeBadProgress(key) {
       delete progress[key];
+    });
+    before.invalidThreadUpdateKeys.forEach(function removeBadThreadUpdate(key) {
+      delete threadUpdates[key];
     });
     before.invalidAutoBuyKeys.forEach(function removeBadAutoBuy(key) {
       delete autoBuyAttempts[key];
@@ -4004,6 +4328,7 @@
       read: read,
       watch: watch,
       progress: progress,
+      threadUpdates: threadUpdates,
       autoBuyAttempts: autoBuyAttempts,
       taskClaims: taskClaims,
       resources: resources,
@@ -4042,6 +4367,7 @@
     if (data.staleProgressKeys && data.staleProgressKeys.length) warnings.push('过期进度 ' + data.staleProgressKeys.length);
     if (data.orphanProgressKeys && data.orphanProgressKeys.length) warnings.push('孤立进度 ' + data.orphanProgressKeys.length);
     if (data.invalidProgressKeys && data.invalidProgressKeys.length) warnings.push('异常进度 ' + data.invalidProgressKeys.length);
+    if (data.invalidThreadUpdateKeys && data.invalidThreadUpdateKeys.length) warnings.push('异常新回复追踪 ' + data.invalidThreadUpdateKeys.length);
     if (data.invalidAutoBuyKeys && data.invalidAutoBuyKeys.length) warnings.push('异常购买记录 ' + data.invalidAutoBuyKeys.length);
     if (data.invalidTaskClaimKeys && data.invalidTaskClaimKeys.length) warnings.push('异常任务领取记录 ' + data.invalidTaskClaimKeys.length);
     if (data.invalidResourceKeys && data.invalidResourceKeys.length) warnings.push('异常资源 ' + data.invalidResourceKeys.length);
@@ -4300,6 +4626,14 @@
     saveMap(PROGRESS_KEY, pruneReadProgress(progress));
   }
 
+  function loadThreadUpdates() {
+    return pruneThreadUpdates(loadMap(THREAD_UPDATE_KEY));
+  }
+
+  function saveThreadUpdates(updates) {
+    saveMap(THREAD_UPDATE_KEY, pruneThreadUpdates(updates));
+  }
+
   function pruneAutoBuyAttempts(attempts) {
     var source = attempts || {};
     var keys = Object.keys(source)
@@ -4368,6 +4702,7 @@
     state.read = copyStorageMap(data.read);
     state.watch = copyStorageMap(data.watch);
     state.progress = pruneReadProgress(copyStorageMap(data.progress));
+    state.threadUpdates = pruneThreadUpdates(copyStorageMap(data.threadUpdates));
     state.resources = pruneResourceLibrary(copyStorageMap(data.resources));
     var navigation = normalizeNavigationPool(data.navigation);
     var navigationPins = normalizeNavigationPinMap(data.navigationPins);
@@ -4376,6 +4711,7 @@
     saveMap(READ_KEY, state.read);
     saveMap(WATCH_KEY, state.watch);
     saveReadProgress(state.progress);
+    saveThreadUpdates(state.threadUpdates);
     saveAutoBuyAttempts(data.autoBuyAttempts);
     saveTaskClaimRecords(data.taskClaims);
     saveResourceLibrary(state.resources);
@@ -4385,6 +4721,7 @@
     clearReadProgressRestoreRequest(parseThreadId(location.href));
     refreshWatchCenter();
     refreshHistoryCenter();
+    refreshFavoriteNavPanels();
     refreshAutoBuyCenter();
     refreshTaskClaimInlineSection();
     refreshResourceCenter();
@@ -4479,7 +4816,7 @@
 
   function currentPageNumber(url) {
     var text = String(url || '');
-    var match = text.match(/-page-(\d+)/);
+    var match = text.match(/-page-(\d+)/) || text.match(/[?&]page=(\d+)/);
     return match ? Number(match[1]) : 1;
   }
 
@@ -4537,17 +4874,19 @@
       '.spx-favorite-nav-trigger:hover,.spx-favorite-nav-trigger[aria-expanded="true"]{background:#fff7ed!important;color:#7c2d12!important;text-decoration:none!important;box-shadow:inset 0 -2px 0 var(--spx-warn)!important;}',
       '.spx-favorite-nav-star{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:18px!important;height:18px!important;border-radius:6px!important;background:var(--spx-warn)!important;color:#fff!important;font-size:12px!important;line-height:18px!important;}',
       '.spx-favorite-nav-count{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-width:20px!important;height:18px!important;padding:0 6px!important;border-radius:999px!important;background:#fff!important;color:var(--spx-warn)!important;font-size:11px!important;line-height:18px!important;font-variant-numeric:tabular-nums!important;}',
+      '.spx-favorite-nav-update-count{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-width:28px!important;height:18px!important;padding:0 7px!important;border-radius:999px!important;background:#dc2626!important;color:#fff!important;font-size:11px!important;line-height:18px!important;font-variant-numeric:tabular-nums!important;}.spx-favorite-nav-update-count[hidden]{'+CSS_HIDE+'}',
       '.spx-favorite-nav-note,.spx-task-auto-claim-nav-note{'+CSS_BOX+'display:inline-flex!important;align-items:center!important;justify-content:center!important;height:24px!important;max-width:128px!important;margin-left:8px!important;padding:0 10px!important;border:1px solid #bbf7d0!important;border-radius:999px!important;background:#f0fdf4!important;color:#166534!important;font-size:12px!important;font-weight:900!important;line-height:24px!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;box-shadow:0 4px 10px rgba(22,101,52,.12)!important;}',
+      '.spx-favorite-nav-update-note{'+CSS_BOX+'display:inline-flex!important;align-items:center!important;justify-content:center!important;height:24px!important;max-width:132px!important;margin-left:8px!important;padding:0 10px!important;border:1px solid #fecaca!important;border-radius:999px!important;background:#fee2e2!important;color:#991b1b!important;font-size:12px!important;font-weight:900!important;line-height:24px!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;box-shadow:0 4px 10px rgba(153,27,27,.1)!important;}.spx-favorite-nav-update-note[hidden]{'+CSS_HIDE+'}',
       '.spx-auto-buy-nav-note{border-color:#fed7aa!important;background:#fff7ed!important;color:#9a3412!important;}',
       '.spx-favorite-nav-panel{'+CSS_BOX+'position:absolute!important;top:46px!important;right:0!important;left:auto!important;z-index:10020!important;width:min(720px,calc(100vw - 72px))!important;max-height:min(78vh,720px)!important;overflow:hidden!important;border:1px solid #f3c27a!important;border-radius:12px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;box-shadow:0 22px 52px rgba(15,23,42,.24)!important;font:14px/1.55 '+SPX_FONT+'!important;}',
       '.spx-favorite-nav-panel[hidden]{'+CSS_HIDE+'}',
       '.spx-favorite-head{display:flex!important;align-items:flex-start!important;justify-content:space-between!important;gap:12px!important;padding:14px 14px 10px!important;border-bottom:1px solid #fde4bd!important;background:linear-gradient(180deg,#fff7ed 0%,var(--spx-panel) 100%)!important;}',
       '.spx-favorite-title h3{margin:0!important;color:var(--spx-strong)!important;font-size:15px!important;line-height:1.3!important;font-weight:900!important;}.spx-favorite-summary{margin-top:4px!important;color:#7c2d12!important;font-size:12px!important;font-weight:700!important;}',
       '.spx-favorite-open{display:inline-flex!important;align-items:center!important;min-height:30px!important;padding:0 10px!important;border-radius:8px!important;background:var(--spx-warn)!important;color:#fff!important;text-decoration:none!important;font-size:12px!important;font-weight:900!important;white-space:nowrap!important;}.spx-favorite-head-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;gap:8px!important;flex-wrap:wrap!important;}.spx-favorite-selected-count{color:#7c2d12!important;font-size:12px!important;font-weight:900!important;white-space:nowrap!important;}',
-      '.spx-favorite-stats{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:8px!important;padding:12px 14px 0!important;}.spx-favorite-stat{min-width:0!important;padding:9px 10px!important;border:1px solid #fde4bd!important;border-radius:10px!important;background:#fffaf3!important;}.spx-favorite-stat strong{display:block!important;color:#7c2d12!important;font-size:16px!important;line-height:1.2!important;font-variant-numeric:tabular-nums!important;}.spx-favorite-stat span{display:block!important;margin-top:3px!important;color:var(--spx-sub)!important;font-size:11px!important;font-weight:800!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
+      '.spx-favorite-stats{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:8px!important;padding:12px 14px 0!important;}.spx-favorite-stat{min-width:0!important;padding:9px 10px!important;border:1px solid #fde4bd!important;border-radius:10px!important;background:#fffaf3!important;}.spx-favorite-stat strong{display:block!important;color:#7c2d12!important;font-size:16px!important;line-height:1.2!important;font-variant-numeric:tabular-nums!important;}.spx-favorite-stat span{display:block!important;margin-top:3px!important;color:var(--spx-sub)!important;font-size:11px!important;font-weight:800!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}',
       '.spx-favorite-search{'+CSS_BOX+'width:calc(100% - 28px)!important;min-height:34px!important;margin:12px 14px 8px!important;padding:0 11px!important;border:1px solid var(--spx-line)!important;border-radius:9px!important;background:var(--spx-panel-muted)!important;color:var(--spx-text)!important;font-size:13px!important;outline:none!important;}.spx-favorite-search:focus{border-color:var(--spx-warn)!important;box-shadow:0 0 0 3px rgba(217,119,6,.14)!important;}',
-      '.spx-favorite-tabs,.spx-favorite-tools{display:flex!important;align-items:center!important;gap:8px!important;padding:0 14px 10px!important;}.spx-favorite-tools{justify-content:space-between!important;}.spx-favorite-chips{display:flex!important;gap:6px!important;min-width:0!important;overflow-x:auto!important;scrollbar-width:thin!important;}.spx-favorite-tab,.spx-favorite-chip{flex:none!important;min-height:28px!important;padding:0 10px!important;border:1px solid var(--spx-line)!important;border-radius:999px!important;background:var(--spx-panel)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;cursor:pointer!important;}.spx-favorite-tab.spx-active,.spx-favorite-chip.spx-active{border-color:var(--spx-warn)!important;background:#ffedd5!important;color:#7c2d12!important;}.spx-favorite-sort{width:116px!important;height:30px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:800!important;}',
-      '.spx-favorite-list{display:grid!important;gap:8px!important;max-height:360px!important;overflow:auto!important;padding:0 14px 14px!important;}.spx-favorite-group{position:sticky!important;top:0!important;z-index:1!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;min-height:30px!important;padding:4px 2px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;}.spx-favorite-group-main{display:flex!important;align-items:center!important;gap:8px!important;min-width:0!important;}.spx-favorite-group-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;gap:6px!important;flex-wrap:wrap!important;}.spx-favorite-group-actions button{min-height:26px!important;padding:0 8px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;cursor:pointer!important;}.spx-favorite-group-actions .spx-danger{border-color:#fecaca!important;background:var(--spx-danger-soft)!important;color:var(--spx-danger)!important;}.spx-favorite-item{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:12px!important;min-height:64px!important;padding:11px 12px!important;border:1px solid var(--spx-line)!important;border-radius:10px!important;background:var(--spx-panel)!important;}.spx-favorite-body-head{display:flex!important;align-items:flex-start!important;gap:8px!important;min-width:0!important;}.spx-favorite-select{flex:none!important;width:16px!important;height:16px!important;margin:2px 0 0!important;accent-color:var(--spx-warn)!important;}.spx-favorite-item-title{display:-webkit-box!important;min-width:0!important;color:var(--spx-strong)!important;font-size:14px!important;font-weight:900!important;line-height:1.38!important;white-space:normal!important;overflow:hidden!important;text-overflow:ellipsis!important;-webkit-line-clamp:2!important;-webkit-box-orient:vertical!important;}.spx-favorite-meta{margin-top:5px!important;color:var(--spx-text)!important;font-size:13px!important;line-height:1.42!important;white-space:normal!important;overflow:hidden!important;text-overflow:ellipsis!important;}.spx-favorite-actions{display:flex!important;gap:6px!important;align-items:center!important;}.spx-favorite-actions a,.spx-favorite-actions button,.spx-favorite-load-more{min-width:52px!important;height:28px!important;padding:0 8px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;text-decoration:none!important;cursor:pointer!important;}.spx-favorite-actions .spx-primary{border-color:var(--spx-accent)!important;background:var(--spx-accent)!important;color:#fff!important;}.spx-favorite-actions .spx-danger{border-color:#fecaca!important;background:var(--spx-danger-soft)!important;color:var(--spx-danger)!important;}.spx-favorite-load{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;min-height:42px!important;padding:8px 10px!important;border:1px dashed #f3c27a!important;border-radius:10px!important;background:#fffaf3!important;color:#7c2d12!important;font-size:12px!important;font-weight:900!important;}.spx-favorite-empty{padding:18px 14px 20px!important;color:var(--spx-sub)!important;font-size:13px!important;font-weight:700!important;text-align:center!important;}',
+      '.spx-favorite-tabs,.spx-favorite-tools{display:flex!important;align-items:center!important;gap:8px!important;padding:0 14px 10px!important;}.spx-favorite-tools{justify-content:space-between!important;}.spx-favorite-chips{display:flex!important;gap:6px!important;min-width:0!important;overflow-x:auto!important;scrollbar-width:thin!important;}.spx-favorite-tab,.spx-favorite-chip{flex:none!important;min-height:28px!important;padding:0 10px!important;border:1px solid var(--spx-line)!important;border-radius:999px!important;background:var(--spx-panel)!important;color:var(--spx-sub)!important;font-size:12px!important;font-weight:900!important;cursor:pointer!important;}.spx-favorite-tab.spx-active,.spx-favorite-chip.spx-active{border-color:var(--spx-warn)!important;background:#ffedd5!important;color:#7c2d12!important;}.spx-favorite-chip.spx-favorite-chip-update{border-color:#fecaca!important;background:#fee2e2!important;color:#991b1b!important;}.spx-favorite-sort{width:128px!important;height:30px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:800!important;}',
+      '.spx-favorite-list{display:grid!important;gap:8px!important;max-height:360px!important;overflow:auto!important;padding:0 14px 14px!important;}.spx-favorite-group{position:sticky!important;top:0!important;z-index:1!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;min-height:30px!important;padding:4px 2px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;}.spx-favorite-group-main{display:flex!important;align-items:center!important;gap:8px!important;min-width:0!important;}.spx-favorite-group-actions{display:flex!important;align-items:center!important;justify-content:flex-end!important;gap:6px!important;flex-wrap:wrap!important;}.spx-favorite-group-actions button{min-height:26px!important;padding:0 8px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;cursor:pointer!important;}.spx-favorite-group-actions .spx-danger{border-color:#fecaca!important;background:var(--spx-danger-soft)!important;color:var(--spx-danger)!important;}.spx-favorite-update-badge,.spx-thread-update-badge{display:inline-flex!important;align-items:center!important;justify-content:center!important;height:21px!important;min-width:max-content!important;padding:0 7px!important;border-radius:999px!important;background:#fee2e2!important;color:#b91c1c!important;font-size:11px!important;font-weight:900!important;line-height:21px!important;white-space:nowrap!important;}.spx-thread-update-badge{margin-right:6px!important;vertical-align:middle!important;}.spx-favorite-item{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:12px!important;min-height:64px!important;padding:11px 12px!important;border:1px solid var(--spx-line)!important;border-radius:10px!important;background:var(--spx-panel)!important;}.spx-favorite-item.spx-favorite-has-update{border-color:#fecaca!important;background:#fffafa!important;}.spx-favorite-body-head{display:flex!important;align-items:flex-start!important;gap:8px!important;min-width:0!important;}.spx-favorite-select{flex:none!important;width:16px!important;height:16px!important;margin:2px 0 0!important;accent-color:var(--spx-warn)!important;}.spx-favorite-item-title{display:-webkit-box!important;min-width:0!important;color:var(--spx-strong)!important;font-size:14px!important;font-weight:900!important;line-height:1.38!important;white-space:normal!important;overflow:hidden!important;text-overflow:ellipsis!important;-webkit-line-clamp:2!important;-webkit-box-orient:vertical!important;}.spx-favorite-meta{margin-top:5px!important;color:var(--spx-text)!important;font-size:13px!important;line-height:1.42!important;white-space:normal!important;overflow:hidden!important;text-overflow:ellipsis!important;}.spx-favorite-actions{display:flex!important;gap:6px!important;align-items:center!important;}.spx-favorite-actions a,.spx-favorite-actions button,.spx-favorite-load-more{min-width:52px!important;height:28px!important;padding:0 8px!important;border:1px solid var(--spx-line)!important;border-radius:8px!important;background:var(--spx-panel)!important;color:var(--spx-text)!important;font-size:12px!important;font-weight:900!important;text-decoration:none!important;cursor:pointer!important;}.spx-favorite-actions .spx-primary{border-color:var(--spx-accent)!important;background:var(--spx-accent)!important;color:#fff!important;}.spx-favorite-actions .spx-danger{border-color:#fecaca!important;background:var(--spx-danger-soft)!important;color:var(--spx-danger)!important;}.spx-favorite-load{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;min-height:42px!important;padding:8px 10px!important;border:1px dashed #f3c27a!important;border-radius:10px!important;background:#fffaf3!important;color:#7c2d12!important;font-size:12px!important;font-weight:900!important;}.spx-favorite-empty{padding:18px 14px 20px!important;color:var(--spx-sub)!important;font-size:13px!important;font-weight:700!important;text-align:center!important;}',
       '.spx-favorite-nav-panel a.spx-favorite-item-title,.spx-favorite-nav-panel a.spx-favorite-item-title:link,.spx-favorite-nav-panel a.spx-favorite-item-title:visited{color:var(--spx-strong)!important;text-decoration:none!important;text-shadow:none!important;opacity:1!important;filter:none!important;}.spx-favorite-nav-panel .spx-favorite-meta{color:var(--spx-text)!important;text-shadow:none!important;opacity:1!important;filter:none!important;}',
       '.spx-site-shell #mainNav .spx-favorite-nav-panel a.spx-favorite-item-title,.spx-site-shell #mainNav .spx-favorite-nav-panel a.spx-favorite-item-title:link,.spx-site-shell #mainNav .spx-favorite-nav-panel a.spx-favorite-item-title:visited{display:-webkit-box!important;color:#182230!important;text-decoration:none!important;text-shadow:none!important;font-size:14px!important;font-weight:900!important;line-height:1.38!important;opacity:1!important;filter:none!important;}.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-meta{color:#1f2937!important;font-size:13px!important;line-height:1.42!important;opacity:1!important;filter:none!important;}.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-open,.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-actions a.spx-primary{color:#fff!important;line-height:28px!important;}.spx-site-shell #mainNav .spx-favorite-nav-panel .spx-favorite-actions a:not(.spx-primary){color:#1f2937!important;line-height:28px!important;}',
       '.spx-site-shell #guide .spx-peacemaker-nav{position:relative!important;width:auto!important;min-width:max-content!important;overflow:visible!important;}',
@@ -5906,12 +6245,12 @@
 
   function normalizeFavoriteNavFilter(value) {
     var filter = String(value || 'all');
-    return /^(all|recent|unread|resource|image|ai)$/.test(filter) ? filter : 'all';
+    return /^(all|updated|recent|unread|resource|image|ai)$/.test(filter) ? filter : 'all';
   }
 
   function normalizeFavoriteNavSort(value) {
     var sort = String(value || 'recent');
-    return /^(recent|read|reply)$/.test(sort) ? sort : 'recent';
+    return /^(updated|recent|read|reply)$/.test(sort) ? sort : 'recent';
   }
 
   function formatFavoriteNavCount(count, loading) {
@@ -6005,6 +6344,7 @@
       entry && entry.title,
       entry && entry.author,
       entry && entry.meta,
+      entry && entry.updateText,
       entry && entry.progressText,
       entry && entry.tagText,
       entry && entry.tags && entry.tags.join ? entry.tags.join(' ') : entry && entry.tags,
@@ -6015,8 +6355,9 @@
     var normalized = normalizeFavoriteNavFilter(filter);
     var text = getFavoriteNavEntrySearchText(entry);
     if (normalized === 'all') return true;
+    if (normalized === 'updated') return !!(entry && entry.hasNewReplies);
     if (normalized === 'recent') return !entry || !entry.savedAt || Date.now() - entry.savedAt <= 14 * 24 * 60 * 60 * 1000;
-    if (normalized === 'unread') return !entry || !entry.read;
+    if (normalized === 'unread') return !entry || !entry.read || !!entry.hasNewReplies;
     if (normalized === 'resource') return /资源|磁力|网盘|种子|下载|合集|ed2k|torrent|magnet/i.test(text);
     if (normalized === 'image') return /图片|图集|预览|写真|画廊|gallery/i.test(text);
     if (normalized === 'ai') return /\bai\b|人工智能|模型|chatgpt|claude|gemini/i.test(text);
@@ -6035,6 +6376,11 @@
   function sortFavoriteNavEntries(entries, sort) {
     var normalized = normalizeFavoriteNavSort(sort);
     return (entries || []).slice().sort(function sortFavoriteEntry(left, right) {
+      if (normalized === 'updated') {
+        return (Number(right.unreadReplies) || 0) - (Number(left.unreadReplies) || 0) ||
+          (Number(right.updateCheckedAt) || 0) - (Number(left.updateCheckedAt) || 0) ||
+          (Number(right.savedAt) || 0) - (Number(left.savedAt) || 0);
+      }
       if (normalized === 'reply') return (Number(right.replies) || 0) - (Number(left.replies) || 0);
       if (normalized === 'read') return (Number(right.progressAt) || 0) - (Number(left.progressAt) || 0);
       return (Number(right.savedAt) || 0) - (Number(left.savedAt) || 0) || (Number(left.index) || 0) - (Number(right.index) || 0);
@@ -6042,8 +6388,8 @@
   }
 
   function parseFavoriteReplyCount(text) {
-    var match = String(text || '').match(/(?:回复|回帖|Replies?)\D{0,4}(\d+)/i);
-    return match ? Number(match[1]) || 0 : 0;
+    var count = parseThreadReplyCount(text);
+    return count === null ? 0 : count;
   }
 
   function parseFavoriteSavedAt(text, now) {
@@ -6168,9 +6514,13 @@
     return entries;
   }
 
-  function getFavoriteNavWatchEntries(state) {
+  function getFavoriteNavWatchEntries(state, progressOverride) {
     var source = state || {};
-    return getWatchCenterEntries(source.watch || {}, source.progress || {}).map(function mapWatchFavorite(entry, index) {
+    var watchMap = source.watch || source;
+    var progressMap = source.watch || source.progress ? (source.progress || {}) : (progressOverride || {});
+    var updateMap = source.threadUpdates || {};
+    return getWatchCenterEntries(watchMap || {}, progressMap || {}).map(function mapWatchFavorite(entry, index) {
+      var updateRecord = getThreadUpdateStatusForEntry(entry, updateMap);
       return {
         source: 'watch',
         id: entry.id,
@@ -6183,7 +6533,7 @@
         progressText: entry.progressText,
         floorLabel: entry.floorLabel,
         nextFloorLabel: entry.nextFloorLabel,
-        replies: 0,
+        replies: updateRecord ? updateRecord.knownReplies : 0,
         read: !!entry.isCompleted,
         tags: entry.tags,
         tagText: entry.tagText,
@@ -6202,6 +6552,8 @@
     var savedAt = isFinite(timestamp) ? timestamp : Date.now();
     var rowText = compactText([title, info.author].filter(Boolean).join(' '));
     var tags = inferFavoriteNavTags(title, rowText);
+    var replies = normalizeThreadUpdateReplyCount(info.replies);
+    if (replies === null) replies = parseFavoriteReplyCount(rowText) || 0;
     return {
       source: 'site',
       id: tid,
@@ -6212,7 +6564,7 @@
       savedAt: savedAt,
       savedAtLabel: '收藏',
       progressAt: 0,
-      replies: parseFavoriteReplyCount(rowText),
+      replies: replies,
       read: false,
       tags: tags,
       tagText: formatTags(tags),
@@ -6257,6 +6609,12 @@
     if (!added) return;
     var entry = createFavoriteNavEntryFromThreadInfo(info, Date.now());
     if (!entry) return;
+    if (state) {
+      state.threadUpdates = state.threadUpdates || loadThreadUpdates();
+      var updateResult = updateThreadReplyState(state.threadUpdates, entry, { source: 'site-favorite' }, Date.now());
+      state.threadUpdates = updateResult.map;
+      if (updateResult.changed) saveThreadUpdates(state.threadUpdates);
+    }
     qsa('#spx-favorite-nav').forEach(function syncFavoriteWrapper(wrapper) {
       var panel = qs('.spx-favorite-nav-panel', wrapper);
       if (!panel) return;
@@ -6383,12 +6741,45 @@
         cachedSiteCount: null,
         cachedSiteCountUpdatedAt: 0,
         cachedSiteCountFresh: false,
+        updateChecking: false,
+        updateStatus: '',
+        updateCheckedAt: 0,
         selectedSiteFavorites: {},
       };
     }
     if (!panel.spxFavoriteNavState.selectedSiteFavorites) panel.spxFavoriteNavState.selectedSiteFavorites = {};
     if (favoriteUrl) panel.spxFavoriteNavState.favoriteUrl = favoriteUrl;
     return panel.spxFavoriteNavState;
+  }
+
+  function getFavoriteNavPanelEntries(panelState, state) {
+    var siteEntries = decorateFavoriteNavEntriesWithProgress((panelState && panelState.siteEntries) || [], state && state.progress);
+    var watchEntries = getFavoriteNavWatchEntries(state || {});
+    return siteEntries.concat(watchEntries);
+  }
+
+  function syncFavoriteNavUpdateIndicator(wrapper, summary) {
+    if (!wrapper) return;
+    var trigger = qs('.spx-favorite-nav-trigger', wrapper);
+    if (!trigger) return;
+    var data = summary || {};
+    var count = Math.max(0, Number(data.count) || 0);
+    var updateCount = qs('.spx-favorite-nav-update-count', trigger);
+    if (!updateCount) {
+      updateCount = createEl('span', 'spx-favorite-nav-update-count');
+      trigger.appendChild(updateCount);
+    }
+    updateCount.hidden = !count;
+    updateCount.textContent = count ? ('新 ' + formatFavoriteNavCount(count, false)) : '';
+
+    var note = qs('.spx-favorite-nav-update-note', wrapper);
+    if (!note) {
+      note = createEl('span', 'spx-favorite-nav-update-note');
+      wrapper.appendChild(note);
+    }
+    note.hidden = !count;
+    note.textContent = count ? '收藏有新回复' : '';
+    if (count) note.title = '有 ' + count + ' 个收藏或稍后看主题出现新回复，共 ' + (Number(data.unreadReplies) || 0) + ' 条';
   }
 
   function updateFavoriteNavTrigger(wrapper, panelState, state) {
@@ -6402,6 +6793,7 @@
     var loading = !!(panelState && panelState.siteLoading);
     var hasSiteCount = !!(panelState && panelState.siteLoaded);
     var hasError = !!(panelState && panelState.siteError);
+    var updateSummary = getFavoriteNavUpdateSummary(getFavoriteNavPanelEntries(panelState, state), state && state.threadUpdates);
     if (hasSiteCount) {
       countNode.textContent = formatFavoriteNavCount(totalCount, false);
       countNode.title = '我的收藏已读取 ' + totalCount + ' 条（站内 ' + siteCount + '，稍后看 ' + watchCount + '）';
@@ -6427,6 +6819,20 @@
       countNode.textContent = formatFavoriteNavCount(watchCount, false);
       countNode.title = '仅显示本地稍后看 ' + watchCount + ' 条；打开我的收藏面板后读取站内收藏。';
     }
+    syncFavoriteNavUpdateIndicator(wrapper, updateSummary);
+  }
+
+  function refreshFavoriteNavPanels() {
+    qsa('#spx-favorite-nav').forEach(function refreshFavoriteWrapper(wrapper) {
+      var panel = qs('.spx-favorite-nav-panel', wrapper);
+      var panelState = panel ? ensureFavoriteNavState(panel, panel.dataset.favoriteUrl || wrapper.dataset.favoriteUrl) : null;
+      updateFavoriteNavTrigger(wrapper, panelState, {
+        watch: loadMap(WATCH_KEY),
+        progress: loadReadProgress(),
+        threadUpdates: loadThreadUpdates(),
+      });
+      if (panel && !panel.hidden && typeof panel.spxRenderFavoriteNav === 'function') panel.spxRenderFavoriteNav();
+    });
   }
 
   function createFavoriteNavAction(text, action, value, primary) {
@@ -6439,7 +6845,8 @@
   }
 
   function appendFavoriteNavEntry(list, entry, panelState) {
-    var item = createEl('div', 'spx-favorite-item');
+    var hasUpdate = !!(entry && entry.hasNewReplies);
+    var item = createEl('div', 'spx-favorite-item' + (hasUpdate ? ' spx-favorite-has-update' : ''));
     item.dataset.source = entry.source || 'site';
     item.dataset.id = String(entry.id || '');
     var body = createEl('div');
@@ -6453,6 +6860,11 @@
       select.checked = !!(panelState && panelState.selectedSiteFavorites && panelState.selectedSiteFavorites[select.dataset.value]);
       bodyHead.appendChild(select);
     }
+    if (hasUpdate) {
+      var updateBadge = createEl('span', 'spx-favorite-update-badge', '新 +' + entry.unreadReplies);
+      updateBadge.title = '已发现新回复，点击读新回复直达未读分页和楼层';
+      bodyHead.appendChild(updateBadge);
+    }
     var title = createEl('a', 'spx-favorite-item-title', entry.title || '未命名帖子');
     title.href = entry.url || '#';
     title.target = '_blank';
@@ -6464,16 +6876,22 @@
     if (entry.savedAt) metaParts.push((entry.savedAtLabel || '保存') + ' ' + formatShortTime(entry.savedAt));
     if (entry.progressText) metaParts.push('进度 ' + entry.progressText);
     if (entry.nextFloorLabel) metaParts.push('续读 ' + entry.nextFloorLabel);
+    if (hasUpdate) metaParts.push('新回复 +' + entry.unreadReplies);
+    if (hasUpdate && entry.knownReplies) metaParts.push('回复 ' + entry.readReplies + ' -> ' + entry.knownReplies);
     if (entry.replies) metaParts.push('回复 ' + entry.replies);
     if (entry.tagText) metaParts.push('标签 ' + entry.tagText);
     body.appendChild(createEl('div', 'spx-favorite-meta', metaParts.join(' · ') || (entry.source === 'site' ? '站内收藏' : '本地稍后看')));
     item.appendChild(body);
     var actions = createEl('div', 'spx-favorite-actions');
-    var open = createEl('a', 'spx-primary', entry.source === 'watch' && entry.progressAt ? '续读' : '打开');
-    open.href = entry.url || '#';
-    open.target = '_blank';
-    open.rel = 'noreferrer';
-    actions.appendChild(open);
+    if (hasUpdate) {
+      actions.appendChild(createFavoriteNavAction('读新回复', 'read-favorite-update', entry.id, true));
+    } else {
+      var open = createEl('a', 'spx-primary', entry.source === 'watch' && entry.progressAt ? '续读' : '打开');
+      open.href = entry.url || '#';
+      open.target = '_blank';
+      open.rel = 'noreferrer';
+      actions.appendChild(open);
+    }
     actions.appendChild(createFavoriteNavAction('复制', 'copy-favorite', entry.url || '', false));
     if (entry.source === 'site' && entry.deleteRequest) {
       actions.appendChild(createFavoriteNavAction('删除', 'delete-favorite-site', getFavoriteNavDeleteKey(entry), false));
@@ -6485,8 +6903,12 @@
 
   function renderFavoriteNavPanel(panel, settings, state, wrapper) {
     var panelState = ensureFavoriteNavState(panel, panel && panel.dataset.favoriteUrl);
-    var watchEntries = getFavoriteNavWatchEntries(state);
-    var siteEntries = panelState.siteEntries || [];
+    var updateMap = (state && state.threadUpdates) || {};
+    var rawWatchEntries = getFavoriteNavWatchEntries(state);
+    var rawSiteEntries = decorateFavoriteNavEntriesWithProgress(panelState.siteEntries || [], state && state.progress);
+    var updateSummary = getFavoriteNavUpdateSummary(rawSiteEntries.concat(rawWatchEntries), updateMap);
+    var watchEntries = decorateFavoriteNavEntriesWithUpdates(rawWatchEntries, updateMap);
+    var siteEntries = decorateFavoriteNavEntriesWithUpdates(rawSiteEntries, updateMap);
     var cachedSiteCount = Number(panelState.cachedSiteCount);
     var hasCachedSiteCount = isFinite(cachedSiteCount) && cachedSiteCount >= 0;
     var displaySiteCount = panelState.siteLoaded ? siteEntries.length : hasCachedSiteCount ? cachedSiteCount : siteEntries.length;
@@ -6507,9 +6929,13 @@
     var header = createEl('div', 'spx-favorite-head');
     var title = createEl('div', 'spx-favorite-title');
     title.appendChild(createEl('h3', '', '我的收藏'));
-    title.appendChild(createEl('div', 'spx-favorite-summary', panelState.siteLoading ? '正在读取站内收藏页...' : '主导航一键打开，站内收藏和稍后看分开管理'));
+    title.appendChild(createEl('div', 'spx-favorite-summary', panelState.siteLoading ? '正在读取站内收藏页...' : (panelState.updateStatus || '新回复状态按缓存与手动检查合并，优先使用已打开页面')));
     header.appendChild(title);
     var headerButtons = createEl('div', 'spx-favorite-head-actions');
+    var checkButton = createFavoriteNavAction(panelState.updateChecking ? '检查中' : '检查更新', 'check-favorite-updates', '', false);
+    checkButton.disabled = !!panelState.updateChecking;
+    checkButton.title = '刷新站内收藏页，并按优先级最多检查 10 条稍后看主题';
+    headerButtons.appendChild(checkButton);
     var openLink = createEl('a', 'spx-favorite-open', '打开收藏页');
     openLink.href = panelState.favoriteUrl || '#';
     openLink.target = '_blank';
@@ -6519,7 +6945,12 @@
     panel.appendChild(header);
 
     var stats = createEl('div', 'spx-favorite-stats');
-    [['站内收藏', panelState.siteLoading && !hasCachedSiteCount ? '...' : displaySiteCount], ['本次显示', visible.length + ' / ' + filtered.length], ['稍后看', watchEntries.length]].forEach(function appendStat(item) {
+    [
+      ['站内收藏', panelState.siteLoading && !hasCachedSiteCount ? '...' : displaySiteCount],
+      ['本次显示', visible.length + ' / ' + filtered.length],
+      ['稍后看', watchEntries.length],
+      ['有新回复', panelState.updateChecking ? '...' : updateSummary.count],
+    ].forEach(function appendStat(item) {
       var stat = createEl('div', 'spx-favorite-stat');
       stat.appendChild(createEl('strong', '', String(item[1])));
       stat.appendChild(createEl('span', '', item[0]));
@@ -6550,13 +6981,14 @@
     [
       { value: 'all', label: '全部' },
       { value: 'recent', label: '最近' },
+      { value: 'updated', label: '有新回复 ' + updateSummary.count },
       { value: 'unread', label: '未读' },
       { value: 'resource', label: '资源' },
       { value: 'image', label: '图片' },
       { value: 'ai', label: 'AI' },
     ].forEach(function appendChip(chip) {
       var button = createFavoriteNavAction(chip.label, 'favorite-filter', chip.value, false);
-      button.className = 'spx-favorite-chip' + (normalizeFavoriteNavFilter(panelState.filter) === chip.value ? ' spx-active' : '');
+      button.className = 'spx-favorite-chip' + (chip.value === 'updated' ? ' spx-favorite-chip-update' : '') + (normalizeFavoriteNavFilter(panelState.filter) === chip.value ? ' spx-active' : '');
       chips.appendChild(button);
     });
     tools.appendChild(chips);
@@ -6565,6 +6997,7 @@
     [
       { value: 'recent', label: '最近收藏' },
       { value: 'read', label: '最近阅读' },
+      { value: 'updated', label: '新回复优先' },
       { value: 'reply', label: '回复最多' },
     ].forEach(function appendSortOption(item) {
       var option = createEl('option');
@@ -6615,10 +7048,10 @@
     updateFavoriteNavTrigger(wrapper, panelState, state);
   }
 
-  function loadFavoriteNavSiteEntries(panel, settings, state, wrapper) {
+  function loadFavoriteNavSiteEntries(panel, settings, state, wrapper, force) {
     var panelState = ensureFavoriteNavState(panel, panel && panel.dataset.favoriteUrl);
-    if (panelState.siteLoaded || panelState.siteLoading || !panelState.favoriteUrl) return;
-    if (typeof DOMParser === 'undefined') return;
+    if ((!force && panelState.siteLoaded) || panelState.siteLoading || !panelState.favoriteUrl) return Promise.resolve(panelState);
+    if (typeof DOMParser === 'undefined') return Promise.resolve(panelState);
     panelState.siteLoading = true;
     panelState.siteError = '';
     renderFavoriteNavPanel(panel, settings, state, wrapper);
@@ -6627,7 +7060,7 @@
       label: '我的收藏',
       networkFriendly: isNetworkFriendlyMode(settings),
     };
-    requestWithPolicy(panelState.favoriteUrl, { credentials: 'include', cache: 'no-store' }, policy)
+    return requestWithPolicy(panelState.favoriteUrl, { credentials: 'include', cache: 'no-store' }, policy)
       .then(function readFavoriteResponse(response) {
         if (!response.ok) throw new Error('读取收藏页失败');
         return readScriptResponseText(response, policy);
@@ -6635,21 +7068,26 @@
       .then(function parseFavoriteHtml(html) {
         var doc = new DOMParser().parseFromString(html, 'text/html');
         var seenMap = loadMap(FAVORITE_NAV_SEEN_KEY);
+        var checkedAt = Date.now();
         panelState.siteEntries = parseFavoriteNavEntriesFromDocument(
           doc,
           panelState.favoriteUrl,
           state && state.read,
           FAVORITE_NAV_MAX_FETCHED_ITEMS,
           seenMap,
-          Date.now()
+          checkedAt
         );
-        var seenResult = applyFavoriteNavSeenTimes(panelState.siteEntries, seenMap, Date.now());
+        var updateResult = applyThreadUpdateEntries((state && state.threadUpdates) || {}, panelState.siteEntries, { source: 'favorite-page' }, checkedAt);
+        if (state) state.threadUpdates = updateResult.map;
+        if (updateResult.changed) saveThreadUpdates(updateResult.map);
+        var seenResult = applyFavoriteNavSeenTimes(panelState.siteEntries, seenMap, checkedAt);
         if (seenResult.changed) saveMap(FAVORITE_NAV_SEEN_KEY, seenResult.map);
         panelState.cachedSiteCount = panelState.siteEntries.length;
-        panelState.cachedSiteCountUpdatedAt = Date.now();
+        panelState.cachedSiteCountUpdatedAt = checkedAt;
         panelState.cachedSiteCountFresh = true;
         saveFavoriteNavCountCache(panelState.favoriteUrl, panelState.siteEntries.length, panelState.cachedSiteCountUpdatedAt);
         panelState.siteLoaded = true;
+        panelState.updateCheckedAt = checkedAt;
       })
       .catch(function handleFavoriteLoadError(error) {
         panelState.siteError = error && error.message ? error.message : '读取收藏页失败';
@@ -6659,7 +7097,117 @@
         panelState.siteLoading = false;
         if (panel && !panel.hidden) renderFavoriteNavPanel(panel, settings, state, wrapper);
         else updateFavoriteNavTrigger(wrapper, panelState, state);
+        return panelState;
       });
+  }
+
+  function getFavoriteNavWatchUpdateCandidates(state, now, manual) {
+    var updateMap = (state && state.threadUpdates) || {};
+    return getFavoriteNavWatchEntries(state || {})
+      .filter(function keepWatchUpdateCandidate(entry) {
+        return shouldCheckThreadUpdate(entry, updateMap[entry.id], now, manual);
+      })
+      .sort(function sortWatchUpdateCandidate(left, right) {
+        var leftRecord = getThreadUpdateStatusForEntry(left, updateMap) || {};
+        var rightRecord = getThreadUpdateStatusForEntry(right, updateMap) || {};
+        if (!!rightRecord.hasNewReplies !== !!leftRecord.hasNewReplies) return rightRecord.hasNewReplies ? 1 : -1;
+        var leftActivity = getThreadUpdateActivityAt(left, leftRecord);
+        var rightActivity = getThreadUpdateActivityAt(right, rightRecord);
+        if (rightActivity !== leftActivity) return rightActivity - leftActivity;
+        return (Number(leftRecord.lastCheckedAt) || 0) - (Number(rightRecord.lastCheckedAt) || 0);
+      });
+  }
+
+  function checkFavoriteNavWatchUpdates(settings, state, manual) {
+    var currentTime = Date.now();
+    var candidates = getFavoriteNavWatchUpdateCandidates(state || {}, currentTime, manual);
+    var selected = candidates.slice(0, THREAD_UPDATE_CHECK_BATCH_SIZE);
+    var result = { checked: 0, total: candidates.length, changed: false, errors: 0 };
+    if (!selected.length || typeof DOMParser === 'undefined') return Promise.resolve(result);
+    state.threadUpdates = state.threadUpdates || loadThreadUpdates();
+    return selected.reduce(function queueWatchUpdateCheck(promise, entry) {
+      return promise.then(function checkOneWatchEntry() {
+        var targetUrl = buildThreadLatestReadUrl(entry.id, entry.url || entry.progressUrl);
+        var policy = {
+          mode: 'interactive',
+          label: '稍后看更新检查',
+          networkFriendly: isNetworkFriendlyMode(settings),
+          cooldownMs: THREAD_UPDATE_RATE_LIMIT_COOLDOWN,
+        };
+        return requestWithPolicy(targetUrl, { credentials: 'include', cache: 'no-store' }, policy)
+          .then(function readWatchUpdateResponse(response) {
+            if (!response.ok) throw new Error('检查失败');
+            return readScriptResponseText(response, policy);
+          })
+          .then(function parseWatchUpdateHtml(html) {
+            var doc = new DOMParser().parseFromString(html, 'text/html');
+            var replies = parseThreadReadReplyCountFromDocument(doc, targetUrl);
+            var updateResult = updateThreadReplyState(state.threadUpdates, Object.assign({}, entry, {
+              replies: replies,
+              url: entry.url || targetUrl,
+            }), { source: 'watch-manual-check' }, Date.now());
+            state.threadUpdates = updateResult.map;
+            if (updateResult.changed) result.changed = true;
+            result.checked += 1;
+          })
+          .catch(function keepCheckingAfterWatchUpdateError(error) {
+            if (error && error.spxRateLimited) throw error;
+            result.errors += 1;
+          });
+      });
+    }, Promise.resolve()).then(function finishWatchUpdateCheck() {
+      if (result.changed) saveThreadUpdates(state.threadUpdates);
+      return result;
+    });
+  }
+
+  function checkFavoriteNavUpdates(panel, settings, state, wrapper) {
+    var panelState = ensureFavoriteNavState(panel, panel && panel.dataset.favoriteUrl);
+    if (panelState.updateChecking) return;
+    panelState.updateChecking = true;
+    panelState.updateStatus = '正在检查新回复，站内收藏优先走批量页，稍后看最多抽查 ' + THREAD_UPDATE_CHECK_BATCH_SIZE + ' 条';
+    renderFavoriteNavPanel(panel, settings, state, wrapper);
+    loadFavoriteNavSiteEntries(panel, settings, state, wrapper, true)
+      .then(function checkWatchEntriesAfterSiteFavorites() {
+        return checkFavoriteNavWatchUpdates(settings, state, true);
+      })
+      .then(function finishFavoriteUpdateCheck(result) {
+        var summary = getFavoriteNavUpdateSummary(getFavoriteNavPanelEntries(panelState, state), state && state.threadUpdates);
+        panelState.updateChecking = false;
+        panelState.updateCheckedAt = Date.now();
+        panelState.updateStatus = '已检查站内收藏和 ' + result.checked + '/' + result.total + ' 条稍后看；有新回复 ' + summary.count + ' 个';
+        renderFavoriteNavPanel(panel, settings, state, wrapper);
+        refreshFavoriteNavPanels();
+      }, function failFavoriteUpdateCheck(error) {
+        panelState.updateChecking = false;
+        panelState.updateStatus = error && error.message ? error.message : '检查新回复失败';
+        renderFavoriteNavPanel(panel, settings, state, wrapper);
+      });
+  }
+
+  function findFavoriteNavEntryForUpdate(panelState, state, id) {
+    var updateMap = (state && state.threadUpdates) || {};
+    var entries = decorateFavoriteNavEntriesWithUpdates(getFavoriteNavPanelEntries(panelState, state), updateMap);
+    return entries.filter(function matchFavoriteUpdateEntry(entry) {
+      return String(entry.id || '') === String(id || '');
+    })[0] || null;
+  }
+
+  function openFavoriteUpdateEntry(state, entry) {
+    if (!entry || !entry.id) return;
+    var firstUnreadReply = getFavoriteNavFirstUnreadReply(entry);
+    var targetUrl = getFavoriteNavUnreadUrl(entry) || entry.url || entry.progressUrl;
+    if (firstUnreadReply) {
+      requestReadProgressRestore(entry.id, 'next', { reply: firstUnreadReply });
+      if (targetUrl) location.href = targetUrl;
+      return;
+    }
+    if (entry.progressAt && entry.progressUrl) {
+      openProgressEntry(state, entry.id, targetUrl, 'next');
+      return;
+    }
+    requestReadProgressRestore(entry.id, 'next');
+    if (targetUrl) location.href = targetUrl;
   }
 
   function closeFavoriteNavPanel(wrapper) {
@@ -6775,6 +7323,14 @@
           renderFavoriteNavPanel(panel, settings, state, wrapper);
           return;
         }
+        if (action === 'check-favorite-updates') {
+          checkFavoriteNavUpdates(panel, settings, state, wrapper);
+          return;
+        }
+        if (action === 'read-favorite-update') {
+          openFavoriteUpdateEntry(state, findFavoriteNavEntryForUpdate(panelState, state, target.dataset.value));
+          return;
+        }
         if (action === 'copy-favorite') {
           copyTextToClipboard(target.dataset.value).then(
             function showFavoriteCopySuccess() { setTemporaryText(target, '已复制', '复制'); },
@@ -6784,8 +7340,9 @@
         }
         if (action === 'toggle-visible-favorite-site') {
           var shouldSelectVisible = target.dataset.value !== 'off';
+          var decoratedSiteEntries = decorateFavoriteNavEntriesWithUpdates(panelState.siteEntries || [], state && state.threadUpdates);
           var visibleForSelection = sortFavoriteNavEntries(
-            filterFavoriteNavEntries(panelState.siteEntries || [], panelState),
+            filterFavoriteNavEntries(decoratedSiteEntries, panelState),
             panelState.sort
           ).slice(0, Math.max(1, Number(panelState.limit) || FAVORITE_NAV_BATCH_SIZE));
           visibleForSelection.forEach(function toggleVisibleFavoriteSelection(entry) {
@@ -6851,6 +7408,7 @@
           saveMap(WATCH_KEY, state.watch);
           refreshWatchCenter();
           renderFavoriteNavPanel(panel, settings, state, wrapper);
+          refreshFavoriteNavPanels();
         }
       });
       document.addEventListener('click', function closeFavoriteNavOnOutside(event) {
@@ -6865,6 +7423,15 @@
 
     if (!wrapper.parentNode) host.appendChild(wrapper);
     var panelState = ensureFavoriteNavState(panel, favoriteUrl);
+    panel.spxRenderFavoriteNav = function renderCurrentFavoriteNavPanel() {
+      if (state) {
+        state.read = loadMap(READ_KEY);
+        state.watch = loadMap(WATCH_KEY);
+        state.progress = loadReadProgress();
+        state.threadUpdates = loadThreadUpdates();
+      }
+      renderFavoriteNavPanel(panel, settings, state, wrapper);
+    };
     var countCacheKey = getFavoriteNavCountCacheKey(favoriteUrl);
     var countCacheSource = countCacheKey ? loadMap(FAVORITE_NAV_COUNT_CACHE_KEY)[countCacheKey] : null;
     var countCache = loadFavoriteNavCountCache(favoriteUrl);
@@ -6923,7 +7490,31 @@
       titleLink: titleLink,
       title: titleLink ? titleLink.textContent.trim() : cell.textContent.trim(),
       author: authorLink ? authorLink.textContent.trim() : '',
+      replies: extractThreadReplyCountFromRow(row),
     };
+  }
+
+  function extractThreadReplyCountFromRow(row) {
+    if (!row) return null;
+    var cells = qsa('td', row);
+    for (var index = 0; index < cells.length; index += 1) {
+      var cell = cells[index];
+      var text = compactText(cell && cell.textContent);
+      if (!text) continue;
+      var withSlash = text.match(/^(\d{1,6})\s*\/\s*\d{1,7}$/);
+      if (withSlash) return normalizeThreadUpdateReplyCount(withSlash[1]);
+      var labeled = parseThreadReplyCount(text);
+      if (labeled !== null) return labeled;
+      var byTitle = parseThreadReplyCount(cell && cell.getAttribute ? cell.getAttribute('title') : '');
+      if (byTitle !== null) return byTitle;
+    }
+    var joined = cells.map(function mapThreadReplyCell(cell) {
+      return compactText(cell && cell.textContent);
+    }).filter(Boolean).join(' ');
+    var rowText = joined || compactText(row.textContent || '');
+    var labeled = parseThreadReplyCount(rowText);
+    if (labeled !== null) return labeled;
+    return null;
   }
 
   function extractForumGalleryCardInfo(card) {
@@ -6938,7 +7529,42 @@
       titleLink: titleLink,
       title: titleLink ? titleLink.textContent.trim() : inner.textContent.trim(),
       author: authorLink ? authorLink.textContent.trim() : '',
+      replies: extractThreadReplyCountFromRow(card),
     };
+  }
+
+  function syncThreadUpdateEntries(state, entries, source) {
+    if (!state || !entries || !entries.length) return false;
+    state.threadUpdates = state.threadUpdates || loadThreadUpdates();
+    var favoriteSeen = loadMap(FAVORITE_NAV_SEEN_KEY);
+    var watchMap = state.watch || {};
+    var trackedEntries = entries.filter(function keepTrackedThreadUpdateEntry(entry) {
+      var id = parseThreadId(entry && entry.id);
+      return !!(id && (watchMap[id] || favoriteSeen[id] || state.threadUpdates[id]));
+    });
+    if (!trackedEntries.length) return false;
+    var result = applyThreadUpdateEntries(state.threadUpdates, trackedEntries, { source: source || 'forum-list' }, Date.now());
+    state.threadUpdates = result.map;
+    if (result.changed) {
+      saveThreadUpdates(state.threadUpdates);
+      refreshFavoriteNavPanels();
+    }
+    return result.changed;
+  }
+
+  function renderThreadUpdateBadge(info, state) {
+    if (!info || !info.cell || !info.titleLink) return;
+    var previous = qs('.spx-thread-update-badge', info.cell);
+    if (previous) previous.remove();
+    var id = parseThreadId(info.id);
+    if (!id) return;
+    var favoriteSeen = loadMap(FAVORITE_NAV_SEEN_KEY);
+    if (!((state && state.watch && state.watch[id]) || favoriteSeen[id])) return;
+    var entry = decorateFavoriteNavEntryWithUpdate(info, state && state.threadUpdates);
+    if (!entry.hasNewReplies) return;
+    var badge = createEl('span', 'spx-thread-update-badge', '新 +' + entry.unreadReplies);
+    badge.title = '收藏或稍后看主题有新回复，打开我的收藏可直达未读';
+    info.titleLink.insertAdjacentElement('beforebegin', badge);
   }
 
   function dispatchResourceBadgeFilter(type) {
@@ -7071,10 +7697,15 @@
         url: info.titleLink.href,
         savedAt: Date.now(),
       };
+      state.threadUpdates = state.threadUpdates || loadThreadUpdates();
+      var updateResult = updateThreadReplyState(state.threadUpdates, info, { source: 'watch' }, Date.now());
+      state.threadUpdates = updateResult.map;
+      if (updateResult.changed) saveThreadUpdates(state.threadUpdates);
     }
     syncThreadWatchState(info, state, button);
     saveMap(WATCH_KEY, state.watch);
     refreshWatchCenter();
+    refreshFavoriteNavPanels();
   }
 
   function ensureForumGalleryCardTools(info, settings, state) {
@@ -7606,6 +8237,7 @@
       read: state && state.read ? state.read : loadMap(READ_KEY),
       watch: state && state.watch ? state.watch : loadMap(WATCH_KEY),
       progress: state && state.progress ? state.progress : loadReadProgress(),
+      threadUpdates: state && state.threadUpdates ? state.threadUpdates : loadThreadUpdates(),
       resources: state && state.resources ? state.resources : loadResourceLibrary(),
     };
   }
@@ -11237,10 +11869,15 @@
         info.titleLink.addEventListener('click', function markGalleryThreadRead() {
           state.read[info.id] = Date.now();
           saveMap(READ_KEY, state.read);
+          refreshFavoriteNavPanels();
         }, { capture: true });
       }
     });
 
+    syncThreadUpdateEntries(state, items, 'gallery-list');
+    items.forEach(function renderGalleryUpdateBadge(info) {
+      renderThreadUpdateBadge(info, state);
+    });
     createForumQuickTools(settings, state, items);
     createForumSectionTitle(items, wall);
     compactForumPrelude(wall);
@@ -11364,9 +12001,14 @@
       info.titleLink.addEventListener('click', function markRead() {
         state.read[info.id] = Date.now();
         saveMap(READ_KEY, state.read);
+        refreshFavoriteNavPanels();
       }, { capture: true });
     });
 
+    syncThreadUpdateEntries(state, items, 'forum-list');
+    items.forEach(function renderListUpdateBadge(info) {
+      renderThreadUpdateBadge(info, state);
+    });
     createForumQuickTools(settings, state, items);
     var threadTable = items[0] && items[0].row && items[0].row.closest ? items[0].row.closest('.spx-thread-list-table') : null;
     createForumSectionTitle(items, threadTable);
@@ -11397,13 +12039,16 @@
     return null;
   }
 
-  function requestReadProgressRestore(tid, mode) {
+  function requestReadProgressRestore(tid, mode, options) {
     var storage = getSessionStorage();
     if (!storage || !tid) return;
-    storage.setItem(RESTORE_PROGRESS_KEY, JSON.stringify({
+    var request = {
       tid: String(tid),
       mode: mode === 'last' ? 'last' : 'next',
-    }));
+    };
+    var targetReply = normalizeThreadUpdateReplyCount(options && options.reply);
+    if (targetReply !== null && targetReply > 0) request.reply = targetReply;
+    storage.setItem(RESTORE_PROGRESS_KEY, JSON.stringify(request));
   }
 
   function getReadProgressRestoreRequest(tid) {
@@ -11415,10 +12060,13 @@
     try {
       var request = JSON.parse(rawValue);
       if (!request || String(request.tid || '') !== String(tid)) return null;
-      return {
+      var targetReply = normalizeThreadUpdateReplyCount(request.reply);
+      var result = {
         tid: String(request.tid),
         mode: request.mode === 'last' ? 'last' : 'next',
       };
+      if (targetReply !== null && targetReply > 0) result.reply = targetReply;
+      return result;
     } catch (error) {
       return null;
     }
@@ -11593,6 +12241,7 @@
     refreshWatchCenter();
     refreshHistoryCenter();
     refreshReadThreadSummaryCard();
+    refreshFavoriteNavPanels();
     return state.progress[tid];
   }
 
@@ -11606,6 +12255,72 @@
       })[0] ||
       null
     );
+  }
+
+  function getReadPostReplyNumber(post, index, pageNumber) {
+    var text = compactText(post && post.textContent);
+    if (/楼主/.test(text)) return 0;
+    var labelMatch = text.match(/\bB\s*(\d+)\s*F\b/i) || text.match(/(?:^|\D)(\d+)\s*楼(?:\D|$)/);
+    if (labelMatch) return Number(labelMatch[1]) || 0;
+    var page = Math.max(1, Number(pageNumber) || currentPageNumber(location.href) || 1);
+    var localIndex = Math.max(0, Number(index) || 0);
+    return page <= 1
+      ? localIndex
+      : (page - 1) * READ_REPLIES_PER_PAGE + localIndex + 1;
+  }
+
+  function getReadReplyFloorTarget(replyNumber) {
+    var targetReply = normalizeThreadUpdateReplyCount(replyNumber);
+    if (targetReply === null || targetReply <= 0) return null;
+    var posts = qsa('table.js-post');
+    if (!posts.length) return null;
+    var page = currentPageNumber(location.href) || getReadReplyPage(targetReply);
+    var matched = null;
+    posts.forEach(function matchReadReplyPost(post, index) {
+      if (matched) return;
+      if (getReadPostReplyNumber(post, index, page) !== targetReply) return;
+      matched = post;
+    });
+    if (!matched) {
+      var localIndex = page <= 1
+        ? targetReply
+        : targetReply - (page - 1) * READ_REPLIES_PER_PAGE - 1;
+      matched = posts[localIndex] || null;
+    }
+    if (!matched) return null;
+    return {
+      hash: getPostAnchorHash(matched),
+      node: matched,
+      top: getAbsoluteNodeTop(matched),
+      label: getPostFloorLabel(targetReply),
+    };
+  }
+
+  function restoreReadReplyFloor(state, tid, replyNumber) {
+    var targetReply = normalizeThreadUpdateReplyCount(replyNumber);
+    if (targetReply === null || targetReply <= 0) return false;
+    clearReadProgressRestoreRequest(tid);
+    window.setTimeout(function restoreUnreadReplyFloor() {
+      var target = getReadReplyFloorTarget(targetReply);
+      if (!target) {
+        restoreReadProgress(state, tid, 'next');
+        return;
+      }
+      var top = Math.max(0, Number(target.top) || 0);
+      var anchorNode = getReadProgressAnchorNode(target.hash) || target.node;
+      if (anchorNode && typeof anchorNode.scrollIntoView === 'function') {
+        anchorNode.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      } else {
+        window.scrollTo({ top: top, behavior: 'smooth' });
+      }
+      window.setTimeout(function fallbackUnreadReplyScroll() {
+        if (Math.abs(getScrollTop() - top) <= 8) return;
+        if (document.scrollingElement) document.scrollingElement.scrollTop = top;
+        if (document.documentElement) document.documentElement.scrollTop = top;
+        if (document.body) document.body.scrollTop = top;
+      }, 260);
+    }, 80);
+    return true;
   }
 
   function restoreReadProgress(state, tid, mode) {
@@ -11641,6 +12356,7 @@
   function restorePendingReadProgress(state, tid) {
     var request = getReadProgressRestoreRequest(tid);
     if (!request) return false;
+    if (request.reply) return restoreReadReplyFloor(state, tid, request.reply);
     return restoreReadProgress(state, tid, request.mode);
   }
 
@@ -12554,6 +13270,25 @@
       });
   }
 
+  function syncReadPageThreadUpdateState(state, tid) {
+    if (!state || !tid) return;
+    state.threadUpdates = state.threadUpdates || loadThreadUpdates();
+    var favoriteSeen = loadMap(FAVORITE_NAV_SEEN_KEY);
+    if (!(state.watch && state.watch[tid]) && !favoriteSeen[tid] && !state.threadUpdates[tid]) return;
+    var replies = parseThreadReadReplyCountFromDocument(document, location.href);
+    var updateResult = updateThreadReplyState(state.threadUpdates, {
+      id: tid,
+      title: getReadPageTitle(document),
+      url: location.href.split('#')[0],
+      replies: replies,
+    }, { markRead: true, source: 'read-page' }, Date.now());
+    state.threadUpdates = updateResult.map;
+    if (updateResult.changed) {
+      saveThreadUpdates(state.threadUpdates);
+      refreshFavoriteNavPanels();
+    }
+  }
+
   function enhanceReadPage(settings, state) {
     if (detectPageType(location.href) !== 'read') return;
     var tid = parseThreadId(location.href);
@@ -12567,6 +13302,7 @@
     }
 
     var posts = qsa('table.js-post');
+    syncReadPageThreadUpdateState(state, tid);
     var originalAuthor = posts.length ? getPostAuthor(posts[0]) : '';
     bindNativeReadFavoriteSync(settings, state, tid, originalAuthor);
     createReadThreadSummaryCard(settings, state, posts, tid, originalAuthor);
@@ -17140,6 +17876,7 @@
       read: loadMap(READ_KEY),
       watch: loadMap(WATCH_KEY),
       progress: loadReadProgress(),
+      threadUpdates: loadThreadUpdates(),
       resources: loadResourceLibrary(),
     };
     injectStyles();
@@ -17176,6 +17913,19 @@
     formatBackupImportPreview: formatBackupImportPreview,
     formatReadProgress: formatReadProgress,
     getReadProgressRestoreTarget: getReadProgressRestoreTarget,
+    normalizeThreadUpdateRecord: normalizeThreadUpdateRecord,
+    parseThreadReplyCount: parseThreadReplyCount,
+    parseThreadReadReplyCountFromDocument: parseThreadReadReplyCountFromDocument,
+    shouldCheckThreadUpdate: shouldCheckThreadUpdate,
+    updateThreadReplyState: updateThreadReplyState,
+    applyThreadUpdateEntries: applyThreadUpdateEntries,
+    getThreadUpdateStatusForEntry: getThreadUpdateStatusForEntry,
+    buildThreadLatestReadUrl: buildThreadLatestReadUrl,
+    decorateFavoriteNavEntryWithUpdate: decorateFavoriteNavEntryWithUpdate,
+    decorateFavoriteNavEntriesWithUpdates: decorateFavoriteNavEntriesWithUpdates,
+    getFavoriteNavUpdateSummary: getFavoriteNavUpdateSummary,
+    getFavoriteNavUnreadUrl: getFavoriteNavUnreadUrl,
+    extractThreadReplyCountFromRow: extractThreadReplyCountFromRow,
     mergeReadProgressRecord: mergeReadProgressRecord,
     pruneReadProgress: pruneReadProgress,
     getWatchCenterEntries: getWatchCenterEntries,
