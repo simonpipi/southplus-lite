@@ -57,7 +57,8 @@ const FEATURE_SURFACE = {
     'formatPreviewImageMarkdownLinks', 'formatPreviewImageLinksByFloor', 'getPreviewGalleryRenderState',
     'formatPreviewGallerySummary', 'formatPreviewImageArchiveFileName', 'sanitizePreviewDownloadName',
     'getPreviewImageDownloadExtension', 'formatPreviewImageDownloadFileName', 'getPreviewDownloadStatusSummary',
-    'formatPreviewDownloadReport', 'getZipCrc32', 'createPreviewZipBlob', 'isPreviewImageCandidate',
+    'formatPreviewDownloadReport', 'getZipCrc32', 'createPreviewZipBlob', 'getHeaderValue', 'isCrossOriginUrl',
+    'shouldUsePrivilegedPreviewDownload', 'getPrivilegedResponseBlob', 'isPreviewImageCandidate',
     'clampPreviewZoom', 'getPreviewLightboxKeyAction', 'hasPreviewGalleryImages', 'getThreadPreviewMetaText',
     'getThreadPreviewImageUrls', 'getThreadPreviewImageSummary', 'getThreadPreviewStatusChips',
     'getThreadPreviewHoverDelay',
@@ -75,8 +76,10 @@ const FEATURE_SURFACE = {
   ],
   autoBuyAndTasks: [
     'parsePostPrice', 'parseUserSpBalance', 'shouldAutoBuyPost', 'extractBuyTopicUrl', 'getAutoBuyAttemptKey',
-    'isAutoBuyAttemptBlocked', 'formatAutoBuyAttemptMessage', 'getAutoBuyDoneAttemptForThread',
-    'formatAutoBuyNavSuccessDetail', 'extractTaskAutoClaimUrl', 'getTaskHomePageUrl', 'getTaskInProgressPageUrl',
+    'isAutoBuyAttemptBlocked', 'shouldRetryAutoBuyAttempt', 'formatAutoBuyAttemptMessage', 'findAutoBuyTargets',
+    'getAutoBuyDoneAttemptForThread', 'formatAutoBuyNavSuccessDetail', 'normalizeAutoBuyResponseText', 'isAutoBuyPurchaseResponseSuccessful',
+    'getAutoBuyPurchaseResponseFailureReason', 'isAutoBuyResidualTargetAcceptable', 'getAutoBuyResidualButtonNote',
+    'createAutoBuyQueueSummary', 'formatAutoBuyQueueSummary', 'extractTaskAutoClaimUrl', 'getTaskHomePageUrl', 'getTaskInProgressPageUrl',
     'getTaskAutoClaimCooldownMs', 'getLatestTaskClaimCompletedAt', 'isTaskClaimCompletedToday',
     'getTaskAutoClaimGate', 'getTaskAutoClaimActionType', 'isTaskAutoClaimCandidate', 'getTaskAutoClaimTargets',
     'getTaskAutoClaimTargetsFromHtml', 'getTaskAutoClaimResponseResult', 'maybeRunAutoTaskClaim',
@@ -327,6 +330,10 @@ function suitePreviewGallery() {
   assert.match(enhancer.getPreviewDownloadStatusSummary({ total: 2, done: 1, failed: 1 }), /1 \/ 2/);
   assert.match(enhancer.formatPreviewDownloadReport([{ ok: true, fileName: 'a.jpg' }, { ok: false, url: 'b', error: 'fail' }]), /失败图片/);
   assert.equal(enhancer.getZipCrc32(new Uint8Array([97, 98, 99])).toString(16), '352441c2');
+  assert.equal(enhancer.getHeaderValue('Content-Type: image/gif\r\nContent-Length: 10', 'content-type'), 'image/gif');
+  assert.equal(enhancer.isCrossOriginUrl('https://image.acg.lol/a.gif', 'https://south-plus.org/read.php?tid-1.html'), true);
+  assert.equal(enhancer.shouldUsePrivilegedPreviewDownload('https://image.acg.lol/a.gif', 'https://south-plus.org/read.php?tid-1.html', true), true);
+  assert.equal(enhancer.shouldUsePrivilegedPreviewDownload('https://south-plus.org/a.gif', 'https://south-plus.org/read.php?tid-1.html', true), false);
   assert.equal(enhancer.isPreviewImageCandidate({ src: 'https://img.example.com/a.jpg', width: 640, height: 360 }), true);
   assert.equal(enhancer.clampPreviewZoom(8), 4);
   assert.equal(enhancer.getPreviewLightboxKeyAction({ key: 'ArrowRight' }), 'next');
@@ -386,9 +393,16 @@ function suiteAutoBuyAndTasks() {
   assert.equal(enhancer.extractBuyTopicUrl("onclick=\"ajaxurl('job.php?action=buytopic&tid=1')\"", 'https://south-plus.org/read.php?tid-1.html'), 'https://south-plus.org/job.php?action=buytopic&tid=1');
   assert.equal(enhancer.getAutoBuyAttemptKey('https://south-plus.org/read.php?tid-1.html', 'https://south-plus.org/'), '1:tpc');
   assert.equal(enhancer.isAutoBuyAttemptBlocked({ status: 'done', updatedAt: 1000 }, 2000), true);
+  assert.equal(enhancer.isAutoBuyAttemptBlocked({ status: 'buying', updatedAt: 1000 }, 1000 + 2 * 60 * 1000), false);
   assert.match(enhancer.formatAutoBuyAttemptMessage({ status: 'failed', error: '余额不足' }), /自动购买失败/);
   assert.equal(enhancer.getAutoBuyDoneAttemptForThread({ '1:tpc': { status: 'done', updatedAt: 1 } }, '1').key, '1:tpc');
   assert.match(enhancer.formatAutoBuyNavSuccessDetail({ price: 5, balance: 20 }), /5/);
+  assert.equal(enhancer.isAutoBuyPurchaseResponseSuccessful('购买成功'), true);
+  assert.equal(enhancer.getAutoBuyPurchaseResponseFailureReason('错误：余额不足'), '错误：余额不足');
+  assert.equal(enhancer.findAutoBuyTargets({ querySelectorAll: () => [{ getAttribute: () => "location.href='job.php?action=buytopic&tid=1&pid=2'", closest: () => ({ textContent: '此帖售价 0 SP币' }) }] }, 'https://south-plus.org/read.php?tid-1.html').length, 1);
+  assert.equal(enhancer.getAutoBuyResidualButtonNote({ target: { price: 0 } }, { price: 0 }, [], ''), '原站仍保留 0 SP 购买按钮');
+  assert.equal(enhancer.shouldRetryAutoBuyAttempt({ status: 'failed', message: '购买后仍存在购买按钮' }), true);
+  assert.equal(enhancer.formatAutoBuyQueueSummary({ done: 2, skipped: 0, failed: 1 }), '自动购买已完成，成功 2 个，失败 1 个。');
   assert.equal(enhancer.extractTaskAutoClaimUrl("startjob('15')", 'https://south-plus.org/plugin.php?H_name-tasks.html', 'start'), 'https://south-plus.org/plugin.php?H_name=tasks&action=ajax&actions=job&cid=15');
   assert.equal(enhancer.getTaskHomePageUrl(), 'https://south-plus.org/plugin.php?H_name-tasks.html');
   assert.equal(enhancer.getTaskInProgressPageUrl(), 'https://south-plus.org/plugin.php?H_name-tasks-actions-newtasks.html.html');
@@ -495,7 +509,11 @@ function suiteQuickReply() {
   assert.deepEqual(enhancer.getQuickReplyAttachmentFiles({ files: [imageFile, textFile] }), [imageFile]);
   assert.equal(enhancer.formatQuickReplyAttachmentSummary([imageFile]), '已选择 1 张图片；正式提交会随原站回复表单一起发送。');
   assert.equal(enhancer.formatQuickReplyFileSize(2.5 * 1024 * 1024), '2.5 MB');
-  assert.equal(enhancer.getQuickReplyEmotes().length, 38);
+  const quickReplyEmotes = enhancer.getQuickReplyEmotes();
+  assert.equal(quickReplyEmotes.length, 38);
+  assert.equal(quickReplyEmotes[0].code, '[s:638]');
+  assert.equal(quickReplyEmotes[3].code, '[s:746]');
+  assert.equal(new Set(quickReplyEmotes.map((emote) => emote.code)).size, quickReplyEmotes.length);
   assert.equal(enhancer.isQuickReplySubmitter({ tagName: 'BUTTON', type: 'submit', name: '', value: '' }), true);
   assert.equal(enhancer.getQuickReplySubmitter({ querySelector: () => ({ tagName: 'INPUT', type: 'submit', name: 'Submit', value: '提交' }) }).value, '提交');
   assert.equal(enhancer.isQuickReplyEditorCandidate({ disabled: false, readOnly: false, closest: () => null }), true);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         South Plus +++
 // @namespace    https://south-plus.org/
-// @version      0.6.0
+// @version      0.6.4
 // @description  South Plus +++ 是一款集界面与阅读优化、帖子筛选屏蔽、快捷导航回复及自动购买等功能于一体的 South Plus 系列论坛增强脚本。
 // @author       local
 // @match        *://*.south-plus.net/*
@@ -24,7 +24,8 @@
 // @match        *://summer-plus.net/*
 // @match        *://*.blue-plus.net/*
 // @match        *://blue-plus.net/*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      *
 // @run-at       document-end
 // ==/UserScript==
 
@@ -69,6 +70,7 @@
   var FAVORITE_NAV_SEEN_KEY = APP + ':favoriteNavSeen:v1';
   var THREAD_UPDATE_KEY = APP + ':threadUpdates:v1';
   var AUTO_BUY_CHECK_TTL = 10 * 60 * 1000;
+  var AUTO_BUY_BUYING_TTL = 90 * 1000;
   var AUTO_BUY_ATTEMPT_LIMIT = 100;
   var TASK_CLAIM_RECORD_LIMIT = 100;
   var TASK_AUTO_CLAIM_DAILY_COOLDOWN = 18 * 60 * 60 * 1000;
@@ -221,16 +223,49 @@
   };
 
   var QUICK_REPLY_EMOTES = [
-    '001.jpg', '002.jpg', '003.jpg', '005.jpg', '006.jpg', '007.jpg', '008.jpg', '009.jpg', '010.jpg', '012.jpg',
-    '013.gif', '014.jpg', '015.jpg', '016.jpg', '017.jpg', '018.jpg', '019.jpg', '020.jpg', '021.gif', '022.gif',
-    '023.jpg', '024.jpg', '025.jpg', '026.jpg', '027.jpg', '028.jpg', '029.jpg', '030.jpg', '031.gif', '032.jpg',
-    '033.jpg', '034.jpg', '035.jpg', '036.jpg', '037.gif', '038.gif', '039.jpg', '040.jpg',
-  ].map(function mapQuickReplyEmote(fileName) {
-    var code = fileName.replace(/\D/g, '').replace(/^0+/, '') || '1';
+    { id: 638, fileName: '001.jpg' },
+    { id: 700, fileName: '002.jpg' },
+    { id: 707, fileName: '003.jpg' },
+    { id: 746, fileName: '005.jpg' },
+    { id: 641, fileName: '006.jpg' },
+    { id: 735, fileName: '007.jpg' },
+    { id: 742, fileName: '008.jpg' },
+    { id: 711, fileName: '009.jpg' },
+    { id: 655, fileName: '010.jpg' },
+    { id: 730, fileName: '012.jpg' },
+    { id: 732, fileName: '013.gif' },
+    { id: 676, fileName: '014.jpg' },
+    { id: 673, fileName: '015.jpg' },
+    { id: 660, fileName: '016.jpg' },
+    { id: 740, fileName: '017.jpg' },
+    { id: 678, fileName: '018.jpg' },
+    { id: 642, fileName: '019.jpg' },
+    { id: 715, fileName: '020.jpg' },
+    { id: 647, fileName: '021.gif' },
+    { id: 682, fileName: '022.gif' },
+    { id: 677, fileName: '023.jpg' },
+    { id: 664, fileName: '024.jpg' },
+    { id: 639, fileName: '025.jpg' },
+    { id: 713, fileName: '026.jpg' },
+    { id: 705, fileName: '027.jpg' },
+    { id: 743, fileName: '028.jpg' },
+    { id: 741, fileName: '029.jpg' },
+    { id: 698, fileName: '030.jpg' },
+    { id: 669, fileName: '031.gif' },
+    { id: 708, fileName: '032.jpg' },
+    { id: 686, fileName: '033.jpg' },
+    { id: 709, fileName: '034.jpg' },
+    { id: 728, fileName: '035.jpg' },
+    { id: 747, fileName: '036.jpg' },
+    { id: 726, fileName: '037.gif' },
+    { id: 652, fileName: '038.gif' },
+    { id: 646, fileName: '039.jpg' },
+    { id: 703, fileName: '040.jpg' },
+  ].map(function mapQuickReplyEmote(emote) {
     return {
-      code: '[s:' + code + ']',
-      fileName: fileName,
-      src: 'https://south-plus.org/images/post/smile/smallface/face' + fileName,
+      code: '[s:' + emote.id + ']',
+      fileName: emote.fileName,
+      src: 'https://south-plus.org/images/post/smile/smallface/face' + emote.fileName,
     };
   });
 
@@ -2119,6 +2154,56 @@
     return prefix + '-' + meta + getPreviewImageDownloadExtension(getPreviewImageSource(image), contentType);
   }
 
+  function getHeaderValue(headers, name) {
+    var headerName = String(name || '').toLowerCase();
+    if (!headers || !headerName) return '';
+    if (typeof headers.get === 'function') return headers.get(name) || '';
+    var lines = String(headers || '').split(/\r?\n/);
+    for (var index = 0; index < lines.length; index += 1) {
+      var parts = lines[index].split(':');
+      if (parts.length < 2) continue;
+      if (parts.shift().trim().toLowerCase() === headerName) return parts.join(':').trim();
+    }
+    return '';
+  }
+
+  function isCrossOriginUrl(url, pageUrl) {
+    try {
+      var base = pageUrl || (typeof location !== 'undefined' ? location.href : 'https://south-plus.org/');
+      return new URL(String(url || ''), base).origin !== new URL(base).origin;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function getPrivilegedRequestApi() {
+    if (typeof GM_xmlhttpRequest === 'function') return GM_xmlhttpRequest;
+    if (typeof GM === 'object' && GM && typeof GM.xmlHttpRequest === 'function') return GM.xmlHttpRequest;
+    return null;
+  }
+
+  function shouldUsePrivilegedPreviewDownload(url, pageUrl, hasPrivilegedRequest) {
+    var available = hasPrivilegedRequest === undefined ? !!getPrivilegedRequestApi() : !!hasPrivilegedRequest;
+    return available && isCrossOriginUrl(url, pageUrl);
+  }
+
+  function getPrivilegedResponseBlob(response) {
+    if (typeof Blob === 'undefined') return null;
+    var contentType = getHeaderValue(response && response.responseHeaders, 'content-type') || '';
+    var body = response && response.response;
+    if (body instanceof Blob) return { blob: body, contentType: contentType || body.type || '' };
+    if (typeof ArrayBuffer !== 'undefined' && body instanceof ArrayBuffer) {
+      return { blob: new Blob([body], { type: contentType || 'application/octet-stream' }), contentType: contentType };
+    }
+    if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(body)) {
+      return { blob: new Blob([body], { type: contentType || 'application/octet-stream' }), contentType: contentType };
+    }
+    if (typeof body === 'string' || response && typeof response.responseText === 'string') {
+      return { blob: new Blob([body || response.responseText], { type: contentType || 'application/octet-stream' }), contentType: contentType };
+    }
+    return null;
+  }
+
   function getPreviewDownloadStatusSummary(counts) {
     var data = counts || {};
     var total = Math.max(0, Number(data.total) || 0);
@@ -3357,7 +3442,18 @@
       var currentTime = now === undefined ? Date.now() : Number(now);
       return !checkedAt || (currentTime - checkedAt) <= AUTO_BUY_CHECK_TTL;
     }
-    return record.status === 'buying' || record.status === 'done' || record.status === 'failed';
+    if (record.status === 'buying') {
+      var buyingAt = Number(record.updatedAt) || 0;
+      var buyingNow = now === undefined ? Date.now() : Number(now);
+      return !buyingAt || (buyingNow - buyingAt) <= AUTO_BUY_BUYING_TTL;
+    }
+    return record.status === 'done' || record.status === 'failed';
+  }
+
+  function shouldRetryAutoBuyAttempt(record) {
+    var data = record || {};
+    if (data.status !== 'failed') return false;
+    return /购买后仍存在购买按钮|原站仍保留/.test(String(data.message || data.error || ''));
   }
 
   function formatAutoBuyAttemptMessage(record) {
@@ -3393,6 +3489,40 @@
     if (data.resourceSummary) parts.push('资源：' + data.resourceSummary);
     if (data.message) parts.push(data.message);
     return parts.join(' · ');
+  }
+
+  function normalizeAutoBuyResponseText(value) {
+    return compactText(String(value || '').replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' '));
+  }
+
+  function isAutoBuyPurchaseResponseSuccessful(value) {
+    var text = normalizeAutoBuyResponseText(value);
+    return /(?:购买|支付|操作|處理|处理).{0,12}(?:成功|完成|已完成)|(?:已|已经|已經)购买|success/i.test(text);
+  }
+
+  function getAutoBuyPurchaseResponseFailureReason(value) {
+    var text = normalizeAutoBuyResponseText(value);
+    if (!text || isAutoBuyPurchaseResponseSuccessful(text)) return '';
+    if (/(?:余额|SP|积分|金币|权限|验证|verify|登录|登入|非法|无效|失效|失败|错误|不存在).{0,16}(?:不足|失败|错误|无效|失效|过期|錯誤|失敗)|(?:请|請).{0,8}(?:登录|登入)|(?:失败|错误|錯誤|失敗)/i.test(text)) {
+      return text.slice(0, 80) || '购买请求失败';
+    }
+    return '';
+  }
+
+  function isAutoBuyResidualTargetAcceptable(context, residualTarget, resourceLinks, purchaseResult) {
+    if (!residualTarget) return true;
+    var price = Number(context && context.target && context.target.price);
+    if (price === 0) return true;
+    if ((resourceLinks || []).length > 0) return true;
+    return isAutoBuyPurchaseResponseSuccessful(purchaseResult);
+  }
+
+  function getAutoBuyResidualButtonNote(context, residualTarget, resourceLinks, purchaseResult) {
+    if (!residualTarget || !isAutoBuyResidualTargetAcceptable(context, residualTarget, resourceLinks, purchaseResult)) return '';
+    var price = Number(context && context.target && context.target.price);
+    if (price === 0) return '原站仍保留 0 SP 购买按钮';
+    if ((resourceLinks || []).length > 0) return '原站仍保留购买按钮，但刷新后已识别到资源';
+    return '原站仍保留购买按钮，但购买接口已返回成功';
   }
 
   function parseTodayCount(text) {
@@ -12998,18 +13128,24 @@
     split.appendChild(content);
   }
 
-  function findAutoBuyTarget(root, pageUrl) {
+  function findAutoBuyTargets(root, pageUrl) {
     var scope = root || document;
+    var resolvedPageUrl = pageUrl || location.href;
     var controls = qsa(
       'input[onclick*="buytopic"],button[onclick*="buytopic"],a[href*="buytopic"]',
       scope
     );
+    var targets = [];
+    var seen = {};
 
     for (var index = 0; index < controls.length; index += 1) {
       var control = controls[index];
       var rawTarget = control.getAttribute('href') || control.getAttribute('onclick') || '';
-      var url = extractBuyTopicUrl(rawTarget, pageUrl || location.href);
+      var url = extractBuyTopicUrl(rawTarget, resolvedPageUrl);
       if (!url) continue;
+      var attemptKey = getAutoBuyAttemptKey(url, resolvedPageUrl);
+      var dedupeKey = attemptKey || url;
+      if (seen[dedupeKey]) continue;
 
       var host = control.closest
         ? control.closest('h6.quote,.quote,.tpc_content,table.js-post')
@@ -13021,14 +13157,31 @@
       }
       if (price === null) continue;
 
-      return {
+      seen[dedupeKey] = true;
+      targets.push({
         control: control,
         host: host || control.parentNode,
         price: price,
         url: url,
-      };
+        attemptKey: attemptKey,
+      });
     }
 
+    return targets;
+  }
+
+  function findAutoBuyTarget(root, pageUrl) {
+    var targets = findAutoBuyTargets(root, pageUrl);
+    return targets.length ? targets[0] : null;
+  }
+
+  function findAutoBuyTargetByAttemptKey(root, pageUrl, attemptKey) {
+    var key = String(attemptKey || '');
+    if (!key) return null;
+    var targets = findAutoBuyTargets(root, pageUrl);
+    for (var index = 0; index < targets.length; index += 1) {
+      if (targets[index].attemptKey === key) return targets[index];
+    }
     return null;
   }
 
@@ -13092,20 +13245,32 @@
     if (status) status.remove();
   }
 
-  function createAutoBuyContext(settings) {
-    var target = findAutoBuyTarget(document, location.href);
+  function createAutoBuyContext(settings, options) {
+    var config = options || {};
+    var ignoredAttemptKeys = config.ignoredAttemptKeys || {};
     var maxPrice = Number(settings.autoBuyMaxSp);
-    if (!target || !(maxPrice > 0) || !(target.price < maxPrice)) return null;
-
-    var attemptKey = getAutoBuyAttemptKey(target.url, location.href);
+    if (!(maxPrice > 0)) return null;
+    var targets = findAutoBuyTargets(document, location.href);
     var attempts = loadAutoBuyAttempts();
-    return {
-      pageRoot: document.documentElement,
-      target: target,
-      attemptKey: attemptKey,
-      networkFriendly: isNetworkFriendlyMode(settings),
-      previousAttempt: attemptKey ? attempts[attemptKey] : null,
-    };
+    for (var index = 0; index < targets.length; index += 1) {
+      var target = targets[index];
+      if (!(target.price < maxPrice)) continue;
+      var attemptKey = target.attemptKey || getAutoBuyAttemptKey(target.url, location.href);
+      if (!attemptKey || ignoredAttemptKeys[attemptKey]) continue;
+      var previousAttempt = attempts[attemptKey] || null;
+      if (isAutoBuyAttemptBlocked(previousAttempt) && !shouldRetryAutoBuyAttempt(previousAttempt)) {
+        if (previousAttempt.status === 'done') showAutoBuyNavSuccess(Object.assign({ key: attemptKey }, previousAttempt));
+        continue;
+      }
+      return {
+        pageRoot: document.documentElement,
+        target: target,
+        attemptKey: attemptKey,
+        networkFriendly: isNetworkFriendlyMode(settings),
+        previousAttempt: previousAttempt,
+      };
+    }
+    return null;
   }
 
   function blockAutoBuyContext(context) {
@@ -13189,19 +13354,30 @@
       .then(function readRefreshedThread(response) {
         if (!response.ok) throw new Error('重新加载帖子失败');
         return readScriptResponseText(response, reloadPolicy);
+      })
+      .then(function keepPurchaseResult(html) {
+        return { html: html, purchaseResult: purchaseResult };
       });
   }
 
-  function applyAutoBuySuccess(context, settings, state, html) {
+  function applyAutoBuySuccess(context, settings, state, payload) {
+    var html = typeof payload === 'string' ? payload : payload && payload.html;
+    var purchaseResult = payload && typeof payload === 'object' ? payload.purchaseResult : '';
     if (!html) return;
+    var failureReason = getAutoBuyPurchaseResponseFailureReason(purchaseResult);
+    if (failureReason) throw new Error(failureReason);
     var refreshedDoc = new DOMParser().parseFromString(html, 'text/html');
-    if (findAutoBuyTarget(refreshedDoc, location.href)) {
+    var residualTarget = findAutoBuyTargetByAttemptKey(refreshedDoc, location.href, context.attemptKey);
+    var refreshedResourceLinks = getJumpResourceLinks(extractReadPageResourceLinks(qsa('table.js-post', refreshedDoc), location.href));
+    var residualNote = getAutoBuyResidualButtonNote(context, residualTarget, refreshedResourceLinks, purchaseResult);
+    if (residualTarget && !residualNote) {
       throw new Error('购买后仍存在购买按钮');
     }
     if (!replaceReadPageContent(html, settings, state)) {
       throw new Error('无法更新帖子内容');
     }
     var resourceLinks = getJumpResourceLinks(extractReadPageResourceLinks(qsa('table.js-post'), location.href));
+    if (!resourceLinks.length && refreshedResourceLinks.length) resourceLinks = refreshedResourceLinks;
     var resourceSummary = formatResourceJumpSummary(resourceLinks);
     var savedResources = saveResourceLinksToLibrary(resourceLinks, state.resources, getCurrentResourceSourceMeta());
     state.resources = savedResources.resources;
@@ -13213,10 +13389,17 @@
     var doneRecord = recordAutoBuyAttempt(
       context.attemptKey,
       'done',
-      '已支付 ' + context.target.price + ' SP 并加载帖子内容' + (resourceSummary ? '，识别资源：' + resourceSummary : ''),
-      { price: context.target.price, url: context.target.url, resourceSummary: resourceSummary }
+      '已支付 ' + context.target.price + ' SP 并加载帖子内容' + (resourceSummary ? '，识别资源：' + resourceSummary : '') + (residualNote ? '，' + residualNote : ''),
+      { price: context.target.price, url: context.target.url, resourceSummary: resourceSummary, residualButton: !!residualNote }
     );
     showAutoBuyNavSuccess(doneRecord);
+    if (residualNote) {
+      setAutoBuyStatus(
+        findAutoBuyTarget(document, location.href) || context.target,
+        '自动购买已完成：' + residualNote + '，已记录为成功。',
+        false
+      );
+    }
   }
 
   function failAutoBuyContext(context, error) {
@@ -13237,6 +13420,74 @@
     );
   }
 
+  function createAutoBuyQueueSummary() {
+    return { done: 0, skipped: 0, failed: 0, ignoredAttemptKeys: {} };
+  }
+
+  function formatAutoBuyQueueSummary(summary) {
+    var data = summary || {};
+    var parts = [data.done ? '自动购买已完成' : '自动购买已处理'];
+    if (data.done) parts.push('成功 ' + data.done + ' 个');
+    if (data.skipped) parts.push('跳过 ' + data.skipped + ' 个');
+    if (data.failed) parts.push('失败 ' + data.failed + ' 个');
+    return parts.join('，') + '。';
+  }
+
+  function finishAutoBuyQueueStatus(context, summary) {
+    var data = summary || {};
+    if (!context || !(data.done || data.skipped || data.failed)) return;
+    setAutoBuyStatus(
+      findAutoBuyTarget(document, location.href) || context.target,
+      formatAutoBuyQueueSummary(data),
+      !!data.failed && !data.done
+    );
+  }
+
+  function runAutoBuyQueue(settings, state, summary, lastContext) {
+    var queue = summary || createAutoBuyQueueSummary();
+    var context = createAutoBuyContext(settings, { ignoredAttemptKeys: queue.ignoredAttemptKeys });
+    if (!context) {
+      document.documentElement.dataset.spxAutoBuyStatus = 'done';
+      finishAutoBuyQueueStatus(lastContext, queue);
+      return Promise.resolve(queue);
+    }
+    markAutoBuyChecking(context);
+
+    return fetchCurrentUserSpBalance(settings).then(
+      function purchaseWhenAffordable(balance) {
+        if (!shouldAutoBuyPost(settings, context.target.price, balance)) {
+          queue.skipped += 1;
+          queue.ignoredAttemptKeys[context.attemptKey] = true;
+          skipAutoBuyContext(context, balance);
+          return runAutoBuyQueue(settings, state, queue, context);
+        }
+        return requestAutoBuyPurchase(context, balance)
+          .then(function reloadPurchasedThread(purchaseResult) {
+            return reloadAutoBuyThreadHtml(context, purchaseResult);
+          })
+          .then(function applyRefreshedThread(payload) {
+            applyAutoBuySuccess(context, settings, state, payload);
+            queue.done += 1;
+            queue.ignoredAttemptKeys[context.attemptKey] = true;
+            return runAutoBuyQueue(settings, state, queue, context);
+          })
+          .catch(function handleCurrentAutoBuyError(error) {
+            queue.failed += 1;
+            queue.ignoredAttemptKeys[context.attemptKey] = true;
+            failAutoBuyContext(context, error);
+            return runAutoBuyQueue(settings, state, queue, context);
+          });
+      },
+      function handleBalanceCheckError(error) {
+        queue.failed += 1;
+        queue.ignoredAttemptKeys[context.attemptKey] = true;
+        failAutoBuyContext(context, error);
+        finishAutoBuyQueueStatus(context, queue);
+        return queue;
+      }
+    );
+  }
+
   function enhanceAutoBuyPost(settings, state) {
     if (detectPageType(location.href) !== 'read') return;
 
@@ -13247,26 +13498,12 @@
     }
     if (pageRoot.dataset.spxAutoBuyStatus) return;
 
-    var context = createAutoBuyContext(settings);
-    if (!context) return;
-    if (blockAutoBuyContext(context)) return;
-    markAutoBuyChecking(context);
+    if (!createAutoBuyContext(settings)) return;
+    pageRoot.dataset.spxAutoBuyStatus = 'running';
 
-    fetchCurrentUserSpBalance(settings)
-      .then(function purchaseWhenAffordable(balance) {
-        if (!shouldAutoBuyPost(settings, context.target.price, balance)) {
-          return skipAutoBuyContext(context, balance);
-        }
-        return requestAutoBuyPurchase(context, balance);
-      })
-      .then(function reloadPurchasedThread(purchaseResult) {
-        return reloadAutoBuyThreadHtml(context, purchaseResult);
-      })
-      .then(function applyRefreshedThread(html) {
-        applyAutoBuySuccess(context, settings, state, html);
-      })
-      .catch(function handleAutoBuyError(error) {
-        failAutoBuyContext(context, error);
+    runAutoBuyQueue(settings, state, createAutoBuyQueueSummary(), null)
+      .catch(function handleAutoBuyError() {
+        pageRoot.dataset.spxAutoBuyStatus = 'failed';
       });
   }
 
@@ -14626,6 +14863,7 @@
       if (!error) return '下载失败';
       if (error.name === 'AbortError') return '已取消';
       var message = String(error.message || error || '下载失败');
+      if (/跨域下载权限|GM_xmlhttpRequest|@connect/i.test(message)) return message.slice(0, 80);
       if (/Failed to fetch|NetworkError|Load failed|fetch/i.test(message)) return '网络或跨域限制';
       return message.slice(0, 80);
     }
@@ -14668,8 +14906,94 @@
       return readNextChunk();
     }
 
+    function requestPrivilegedPreviewDownloadBlob(entry) {
+      var requestApi = getPrivilegedRequestApi();
+      if (!requestApi) return Promise.reject(new Error('缺少跨域下载权限，请更新脚本授权后重试'));
+      return new Promise(function runPrivilegedPreviewRequest(resolve, reject) {
+        var requestHandle = null;
+        var controller = {
+          abort: function abortPrivilegedPreviewRequest() {
+            if (requestHandle && typeof requestHandle.abort === 'function') requestHandle.abort();
+          },
+        };
+        if (previewDownloadState) previewDownloadState.controllers.push(controller);
+        function cleanup() {
+          if (!previewDownloadState) return;
+          previewDownloadState.controllers = previewDownloadState.controllers.filter(function keepController(item) {
+            return item !== controller;
+          });
+        }
+        try {
+          requestHandle = requestApi({
+            method: 'GET',
+            url: entry.src,
+            responseType: 'blob',
+            timeout: 45000,
+            headers: {
+              Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            },
+            onprogress: function handlePrivilegedPreviewProgress(event) {
+              var loaded = Number(event && event.loaded) || 0;
+              var total = Number(event && event.total) || 0;
+              if (loaded) entry.loaded = loaded;
+              if (total) entry.total = total;
+              if (loaded && total) entry.progress = Math.max(1, Math.min(99, Math.floor((loaded / total) * 100)));
+              else entry.progress = Math.min(95, (Number(entry.progress) || 0) + 4);
+              renderPreviewDownload();
+            },
+            onload: function handlePrivilegedPreviewLoaded(response) {
+              cleanup();
+              var status = Number(response && response.status) || 0;
+              if (status && (status < 200 || status >= 300)) {
+                reject(new Error('HTTP ' + status));
+                return;
+              }
+              var result = getPrivilegedResponseBlob(response);
+              if (!result || !result.blob || !result.blob.size) {
+                reject(new Error('跨域下载内容为空'));
+                return;
+              }
+              entry.progress = 100;
+              entry.loaded = result.blob.size;
+              entry.total = result.blob.size;
+              resolve(result);
+            },
+            onerror: function handlePrivilegedPreviewError(error) {
+              cleanup();
+              reject(new Error((error && error.error) || '跨域下载请求失败'));
+            },
+            ontimeout: function handlePrivilegedPreviewTimeout() {
+              cleanup();
+              reject(new Error('跨域下载超时'));
+            },
+            onabort: function handlePrivilegedPreviewAbort() {
+              cleanup();
+              var error = new Error('已取消');
+              error.name = 'AbortError';
+              reject(error);
+            },
+          });
+          if (requestHandle && typeof requestHandle.then === 'function') {
+            requestHandle.then(function handlePrivilegedPromiseResponse(response) {
+              var loaded = getPrivilegedResponseBlob(response);
+              cleanup();
+              if (!loaded || !loaded.blob || !loaded.blob.size) reject(new Error('跨域下载内容为空'));
+              else resolve(loaded);
+            }, function handlePrivilegedPromiseError(error) {
+              cleanup();
+              reject(error || new Error('跨域下载请求失败'));
+            });
+          }
+        } catch (error) {
+          cleanup();
+          reject(error);
+        }
+      });
+    }
+
     function fetchPreviewDownloadBlob(entry) {
       var fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
+      if (shouldUsePrivilegedPreviewDownload(entry.src, location.href)) return requestPrivilegedPreviewDownloadBlob(entry);
       if (!fetchImpl) return Promise.reject(new Error('当前浏览器不支持 fetch'));
       var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       var options = { credentials: 'same-origin', cache: 'force-cache' };
@@ -14680,6 +15004,9 @@
       return fetchImpl(entry.src, options).then(function inspectPreviewDownloadResponse(response) {
         if (!response || !response.ok) throw new Error('HTTP ' + (response ? response.status : 0));
         return readPreviewImageResponseBlob(response, entry);
+      }).catch(function fallbackPreviewDownloadWithPrivilege(error) {
+        if (!shouldUsePrivilegedPreviewDownload(entry.src, location.href)) throw error;
+        return requestPrivilegedPreviewDownloadBlob(entry);
       }).finally(function removePreviewDownloadController() {
         if (!controller || !previewDownloadState) return;
         previewDownloadState.controllers = previewDownloadState.controllers.filter(function keepController(item) {
@@ -17961,6 +18288,10 @@
     formatPreviewDownloadReport: formatPreviewDownloadReport,
     getZipCrc32: getZipCrc32,
     createPreviewZipBlob: createPreviewZipBlob,
+    getHeaderValue: getHeaderValue,
+    isCrossOriginUrl: isCrossOriginUrl,
+    shouldUsePrivilegedPreviewDownload: shouldUsePrivilegedPreviewDownload,
+    getPrivilegedResponseBlob: getPrivilegedResponseBlob,
     normalizeResourceUrl: normalizeResourceUrl,
     classifyResourceLink: classifyResourceLink,
     getCloudProviderLabel: getCloudProviderLabel,
@@ -18023,9 +18354,18 @@
     extractBuyTopicUrl: extractBuyTopicUrl,
     getAutoBuyAttemptKey: getAutoBuyAttemptKey,
     isAutoBuyAttemptBlocked: isAutoBuyAttemptBlocked,
+    shouldRetryAutoBuyAttempt: shouldRetryAutoBuyAttempt,
     formatAutoBuyAttemptMessage: formatAutoBuyAttemptMessage,
+    findAutoBuyTargets: findAutoBuyTargets,
     getAutoBuyDoneAttemptForThread: getAutoBuyDoneAttemptForThread,
     formatAutoBuyNavSuccessDetail: formatAutoBuyNavSuccessDetail,
+    normalizeAutoBuyResponseText: normalizeAutoBuyResponseText,
+    isAutoBuyPurchaseResponseSuccessful: isAutoBuyPurchaseResponseSuccessful,
+    getAutoBuyPurchaseResponseFailureReason: getAutoBuyPurchaseResponseFailureReason,
+    isAutoBuyResidualTargetAcceptable: isAutoBuyResidualTargetAcceptable,
+    getAutoBuyResidualButtonNote: getAutoBuyResidualButtonNote,
+    createAutoBuyQueueSummary: createAutoBuyQueueSummary,
+    formatAutoBuyQueueSummary: formatAutoBuyQueueSummary,
     extractTaskAutoClaimUrl: extractTaskAutoClaimUrl,
     getTaskHomePageUrl: getTaskHomePageUrl,
     getTaskInProgressPageUrl: getTaskInProgressPageUrl,

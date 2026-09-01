@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const enhancer = require('./southplus_enhancer.user.js');
 
 const source = fs.readFileSync('./southplus_enhancer.user.js', 'utf8');
-assert.match(source, /@version\s+0\.6\.0/);
+assert.match(source, /@version\s+0\.6\.4/);
 const defaultSettings = enhancer.getDefaultSettings();
 assert.equal(defaultSettings.networkFriendly, true);
 assert.equal(defaultSettings.autoTaskClaim, true);
@@ -31,9 +31,13 @@ assert.match(source, /quickReply\.type = 'button'/);
 assert.match(source, /a\[onclick\*="postreply"\]/);
 assert.match(source, /bottom:78px/);
 assert.match(source, /请输入回复内容或选择图片/);
-assert.equal(enhancer.getQuickReplyEmotes().length, 38);
-assert.equal(enhancer.getQuickReplyEmotes()[0].code, '[s:1]');
-assert.equal(enhancer.getQuickReplyEmotes()[0].src, 'https://south-plus.org/images/post/smile/smallface/face001.jpg');
+const quickReplyEmotes = enhancer.getQuickReplyEmotes();
+assert.equal(quickReplyEmotes.length, 38);
+assert.equal(new Set(quickReplyEmotes.map((emote) => emote.code)).size, quickReplyEmotes.length);
+assert.equal(quickReplyEmotes[0].code, '[s:638]');
+assert.equal(quickReplyEmotes[0].src, 'https://south-plus.org/images/post/smile/smallface/face001.jpg');
+assert.equal(quickReplyEmotes[3].code, '[s:746]');
+assert.equal(quickReplyEmotes[3].src, 'https://south-plus.org/images/post/smile/smallface/face005.jpg');
 assert.equal(enhancer.formatQuickReplyAttachmentSummary([]), '沿用原站附件上传；正式提交时随原站回复表单一起发送。');
 assert.equal(enhancer.formatQuickReplyAttachmentSummary([{ name: 'a.png' }]), '已选择 1 张图片；正式提交会随原站回复表单一起发送。');
 assert.equal(enhancer.formatQuickReplyFileSize(2048), '2 KB');
@@ -1799,6 +1803,13 @@ assert.match(
   /失败图片：1 张[\s\S]*重试：6 \/ 6[\s\S]*网络或跨域限制/
 );
 assert.equal(enhancer.getZipCrc32(new Uint8Array([97, 98, 99])).toString(16), '352441c2');
+assert.equal(enhancer.getHeaderValue('Content-Type: image/gif\r\nContent-Length: 10', 'content-type'), 'image/gif');
+assert.equal(enhancer.isCrossOriginUrl('https://image.acg.lol/file/a.gif', 'https://south-plus.org/read.php?tid-1.html'), true);
+assert.equal(enhancer.isCrossOriginUrl('https://south-plus.org/images/a.gif', 'https://south-plus.org/read.php?tid-1.html'), false);
+assert.equal(enhancer.shouldUsePrivilegedPreviewDownload('https://image.acg.lol/file/a.gif', 'https://south-plus.org/read.php?tid-1.html', true), true);
+assert.equal(enhancer.shouldUsePrivilegedPreviewDownload('https://image.acg.lol/file/a.gif', 'https://south-plus.org/read.php?tid-1.html', false), false);
+assert.match(source, /@grant\s+GM_xmlhttpRequest/);
+assert.match(source, /@connect\s+\*/);
 assert.match(source, /PREVIEW_DOWNLOAD_MAX_RETRIES = 6/);
 assert.match(source, /spx-preview-download/);
 assert.match(source, /下载全部/);
@@ -2107,6 +2118,36 @@ assert.equal(
   '2904409:12345'
 );
 assert.equal(enhancer.getAutoBuyAttemptKey('bad-url', 'https://south-plus.org/'), '');
+const autoBuyPostHosts = [
+  { textContent: '此帖售价 0 SP币,已有 435 人购买' },
+  { textContent: '此帖售价 3 SP币,已有 12 人购买' },
+];
+const autoBuyControls = [
+  {
+    getAttribute: function getAttribute(name) {
+      return name === 'onclick' ? "location.href='job.php?action=buytopic&tid=2904409&pid=tpc&verify=1'" : '';
+    },
+    closest: function closest() { return autoBuyPostHosts[0]; },
+  },
+  {
+    getAttribute: function getAttribute(name) {
+      return name === 'onclick' ? "location.href='job.php?action=buytopic&tid=2904409&pid=12345&verify=2'" : '';
+    },
+    closest: function closest() { return autoBuyPostHosts[1]; },
+  },
+  {
+    getAttribute: function getAttribute(name) {
+      return name === 'onclick' ? "location.href='job.php?action=buytopic&tid=2904409&pid=12345&verify=3'" : '';
+    },
+    closest: function closest() { return autoBuyPostHosts[1]; },
+  },
+];
+assert.deepEqual(
+  enhancer.findAutoBuyTargets({ querySelectorAll: function querySelectorAll() { return autoBuyControls; } }, 'https://south-plus.org/read.php?tid=2904409').map(function mapAutoBuyTarget(target) {
+    return [target.price, target.attemptKey];
+  }),
+  [[0, '2904409:tpc'], [3, '2904409:12345']]
+);
 
 assert.equal(
   enhancer.isAutoBuyAttemptBlocked({ status: 'checking', updatedAt: 1000 }, 2000),
@@ -2117,8 +2158,12 @@ assert.equal(
   false
 );
 assert.equal(
-  enhancer.isAutoBuyAttemptBlocked({ status: 'buying', updatedAt: 1000 }, 1000 + 60 * 60 * 1000),
+  enhancer.isAutoBuyAttemptBlocked({ status: 'buying', updatedAt: 1000 }, 1000 + 30 * 1000),
   true
+);
+assert.equal(
+  enhancer.isAutoBuyAttemptBlocked({ status: 'buying', updatedAt: 1000 }, 1000 + 2 * 60 * 1000),
+  false
 );
 assert.equal(enhancer.isAutoBuyAttemptBlocked({ status: 'done', updatedAt: 1000 }, 999999), true);
 assert.equal(enhancer.isAutoBuyAttemptBlocked({ status: 'failed', updatedAt: 1000 }, 999999), true);
@@ -2147,6 +2192,28 @@ assert.equal(
   enhancer.formatAutoBuyNavSuccessDetail({ price: 3, resourceSummary: '百度网盘 1 个', message: '已支付 3 SP 并加载帖子内容' }),
   '自动购买已完成 · 价格 3 SP · 资源：百度网盘 1 个 · 已支付 3 SP 并加载帖子内容'
 );
+assert.equal(enhancer.isAutoBuyPurchaseResponseSuccessful('购买成功'), true);
+assert.equal(enhancer.getAutoBuyPurchaseResponseFailureReason('错误：余额不足'), '错误：余额不足');
+assert.equal(enhancer.getAutoBuyPurchaseResponseFailureReason('购买成功'), '');
+assert.equal(enhancer.shouldRetryAutoBuyAttempt({ status: 'failed', message: '购买后仍存在购买按钮' }), true);
+assert.equal(enhancer.shouldRetryAutoBuyAttempt({ status: 'failed', message: '余额不足' }), false);
+assert.equal(
+  enhancer.isAutoBuyResidualTargetAcceptable({ target: { price: 0 } }, { price: 0 }, [], ''),
+  true
+);
+assert.equal(
+  enhancer.getAutoBuyResidualButtonNote({ target: { price: 0 } }, { price: 0 }, [], ''),
+  '原站仍保留 0 SP 购买按钮'
+);
+assert.equal(
+  enhancer.isAutoBuyResidualTargetAcceptable({ target: { price: 3 } }, { price: 3 }, [], '购买成功'),
+  true
+);
+assert.equal(
+  enhancer.isAutoBuyResidualTargetAcceptable({ target: { price: 3 } }, { price: 3 }, [], '错误：余额不足'),
+  false
+);
+assert.equal(enhancer.formatAutoBuyQueueSummary({ done: 2, skipped: 1, failed: 0 }), '自动购买已完成，成功 2 个，跳过 1 个。');
 assert.match(source, /showAutoBuyNavSuccess\(doneRecord\)/);
 assert.match(source, /syncAutoBuyNavSuccessForThread\(tid\)/);
 assert.match(source, /spx-auto-buy-nav-note/);
